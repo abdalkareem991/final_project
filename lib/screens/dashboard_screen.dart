@@ -19,11 +19,11 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
 
-  // --- Theme Colors ---
+  // --- Theme Configuration ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
 
-  // List of screens for the BottomNav
+  // Application main navigation screens
   final List<Widget> _screens = [
     const _DashboardMainContent(),
     const MyAccountScreen(),
@@ -47,6 +47,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  /// Builds the Bottom Navigation Bar with fixed styling
   Widget _buildBottomNav() {
     return BottomNavigationBar(
       backgroundColor: _bgColor,
@@ -78,7 +79,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// --- Main Content Widget ---
+// --- Main Dashboard Content Implementation ---
 class _DashboardMainContent extends StatefulWidget {
   const _DashboardMainContent();
 
@@ -89,13 +90,13 @@ class _DashboardMainContent extends StatefulWidget {
 class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
 
-  // --- Theme Colors ---
+  // --- UI Constants ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
   static const Color _expenseRed = Color(0xFFFF6B6B);
 
-  // Requirement: Function to show the Add Transaction Bottom Sheet
+  /// Displays the modal bottom sheet to record a new transaction
   void _showAddTransactionModal() {
     final amountController = TextEditingController();
     final descController = TextEditingController();
@@ -140,7 +141,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   ),
                   const SizedBox(height: 20),
 
-                  // 1. Toggle Income/Expense
+                  // Transaction Type Toggle (Income/Expense)
                   Row(
                     children: [
                       _buildModalToggle(
@@ -160,7 +161,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   ),
                   const SizedBox(height: 20),
 
-                  // 2. Amount Input
                   TextField(
                     controller: amountController,
                     keyboardType: TextInputType.number,
@@ -169,7 +169,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   ),
                   const SizedBox(height: 15),
 
-                  // 3. Wallet Dropdown (Fetched from Database)
+                  // Wallet Selection Dropdown
                   FutureBuilder<List<WalletModel>>(
                     future: _supabaseService.getWallets(),
                     builder: (context, snapshot) {
@@ -194,7 +194,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   ),
                   const SizedBox(height: 15),
 
-                  // 4. Description
                   TextField(
                     controller: descController,
                     style: const TextStyle(color: Colors.white),
@@ -202,28 +201,30 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   ),
                   const SizedBox(height: 25),
 
-                  // 5. Confirm Button
                   ElevatedButton(
                     onPressed: () async {
                       if (amountController.text.isNotEmpty &&
                           selectedWalletId != null) {
                         try {
-                          // Logic: Call the service to save to Supabase
                           await _supabaseService.createTransaction(
                             walletId: selectedWalletId!,
                             amount: double.parse(amountController.text),
                             type: selectedType,
                             description: descController.text,
                           );
+
+                          // Safety check: verify widget is still in tree before using context
+                          if (!mounted) return;
                           Navigator.pop(context);
-                          setState(() {}); // Refresh Dashboard Data
+                          setState(() {}); // Refresh Dashboard UI
+
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text("Success! Transaction Recorded."),
                             ),
                           );
                         } catch (e) {
-                          print("Error saving: $e");
+                          debugPrint("Error saving transaction: $e");
                         }
                       }
                     },
@@ -252,7 +253,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  // Helper styles for Modal
+  /// Reusable input decoration for text fields
   InputDecoration _inputStyle(String label, IconData icon) => InputDecoration(
     labelText: label,
     labelStyle: const TextStyle(color: Colors.grey),
@@ -267,6 +268,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     ),
   );
 
+  /// Custom toggle widget for modal selection
   Widget _buildModalToggle(
     String label,
     bool isSelected,
@@ -279,7 +281,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
+            color: isSelected
+                ? color.withValues(alpha: 0.2)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: isSelected ? color : Colors.white10),
           ),
@@ -366,14 +370,13 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddTransactionModal, // Requirement: Open the Modal
+        onPressed: _showAddTransactionModal,
         backgroundColor: _accentGreen,
         child: const Icon(Icons.add, color: Colors.black, size: 30),
       ),
     );
   }
 
-  // Standard UI Builders inherited from previous versions...
   Widget _buildLeadingIcon() => Padding(
     padding: const EdgeInsets.all(8.0),
     child: Container(
@@ -385,25 +388,22 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     ),
   );
 
-  // Requirement: Make the AI Chip clickable to navigate to AIAssistantScreen
+  /// AI Chip for navigating to Assistant Screen
   Widget _buildAIChip(BuildContext context) {
     return InkWell(
       onTap: () {
-        // Navigation Logic: Moving to the AI Assistant Screen
         Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => const AIAssistantScreen()),
         );
       },
-      borderRadius: BorderRadius.circular(
-        20,
-      ), // Ensures splash effect stays within borders
+      borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: _accentGreen.withOpacity(0.1),
+          color: _accentGreen.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _accentGreen.withOpacity(0.3)),
+          border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
@@ -541,7 +541,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: iconBg.withOpacity(0.2),
+              color: iconBg.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.restaurant, color: Colors.white, size: 20),
