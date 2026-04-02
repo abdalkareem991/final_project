@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/wallet_model.dart';
+
 import '../models/profile_model.dart';
+import '../models/wallet_model.dart';
 
 class SupabaseService {
   // Initialize Supabase Client
@@ -194,6 +195,30 @@ class SupabaseService {
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
       rethrow;
+    }
+  }
+
+  // Fetch transaction summary for analytics
+  Future<Map<String, double>> getCategorySummary() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return {};
+
+      final response = await client
+          .from('transactions')
+          .select('amount, type, description')
+          .eq('user_id', user.id);
+
+      Map<String, double> summary = {};
+      for (var item in response as List) {
+        String type = item['type'];
+        double amount = (item['amount'] as num).toDouble();
+        summary[type] = (summary[type] ?? 0) + amount;
+      }
+      return summary;
+    } catch (error) {
+      debugPrint('Analytics Error: $error');
+      return {};
     }
   }
 

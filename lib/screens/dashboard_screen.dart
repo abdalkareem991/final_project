@@ -2,6 +2,7 @@
 
 import 'package:final_project/screens/ai_assistant_screen.dart'
     show AIAssistantScreen;
+import 'package:final_project/screens/analytics_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../models/profile_model.dart';
@@ -25,11 +26,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // Application main navigation screens
   final List<Widget> _screens = [
-    const _DashboardMainContent(),
-    const MyAccountScreen(),
-    const Center(
-      child: Text("Analytics", style: TextStyle(color: Colors.white)),
-    ),
+    const _DashboardMainContent(), // Index 0: Home/Dashboard
+    const MyAccountScreen(), // Index 1: Accounts List
+    const AnalyticsScreen(), // Index 2: THE NEW ANALYTICS PAGE (Linked Here)
     const Center(
       child: Text("To-Do List", style: TextStyle(color: Colors.white)),
     ),
