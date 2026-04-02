@@ -1,5 +1,8 @@
-import 'package:flutter/material.dart';
+// lib/screens/analytics_screen.dart
+
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
+
 import '../services/supabase_service.dart';
 
 class AnalyticsScreen extends StatefulWidget {
@@ -12,7 +15,12 @@ class AnalyticsScreen extends StatefulWidget {
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   final _supabaseService = SupabaseService();
 
-  // --- Theme Colors ---
+  // State variables for dynamic animation
+  String _selectedFilter = 'Month';
+  int _currentIndex = 2; // Default index for 'Month'
+  final List<String> _filterOrder = ['Day', 'Week', 'Month', 'Year'];
+
+  // --- UI Constants ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
@@ -25,48 +33,130 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       appBar: AppBar(
         backgroundColor: _bgColor,
         elevation: 0,
+        centerTitle: true,
         title: const Text(
           "Analytics & Reports",
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share, color: Colors.white),
-            onPressed: () {},
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 10),
+          _buildTimeFilterBar(),
+          Expanded(
+            child: FutureBuilder<Map<String, double>>(
+              future: _supabaseService.getFilteredSummary(_selectedFilter),
+              builder: (context, snapshot) {
+                return AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 500),
+                  // Professional curve for realistic movement
+                  switchInCurve: Curves.easeOutQuart,
+                  switchOutCurve: Curves.easeInQuart,
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    // Logic: Identify the direction of the slide
+                    // If moving to a higher index -> Slide from Right
+                    // If moving to a lower index -> Slide from Left
+                    final bool isMovingForward =
+                        animation.status == AnimationStatus.completed
+                        ? false // Handle reverse internally
+                        : true;
+
+                    // Define the offset based on the intended direction
+                    // We use a "Key" check to determine if we are sliding forward or backward
+                    final bool slideFromRight =
+                        child.key == ValueKey(_selectedFilter);
+
+                    return SlideTransition(
+                      position: Tween<Offset>(
+                        begin: slideFromRight
+                            ? const Offset(
+                                0.3,
+                                0.0,
+                              ) // Realistic small offset from right
+                            : const Offset(
+                                -0.3,
+                                0.0,
+                              ), // Realistic small offset from left
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: FadeTransition(opacity: animation, child: child),
+                    );
+                  },
+                  child: _buildContentBasedOnState(snapshot),
+                );
+              },
+            ),
           ),
         ],
       ),
-      // FutureBuilder is used here to fetch data and prevent errors
-      body: FutureBuilder<Map<String, double>>(
-        future: _supabaseService.getCategorySummary(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: _accentGreen));
-          }
+    );
+  }
 
-          if (snapshot.hasError) {
-            return const Center(
-              child: Text("Error loading data", style: TextStyle(color: Colors.white)),
-            );
-          }
+  Widget _buildContentBasedOnState(
+    AsyncSnapshot<Map<String, double>> snapshot,
+  ) {
+    if (snapshot.connectionState == ConnectionState.waiting) {
+      return const Center(
+        key: ValueKey('loading_state'),
+        child: CircularProgressIndicator(color: _accentGreen),
+      );
+    }
 
-          // Use real data from Supabase or default to 0.0
-          final data = snapshot.data ?? {};
-          final double totalIncome = data['Income'] ?? 0.0;
-          final double totalExpenses = data['Expense'] ?? 0.0;
+    final data = snapshot.data ?? {'Income': 0.0, 'Expense': 0.0};
+    final double income = data['Income'] ?? 0.0;
+    final double expense = data['Expense'] ?? 0.0;
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                _buildTimeFilters(),
-                const SizedBox(height: 25),
-                _buildStatCards(totalIncome, totalExpenses),
-                const SizedBox(height: 25),
-                _buildBarChartCard(totalIncome, totalExpenses),
-                const SizedBox(height: 25),
-                _buildCategoryDonutCard(totalIncome, totalExpenses),
-              ],
+    return SingleChildScrollView(
+      // The ValueKey ensures the AnimatedSwitcher knows when to trigger
+      key: ValueKey(_selectedFilter),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+      child: Column(
+        children: [
+          _buildFinancialSummaryCards(income, expense),
+          const SizedBox(height: 25),
+          _buildBarChartContainer(income, expense),
+          const SizedBox(height: 25),
+          _buildDistributionPieContainer(income, expense),
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeFilterBar() {
+    return Container(
+      height: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _filterOrder.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final String filter = _filterOrder[index];
+          final bool isSelected = _selectedFilter == filter;
+
+          return ChoiceChip(
+            label: Text(filter),
+            selected: isSelected,
+            onSelected: (val) {
+              if (val && _selectedFilter != filter) {
+                setState(() {
+                  _selectedFilter = filter;
+                  _currentIndex = index;
+                });
+              }
+            },
+            selectedColor: _accentGreen,
+            backgroundColor: _cardColor,
+            labelStyle: TextStyle(
+              color: isSelected ? Colors.black : Colors.grey,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+            ),
+            side: BorderSide(
+              color: isSelected ? _accentGreen : Colors.transparent,
             ),
           );
         },
@@ -74,167 +164,130 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  // --- UI Components ---
-
-  Widget _buildTimeFilters() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: ['Day', 'Week', 'Month', 'Year'].map((label) {
-          bool isSelected = label == 'Month';
-          return Container(
-            margin: const EdgeInsets.only(right: 10),
-            child: ChoiceChip(
-              label: Text(label),
-              selected: isSelected,
-              onSelected: (_) {},
-              selectedColor: _accentGreen,
-              backgroundColor: _cardColor,
-              labelStyle: TextStyle(
-                color: isSelected ? Colors.black : Colors.grey,
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildStatCards(double income, double expense) {
+  Widget _buildFinancialSummaryCards(double income, double expense) {
     return Row(
       children: [
-        _statItem("INCOME", "\$${income.toStringAsFixed(2)}", _accentGreen, Icons.trending_up),
+        _buildSummaryCard("INCOME", income, _accentGreen),
         const SizedBox(width: 15),
-        _statItem("EXPENSES", "\$${expense.toStringAsFixed(2)}", _expenseRed, Icons.trending_down),
+        _buildSummaryCard("EXPENSE", expense, _expenseRed),
       ],
     );
   }
 
-  Widget _statItem(String label, String amount, Color color, IconData icon) {
+  Widget _buildSummaryCard(String title, double amount, Color color) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.all(15),
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: _cardColor,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: color.withValues(alpha: 0.1)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              label,
-              style: const TextStyle(color: Colors.grey, fontSize: 10),
+              title,
+              style: const TextStyle(
+                color: Colors.grey,
+                fontSize: 10,
+                letterSpacing: 1.1,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
-              amount,
+              "\$${amount.toStringAsFixed(2)}",
               style: TextStyle(
                 color: color,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            Icon(icon, color: color.withValues(alpha: 0.5), size: 16),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildBarChartCard(double income, double expense) {
+  Widget _buildBarChartContainer(double income, double expense) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       height: 300,
       decoration: BoxDecoration(
         color: _cardColor,
-        borderRadius: BorderRadius.circular(25),
+        borderRadius: BorderRadius.circular(28),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Income vs Expenses",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            child: BarChart(
-              BarChartData(
-                backgroundColor: Colors.transparent,
-                barGroups: _generateBarGroups(income, expense),
-                borderData: FlBorderData(show: false),
-                gridData: const FlGridData(show: false),
-                titlesData: const FlTitlesData(show: false),
-              ),
+      child: BarChart(
+        BarChartData(
+          barGroups: [
+            BarChartGroupData(
+              x: 0,
+              barRods: [
+                BarChartRodData(
+                  toY: income,
+                  color: _accentGreen,
+                  width: 20,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                BarChartRodData(
+                  toY: expense,
+                  color: _expenseRed,
+                  width: 20,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ],
             ),
-          ),
-        ],
+          ],
+          gridData: const FlGridData(show: false),
+          titlesData: const FlTitlesData(show: false),
+          borderData: FlBorderData(show: false),
+        ),
       ),
     );
   }
 
-  List<BarChartGroupData> _generateBarGroups(double income, double expense) {
-    // Creating bars based on actual data
-    return List.generate(
-      6,
-      (i) => BarChartGroupData(
-        x: i,
-        barRods: [
-          BarChartRodData(toY: income > 0 ? income : 1.0, color: _accentGreen, width: 8),
-          BarChartRodData(toY: expense > 0 ? expense : 1.0, color: Colors.blueGrey, width: 8),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCategoryDonutCard(double income, double expense) {
-    double total = income + expense;
-    // Safety check to avoid division by zero
-    double incomePercent = total > 0 ? (income / total) * 100 : 0;
-    double expensePercent = total > 0 ? (expense / total) * 100 : 0;
-
+  Widget _buildDistributionPieContainer(double income, double expense) {
+    final double total = income + expense;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: _cardColor,
-        borderRadius: BorderRadius.circular(25),
+        borderRadius: BorderRadius.circular(28),
       ),
-      child: Column(
-        children: [
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              "Financial Distribution",
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            height: 200,
-            child: PieChart(
-              PieChartData(
-                sections: [
-                  PieChartSectionData(
-                    value: income > 0 ? income : 1,
-                    color: _accentGreen,
-                    title: '${incomePercent.toStringAsFixed(0)}%',
-                    radius: 50,
-                    titleStyle: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                  ),
-                  PieChartSectionData(
-                    value: expense > 0 ? expense : 1,
-                    color: _expenseRed,
-                    title: '${expensePercent.toStringAsFixed(0)}%',
-                    radius: 50,
-                    titleStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                ],
-                centerSpaceRadius: 40,
-                sectionsSpace: 5,
+      child: SizedBox(
+        height: 200,
+        child: PieChart(
+          PieChartData(
+            sections: [
+              PieChartSectionData(
+                value: income > 0 ? income : 1,
+                color: _accentGreen,
+                title: total > 0
+                    ? '${((income / total) * 100).toStringAsFixed(0)}%'
+                    : '0%',
+                radius: 60,
+                titleStyle: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
+              PieChartSectionData(
+                value: expense > 0 ? expense : 1,
+                color: _expenseRed,
+                title: total > 0
+                    ? '${((expense / total) * 100).toStringAsFixed(0)}%'
+                    : '0%',
+                radius: 60,
+                titleStyle: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+            centerSpaceRadius: 45,
+            sectionsSpace: 10,
           ),
-        ],
+        ),
       ),
     );
   }

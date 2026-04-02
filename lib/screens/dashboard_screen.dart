@@ -56,10 +56,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       currentIndex: _selectedIndex,
       onTap: (index) => setState(() => _selectedIndex = index),
       items: const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.grid_view_rounded),
-          label: "DASHBOARD",
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.home), label: "HOME"),
         BottomNavigationBarItem(
           icon: Icon(Icons.account_balance),
           label: "ACCOUNTS",

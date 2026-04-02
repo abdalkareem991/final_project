@@ -1,3 +1,5 @@
+// lib/services/supabase_service.dart
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -12,7 +14,7 @@ class SupabaseService {
   // 1. AUTHENTICATION OPERATIONS
   // ===========================================================================
 
-  // Sign in with Email and Password
+  /// Signs in a user with email and password
   Future<AuthResponse> signIn(String email, String password) async {
     try {
       return await client.auth.signInWithPassword(
@@ -25,7 +27,7 @@ class SupabaseService {
     }
   }
 
-  // Register a new user
+  /// Registers a new user
   Future<AuthResponse> signUp(String email, String password) async {
     try {
       return await client.auth.signUp(email: email, password: password);
@@ -35,7 +37,7 @@ class SupabaseService {
     }
   }
 
-  // Send password reset link to user email
+  /// Sends a password reset link to the user's email
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await client.auth.resetPasswordForEmail(
@@ -43,17 +45,17 @@ class SupabaseService {
         redirectTo: 'io.supabase.flutter://reset-callback/',
       );
     } catch (error) {
-      debugPrint('Reset Error: $error');
+      debugPrint('Reset Password Error: $error');
       rethrow;
     }
   }
 
-  // Update the user's password in the database
+  /// Updates the current user's password
   Future<void> updatePassword(String newPassword) async {
     try {
       await client.auth.updateUser(UserAttributes(password: newPassword));
     } catch (error) {
-      debugPrint('Update Error: $error');
+      debugPrint('Update Password Error: $error');
       rethrow;
     }
   }
@@ -62,7 +64,7 @@ class SupabaseService {
   // 2. PROFILE & USER DATA OPERATIONS
   // ===========================================================================
 
-  // Create user profile
+  /// Creates a new user profile entry in the database
   Future<void> createUserProfile(
     String id,
     String userName,
@@ -81,7 +83,7 @@ class SupabaseService {
     }
   }
 
-  // Fetch current user's profile data
+  /// Retrieves the current logged-in user's profile
   Future<ProfileModel> getProfileData() async {
     try {
       final user = client.auth.currentUser;
@@ -104,11 +106,11 @@ class SupabaseService {
   // 3. WALLET / ACCOUNT OPERATIONS
   // ===========================================================================
 
-  // Requirement: Add a new Wallet/Account to the database
+  /// Adds a new wallet or account for the current user
   Future<void> addWallet({
     required String name,
     required double balance,
-    required String type, // e.g., 'Bank', 'Cash', 'Saving'
+    required String type,
   }) async {
     try {
       final user = client.auth.currentUser;
@@ -120,14 +122,13 @@ class SupabaseService {
         'balance': balance,
         'type': type,
       });
-      debugPrint('Wallet $name added successfully.');
     } catch (error) {
       debugPrint('Add Wallet Error: $error');
       rethrow;
     }
   }
 
-  // Fetch all wallets for the current user
+  /// Fetches all wallets associated with the current user
   Future<List<WalletModel>> getWallets() async {
     try {
       final user = client.auth.currentUser;
@@ -148,10 +149,10 @@ class SupabaseService {
   }
 
   // ===========================================================================
-  // 4. TRANSACTION LOGIC (CORE FUNCTIONALITY)
+  // 4. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
 
-  // Requirement: Handle transaction entry and automatic wallet balance update
+  /// Records a transaction and updates the corresponding wallet balance
   Future<void> createTransaction({
     required String walletId,
     required double amount,
@@ -162,7 +163,7 @@ class SupabaseService {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // Step A: Insert record into transactions table
+      // Insert transaction record
       await client.from('transactions').insert({
         'user_id': user.id,
         'wallet_id': walletId,
@@ -171,7 +172,7 @@ class SupabaseService {
         'description': description,
       });
 
-      // Step B: Get current wallet balance to calculate new value
+      // Fetch current wallet balance
       final walletData = await client
           .from('wallets')
           .select('balance')
@@ -180,61 +181,77 @@ class SupabaseService {
 
       double currentBalance = (walletData['balance'] as num).toDouble();
 
-      // Step C: Business Logic - Update balance based on type
+      // Calculate new balance
       double newBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
 
-      // Step D: Update the wallet balance in the database
+      // Update wallet balance in DB
       await client
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', walletId);
 
-      debugPrint('Transaction successful. New balance: $newBalance');
+      debugPrint('Transaction Successful. New Balance: $newBalance');
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
       rethrow;
     }
   }
 
-  // Fetch transaction summary for analytics
-  Future<Map<String, double>> getCategorySummary() async {
+  /// Fetches a filtered summary of transactions for analytics (Day, Week, Month, Year)
+  Future<Map<String, double>> getFilteredSummary(String filter) async {
     try {
       final user = client.auth.currentUser;
-      if (user == null) return {};
+      if (user == null) return {'Income': 0.0, 'Expense': 0.0};
+
+      DateTime now = DateTime.now();
+      DateTime startDate;
+
+      // Determine the start date based on the selected filter
+      switch (filter) {
+        case 'Day':
+          startDate = DateTime(now.year, now.month, now.day);
+          break;
+        case 'Week':
+          // Subtract days to get the start of the week (Monday)
+          startDate = now.subtract(Duration(days: now.weekday - 1));
+          break;
+        case 'Year':
+          startDate = DateTime(now.year, 1, 1);
+          break;
+        case 'Month':
+        default:
+          startDate = DateTime(now.year, now.month, 1);
+          break;
+      }
 
       final response = await client
           .from('transactions')
-          .select('amount, type, description')
-          .eq('user_id', user.id);
+          .select('amount, type')
+          .eq('user_id', user.id)
+          .gte('created_at', startDate.toIso8601String());
 
-      Map<String, double> summary = {};
+      Map<String, double> summary = {'Income': 0.0, 'Expense': 0.0};
+
       for (var item in response as List) {
-        String type = item['type'];
+        String type =
+            item['type']; // Ensure your DB values are exactly 'Income' or 'Expense'
         double amount = (item['amount'] as num).toDouble();
-        summary[type] = (summary[type] ?? 0) + amount;
+
+        if (summary.containsKey(type)) {
+          summary[type] = (summary[type] ?? 0) + amount;
+        }
       }
       return summary;
     } catch (error) {
-      debugPrint('Analytics Error: $error');
-      return {};
+      debugPrint('Analytics Filter Error: $error');
+      return {'Income': 0.0, 'Expense': 0.0};
     }
   }
 
-  // Alias for compatibility
-  Future<void> addTransaction({
-    required String walletId,
-    required double amount,
-    required String description,
-    String? categoryId,
-    required String type,
-  }) async {
-    await createTransaction(
-      walletId: walletId,
-      amount: amount,
-      type: type,
-      description: description,
-    );
+  /// Legacy compatibility alias for getFilteredSummary
+  Future<Map<String, double>> getCategorySummary() async {
+    return await getFilteredSummary('Month');
   }
 }
