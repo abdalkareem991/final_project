@@ -1,5 +1,6 @@
 // lib/services/ai_service.dart
 
+import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
 class AIService {
@@ -31,7 +32,7 @@ class AIService {
       final response = await _model.generateContent(prompt);
       return response.text ?? "I'm having trouble analyzing that right now.";
     } catch (e) {
-      print("AI Error: $e");
+      debugPrint("FinMind AI Error: $e");
       return "Connection error. Please check your internet.";
     }
   }

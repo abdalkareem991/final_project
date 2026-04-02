@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/wallet_model.dart';
 import '../models/profile_model.dart';
@@ -18,7 +19,7 @@ class SupabaseService {
         password: password,
       );
     } catch (error) {
-      print('Sign In Error: $error');
+      debugPrint('Sign In Error: $error');
       rethrow;
     }
   }
@@ -28,7 +29,7 @@ class SupabaseService {
     try {
       return await client.auth.signUp(email: email, password: password);
     } catch (error) {
-      print('Sign Up Error: $error');
+      debugPrint('Sign Up Error: $error');
       rethrow;
     }
   }
@@ -41,7 +42,7 @@ class SupabaseService {
         redirectTo: 'io.supabase.flutter://reset-callback/',
       );
     } catch (error) {
-      print('Reset Error: $error');
+      debugPrint('Reset Error: $error');
       rethrow;
     }
   }
@@ -51,7 +52,7 @@ class SupabaseService {
     try {
       await client.auth.updateUser(UserAttributes(password: newPassword));
     } catch (error) {
-      print('Update Error: $error');
+      debugPrint('Update Error: $error');
       rethrow;
     }
   }
@@ -74,7 +75,7 @@ class SupabaseService {
         'total_net_worth': 0,
       });
     } catch (error) {
-      print('Profile Creation Error: $error');
+      debugPrint('Profile Creation Error: $error');
       rethrow;
     }
   }
@@ -93,7 +94,7 @@ class SupabaseService {
 
       return ProfileModel.fromJson(response);
     } catch (error) {
-      print('Get Profile Error: $error');
+      debugPrint('Get Profile Error: $error');
       rethrow;
     }
   }
@@ -118,9 +119,9 @@ class SupabaseService {
         'balance': balance,
         'type': type,
       });
-      print('Wallet $name added successfully.');
+      debugPrint('Wallet $name added successfully.');
     } catch (error) {
-      print('Add Wallet Error: $error');
+      debugPrint('Add Wallet Error: $error');
       rethrow;
     }
   }
@@ -140,7 +141,7 @@ class SupabaseService {
           .map((json) => WalletModel.fromJson(json))
           .toList();
     } catch (error) {
-      print('Fetch Wallets Error: $error');
+      debugPrint('Fetch Wallets Error: $error');
       rethrow;
     }
   }
@@ -189,9 +190,9 @@ class SupabaseService {
           .update({'balance': newBalance})
           .eq('id', walletId);
 
-      print('Transaction successful. New balance: $newBalance');
+      debugPrint('Transaction successful. New balance: $newBalance');
     } catch (error) {
-      print('Create Transaction Error: $error');
+      debugPrint('Create Transaction Error: $error');
       rethrow;
     }
   }
