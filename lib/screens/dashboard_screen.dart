@@ -1,7 +1,7 @@
 // lib/screens/dashboard_screen.dart
 
 import 'package:final_project/screens/ai_assistant_screen.dart'
-show AIAssistantScreen;
+    show AIAssistantScreen;
 import 'package:final_project/screens/analytics_screen.dart';
 import 'package:final_project/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +10,7 @@ import '../models/profile_model.dart';
 import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
 import 'my_account_screen.dart';
+import 'todo_list_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -30,9 +31,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     const _DashboardMainContent(), // Index 0: Home/Dashboard
     const MyAccountScreen(), // Index 1: Accounts List
     const AnalyticsScreen(), // Index 2: THE NEW ANALYTICS PAGE (Linked Here)
-    const Center(
-      child: Text("To-Do List", style: TextStyle(color: Colors.white)),
-    ),
+    const TodoListScreen(), // Index 3: THE NEW TO-DO LIST PAGE (Linked Here)
     const SettingsScreen(),
   ];
 
