@@ -1,8 +1,9 @@
 // lib/screens/dashboard_screen.dart
 
 import 'package:final_project/screens/ai_assistant_screen.dart'
-    show AIAssistantScreen;
+show AIAssistantScreen;
 import 'package:final_project/screens/analytics_screen.dart';
+import 'package:final_project/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../models/profile_model.dart';
@@ -32,9 +33,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     const Center(
       child: Text("To-Do List", style: TextStyle(color: Colors.white)),
     ),
-    const Center(
-      child: Text("Settings", style: TextStyle(color: Colors.white)),
-    ),
+    const SettingsScreen(),
   ];
 
   @override
