@@ -17,7 +17,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   // State variables for dynamic animation
   String _selectedFilter = 'Month';
-  int _currentIndex = 2; // Default index for 'Month'
   final List<String> _filterOrder = ['Day', 'Week', 'Month', 'Year'];
 
   // --- UI Constants ---
@@ -53,14 +52,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   switchInCurve: Curves.easeOutQuart,
                   switchOutCurve: Curves.easeInQuart,
                   transitionBuilder: (Widget child, Animation<double> animation) {
-                    // Logic: Identify the direction of the slide
-                    // If moving to a higher index -> Slide from Right
-                    // If moving to a lower index -> Slide from Left
-                    final bool isMovingForward =
-                        animation.status == AnimationStatus.completed
-                        ? false // Handle reverse internally
-                        : true;
-
                     // Define the offset based on the intended direction
                     // We use a "Key" check to determine if we are sliding forward or backward
                     final bool slideFromRight =
@@ -142,7 +133,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               if (val && _selectedFilter != filter) {
                 setState(() {
                   _selectedFilter = filter;
-                  _currentIndex = index;
                 });
               }
             },
