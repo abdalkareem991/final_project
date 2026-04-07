@@ -152,6 +152,25 @@ class SupabaseService {
   // 4. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
 
+  /// NEW: Fetches real transactions for account statement
+  Future<List<Map<String, dynamic>>> getTransactions() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return [];
+
+      final response = await client
+          .from('transactions')
+          .select()
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      debugPrint('Fetch Transactions Error: $error');
+      return [];
+    }
+  }
+
   /// Records a transaction and updates the corresponding wallet balance
   Future<void> createTransaction({
     required String walletId,
@@ -199,7 +218,19 @@ class SupabaseService {
     }
   }
 
-  /// Fetches a filtered summary of transactions for analytics (Day, Week, Month, Year)
+  Future<void> deleteWallet(String walletId) async {
+    try {
+      // Supabase handle Cascade delete if configured,
+      // otherwise we delete the wallet directly
+      await client.from('wallets').delete().eq('id', walletId);
+      debugPrint('Wallet deleted successfully');
+    } catch (error) {
+      debugPrint('Delete Wallet Error: $error');
+      rethrow;
+    }
+  }
+
+  /// Fetches a filtered summary of transactions for analytics
   Future<Map<String, double>> getFilteredSummary(String filter) async {
     try {
       final user = client.auth.currentUser;
@@ -208,13 +239,11 @@ class SupabaseService {
       DateTime now = DateTime.now();
       DateTime startDate;
 
-      // Determine the start date based on the selected filter
       switch (filter) {
         case 'Day':
           startDate = DateTime(now.year, now.month, now.day);
           break;
         case 'Week':
-          // Subtract days to get the start of the week (Monday)
           startDate = now.subtract(Duration(days: now.weekday - 1));
           break;
         case 'Year':
@@ -235,8 +264,7 @@ class SupabaseService {
       Map<String, double> summary = {'Income': 0.0, 'Expense': 0.0};
 
       for (var item in response as List) {
-        String type =
-            item['type']; // Ensure your DB values are exactly 'Income' or 'Expense'
+        String type = item['type'];
         double amount = (item['amount'] as num).toDouble();
 
         if (summary.containsKey(type)) {
@@ -250,7 +278,7 @@ class SupabaseService {
     }
   }
 
-  /// Legacy compatibility alias for getFilteredSummary
+  /// Legacy compatibility alias
   Future<Map<String, double>> getCategorySummary() async {
     return await getFilteredSummary('Month');
   }

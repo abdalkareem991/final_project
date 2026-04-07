@@ -22,16 +22,14 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
 
-  // --- Theme Configuration ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
 
-  // Application main navigation screens
   final List<Widget> _screens = [
-    const _DashboardMainContent(), // Index 0: Home/Dashboard
-    const MyAccountScreen(), // Index 1: Accounts List
-    const AnalyticsScreen(), // Index 2: THE NEW ANALYTICS PAGE (Linked Here)
-    const TodoListScreen(), // Index 3: THE NEW TO-DO LIST PAGE (Linked Here)
+    const _DashboardMainContent(),
+    const MyAccountScreen(),
+    const AnalyticsScreen(),
+    const TodoListScreen(),
     const SettingsScreen(),
   ];
 
@@ -44,7 +42,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Builds the Bottom Navigation Bar with fixed styling
   Widget _buildBottomNav() {
     return BottomNavigationBar(
       backgroundColor: _bgColor,
@@ -73,7 +70,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// --- Main Dashboard Content Implementation ---
 class _DashboardMainContent extends StatefulWidget {
   const _DashboardMainContent();
 
@@ -84,13 +80,11 @@ class _DashboardMainContent extends StatefulWidget {
 class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
 
-  // --- UI Constants ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
   static const Color _expenseRed = Color(0xFFFF6B6B);
 
-  /// Displays the modal bottom sheet to record a new transaction
   void _showAddTransactionModal() {
     final amountController = TextEditingController();
     final descController = TextEditingController();
@@ -134,8 +128,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  // Transaction Type Toggle (Income/Expense)
                   Row(
                     children: [
                       _buildModalToggle(
@@ -154,7 +146,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ],
                   ),
                   const SizedBox(height: 20),
-
                   TextField(
                     controller: amountController,
                     keyboardType: TextInputType.number,
@@ -162,8 +153,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     decoration: _inputStyle("Amount", Icons.attach_money),
                   ),
                   const SizedBox(height: 15),
-
-                  // Wallet Selection Dropdown
                   FutureBuilder<List<WalletModel>>(
                     future: _supabaseService.getWallets(),
                     builder: (context, snapshot) {
@@ -187,39 +176,25 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     },
                   ),
                   const SizedBox(height: 15),
-
                   TextField(
                     controller: descController,
                     style: const TextStyle(color: Colors.white),
                     decoration: _inputStyle("Description", Icons.edit),
                   ),
                   const SizedBox(height: 25),
-
                   ElevatedButton(
                     onPressed: () async {
                       if (amountController.text.isNotEmpty &&
                           selectedWalletId != null) {
-                        try {
-                          await _supabaseService.createTransaction(
-                            walletId: selectedWalletId!,
-                            amount: double.parse(amountController.text),
-                            type: selectedType,
-                            description: descController.text,
-                          );
-
-                          // Safety check: verify widget is still in tree before using context
-                          if (!mounted) return;
-                          Navigator.pop(context);
-                          setState(() {}); // Refresh Dashboard UI
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("Success! Transaction Recorded."),
-                            ),
-                          );
-                        } catch (e) {
-                          debugPrint("Error saving transaction: $e");
-                        }
+                        await _supabaseService.createTransaction(
+                          walletId: selectedWalletId!,
+                          amount: double.parse(amountController.text),
+                          type: selectedType,
+                          description: descController.text,
+                        );
+                        if (!mounted) return;
+                        Navigator.pop(context);
+                        setState(() {}); // Refresh Dashboard
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -247,7 +222,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// Reusable input decoration for text fields
   InputDecoration _inputStyle(String label, IconData icon) => InputDecoration(
     labelText: label,
     labelStyle: const TextStyle(color: Colors.grey),
@@ -262,7 +236,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     ),
   );
 
-  /// Custom toggle widget for modal selection
   Widget _buildModalToggle(
     String label,
     bool isSelected,
@@ -307,60 +280,71 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           "FinMind",
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
-        actions: [
-          _buildAIChip(context),
-          const SizedBox(width: 15),
-          const CircleAvatar(
-            radius: 16,
-            backgroundColor: Colors.white24,
-            child: Icon(Icons.person, size: 20, color: Colors.white),
-          ),
-          const SizedBox(width: 15),
-        ],
+        actions: [_buildAIChip(context), const SizedBox(width: 15)],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            _buildTotalBalanceCard(_supabaseService),
-            const SizedBox(height: 20),
-            _buildProgressCard(
-              "Monthly Income",
-              "\$4,200 / \$6,000",
-              0.7,
-              _accentGreen,
-            ),
-            const SizedBox(height: 12),
-            _buildProgressCard(
-              "Monthly Expenses",
-              "\$2,840 / \$3,500",
-              0.8,
-              _expenseRed,
-            ),
-            const SizedBox(height: 25),
-            _buildRecentTransactionsHeader(),
-            _buildTransactionItem(
-              "Burger King",
-              "Today, 12:45 PM",
-              "-\$15.50",
-              Colors.orange,
-              isExpense: true,
-            ),
-            _buildTransactionItem(
-              "Shell Gas",
-              "Today, 09:30 AM",
-              "-\$42.00",
-              Colors.blue,
-              isExpense: true,
-            ),
-            _buildTransactionItem(
-              "Salary",
-              "Yesterday",
-              "+\$3,200.00",
-              _accentGreen,
-              isExpense: false,
-            ),
-          ],
+      body: RefreshIndicator(
+        onRefresh: () async => setState(() {}),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              _buildTotalBalanceCard(_supabaseService),
+              const SizedBox(height: 20),
+              // يمكنك لاحقاً ربط هذه المؤشرات ببيانات حقيقية عبر getFilteredSummary
+              _buildProgressCard(
+                "Monthly Income",
+                "\$4,200 / \$6,000",
+                0.7,
+                _accentGreen,
+              ),
+              const SizedBox(height: 12),
+              _buildProgressCard(
+                "Monthly Expenses",
+                "\$2,840 / \$3,500",
+                0.8,
+                _expenseRed,
+              ),
+              const SizedBox(height: 25),
+              _buildRecentTransactionsHeader(),
+
+              // --- التفعيل الحقيقي لكشف الحساب هنا ---
+              FutureBuilder<List<Map<String, dynamic>>>(
+                future: _supabaseService.getTransactions(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(color: _accentGreen),
+                      ),
+                    );
+                  }
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        "No transactions yet.",
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    );
+                  }
+                  return Column(
+                    children: snapshot.data!.map((tx) {
+                      final bool isExpense = tx['type'] == 'Expense';
+                      return _buildTransactionItem(
+                        tx['description'] ?? "Transaction",
+                        tx['created_at'].toString().split('T')[0],
+                        "${isExpense ? '-' : '+'}\$${tx['amount']}",
+                        isExpense ? _expenseRed : _accentGreen,
+                        isExpense: isExpense,
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
@@ -371,6 +355,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
+  // الدوال المساعدة (UI Helper Functions) كما هي مع تحديث بسيط
   Widget _buildLeadingIcon() => Padding(
     padding: const EdgeInsets.all(8.0),
     child: Container(
@@ -382,41 +367,35 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     ),
   );
 
-  /// AI Chip for navigating to Assistant Screen
-  Widget _buildAIChip(BuildContext context) {
-    return InkWell(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const AIAssistantScreen()),
-        );
-      },
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: _accentGreen.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.auto_awesome, color: _accentGreen, size: 14),
-            SizedBox(width: 5),
-            Text(
-              "Ask AI",
-              style: TextStyle(
-                color: _accentGreen,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+  Widget _buildAIChip(BuildContext context) => InkWell(
+    onTap: () => Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const AIAssistantScreen()),
+    ),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: _accentGreen.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
       ),
-    );
-  }
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_awesome, color: _accentGreen, size: 14),
+          SizedBox(width: 5),
+          Text(
+            "Ask AI",
+            style: TextStyle(
+              color: _accentGreen,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildTotalBalanceCard(SupabaseService service) {
     return FutureBuilder<ProfileModel>(
@@ -520,7 +499,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     String title,
     String date,
     String amount,
-    Color iconBg, {
+    Color iconColor, {
     required bool isExpense,
   }) {
     return Container(
@@ -535,10 +514,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: iconBg.withValues(alpha: 0.2),
+              color: iconColor.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.restaurant, color: Colors.white, size: 20),
+            child: Icon(
+              isExpense ? Icons.arrow_downward : Icons.arrow_upward,
+              color: iconColor,
+              size: 20,
+            ),
           ),
           const SizedBox(width: 15),
           Expanded(

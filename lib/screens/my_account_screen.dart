@@ -1,9 +1,10 @@
 // lib/screens/my_account_screen.dart
 
 import 'package:flutter/material.dart';
-import '../services/supabase_service.dart';
-import '../models/wallet_model.dart';
+
 import '../models/profile_model.dart';
+import '../models/wallet_model.dart';
+import '../services/supabase_service.dart';
 
 class MyAccountScreen extends StatefulWidget {
   const MyAccountScreen({super.key});
@@ -16,6 +17,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     with SingleTickerProviderStateMixin {
   final _supabaseService = SupabaseService();
 
+  // --- UI Constants ---
   static const Color _bgColor = Color(0xFF0D1117);
   static const Color _cardColor = Color(0xFF161B22);
   static const Color _primaryGreen = Color(0xFF34EAB9);
@@ -51,7 +53,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     super.dispose();
   }
 
-  // --- Modal Logic ---
+  // --- Modal Logic to Add Account ---
   Future<void> _showAddAccountModal() async {
     final nameController = TextEditingController();
     final balanceController = TextEditingController();
@@ -125,8 +127,9 @@ class _MyAccountScreenState extends State<MyAccountScreen>
                       balance: double.parse(balanceController.text),
                       type: selectedType,
                     );
+                    if (!mounted) return;
                     Navigator.pop(context);
-                    setState(() {});
+                    setState(() {}); // Refresh the list after adding
                   }
                 },
                 style: ElevatedButton.styleFrom(
@@ -294,22 +297,21 @@ class _MyAccountScreenState extends State<MyAccountScreen>
               itemBuilder: (context, index) {
                 final account = snapshot.data![index];
 
-                // Requirement: Swipe to show Trash Button (Custom implementation)
                 return Dismissible(
                   key: Key(account.id),
                   direction: DismissDirection.endToStart,
                   confirmDismiss: (direction) async {
-                    // Logic: Do not delete immediately. Return false to prevent auto-swipe-out.
+                    // Prevent auto-swipe delete to trigger custom confirmation
                     return false;
                   },
                   background: Container(
                     alignment: Alignment.centerRight,
                     margin: const EdgeInsets.only(bottom: 15),
+                    padding: const EdgeInsets.only(right: 20),
                     decoration: BoxDecoration(
                       color: _expenseRed,
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    // This is the trash icon user clicks on
                     child: IconButton(
                       icon: const Icon(
                         Icons.delete_forever,
@@ -331,17 +333,19 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     );
   }
 
+  // --- Logic to Confirm and Execute Deletion ---
   void _confirmDelete(WalletModel account) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: const Text(
           "Delete Account?",
           style: TextStyle(color: Colors.white),
         ),
         content: Text(
-          "Are you sure you want to remove ${account.name}?",
+          "Are you sure you want to remove ${account.name}? This will also delete its transaction history.",
           style: const TextStyle(color: Colors.grey),
         ),
         actions: [
@@ -350,13 +354,28 @@ class _MyAccountScreenState extends State<MyAccountScreen>
             child: const Text("CANCEL", style: TextStyle(color: Colors.white)),
           ),
           TextButton(
-            onPressed: () {
-              // Future: Call _supabaseService.deleteWallet(account.id);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text("${account.name} Deleted")),
-              );
-              setState(() {});
+            onPressed: () async {
+              try {
+                // Call actual Supabase delete service
+                await _supabaseService.deleteWallet(account.id);
+
+                if (!mounted) return;
+                Navigator.pop(context); // Close dialog
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text("${account.name} Deleted successfully"),
+                  ),
+                );
+
+                setState(() {}); // Refresh UI
+              } catch (e) {
+                if (!mounted) return;
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Error deleting account")),
+                );
+              }
             },
             child: const Text("DELETE", style: TextStyle(color: _expenseRed)),
           ),
@@ -387,7 +406,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
             ),
           ),
           Text(
-            account.formattedBalance, // Displays: $500.00
+            account.formattedBalance,
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.bold,

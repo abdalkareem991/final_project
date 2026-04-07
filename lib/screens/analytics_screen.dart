@@ -125,7 +125,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         itemBuilder: (context, index) {
           final String filter = _filterOrder[index];
           final bool isSelected = _selectedFilter == filter;
-
           return ChoiceChip(
             label: Text(filter),
             selected: isSelected,
