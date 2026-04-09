@@ -1,9 +1,11 @@
+import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'core/app_theme.dart';
+import 'screens/dashboard_screen.dart'; // Added dashboard screen
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart'; // Added registration screen
-import 'screens/dashboard_screen.dart'; // Added dashboard screen
 import 'screens/update_password_screen.dart';
 
 void main() async {
@@ -11,6 +13,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Supabase before the app starts with your credentials
+  await NotificationService().initNotification();
+
   await Supabase.initialize(
     url: 'https://nkzcmxuthxwpgmhvnxcb.supabase.co',
     anonKey: 'sb_publishable_GaooL_VcN7UWg2HgPC2z9g_7v3Zb_en',
