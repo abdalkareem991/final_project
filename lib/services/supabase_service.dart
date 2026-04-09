@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/profile_model.dart';
+import '../models/task_model.dart';
 import '../models/wallet_model.dart';
 
 class SupabaseService {
@@ -106,7 +107,7 @@ class SupabaseService {
   // 3. WALLET / ACCOUNT OPERATIONS
   // ===========================================================================
 
-  /// Adds a new wallet or account for the current user
+  /// Adds a new wallet for the current user
   Future<void> addWallet({
     required String name,
     required double balance,
@@ -138,7 +139,6 @@ class SupabaseService {
           .from('wallets')
           .select()
           .eq('user_id', user.id);
-
       return (response as List)
           .map((json) => WalletModel.fromJson(json))
           .toList();
@@ -148,11 +148,22 @@ class SupabaseService {
     }
   }
 
+  /// Deletes a specific wallet and its linked data
+  Future<void> deleteWallet(String walletId) async {
+    try {
+      await client.from('wallets').delete().eq('id', walletId);
+      debugPrint('Wallet deleted successfully');
+    } catch (error) {
+      debugPrint('Delete Wallet Error: $error');
+      rethrow;
+    }
+  }
+
   // ===========================================================================
   // 4. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
 
-  /// NEW: Fetches real transactions for account statement
+  /// Fetches transactions for account statement
   Future<List<Map<String, dynamic>>> getTransactions() async {
     try {
       final user = client.auth.currentUser;
@@ -171,18 +182,18 @@ class SupabaseService {
     }
   }
 
-  /// Records a transaction and updates the corresponding wallet balance
+  /// Records a manual transaction and updates wallet balance
   Future<void> createTransaction({
     required String walletId,
     required double amount,
-    required String type, // 'Income' or 'Expense'
+    required String type,
     required String description,
   }) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // Insert transaction record
+      // 1. Insert transaction record
       await client.from('transactions').insert({
         'user_id': user.id,
         'wallet_id': walletId,
@@ -191,46 +202,131 @@ class SupabaseService {
         'description': description,
       });
 
-      // Fetch current wallet balance
+      // 2. Update wallet balance
       final walletData = await client
           .from('wallets')
           .select('balance')
           .eq('id', walletId)
           .single();
-
       double currentBalance = (walletData['balance'] as num).toDouble();
-
-      // Calculate new balance
       double newBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
 
-      // Update wallet balance in DB
       await client
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', walletId);
-
-      debugPrint('Transaction Successful. New Balance: $newBalance');
+      debugPrint('Manual transaction successful.');
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
       rethrow;
     }
   }
 
-  Future<void> deleteWallet(String walletId) async {
+  // ===========================================================================
+  // 5. TASK OPERATIONS (TODO LIST)
+  // ===========================================================================
+
+  /// Fetches tasks for a specific day
+  Future<List<TaskModel>> getTasks(DateTime date) async {
     try {
-      // Supabase handle Cascade delete if configured,
-      // otherwise we delete the wallet directly
-      await client.from('wallets').delete().eq('id', walletId);
-      debugPrint('Wallet deleted successfully');
+      final user = client.auth.currentUser;
+      if (user == null) return [];
+
+      final dateStr = date.toIso8601String().split('T')[0];
+      final response = await client
+          .from('tasks')
+          .select()
+          .eq('user_id', user.id)
+          .gte('due_date', '$dateStr 00:00:00')
+          .lte('due_date', '$dateStr 23:59:59');
+
+      return (response as List)
+          .map((task) => TaskModel.fromJson(task))
+          .toList();
     } catch (error) {
-      debugPrint('Delete Wallet Error: $error');
+      debugPrint('Fetch Tasks Error: $error');
+      return [];
+    }
+  }
+
+  /// Adds a new task with safety checks
+  Future<void> addTask(TaskModel task) async {
+    try {
+      await client.from('tasks').insert(task.toJson());
+      debugPrint('Task saved successfully to cloud database.');
+    } on PostgrestException catch (error) {
+      debugPrint('Postgrest Error (Code: ${error.code}): ${error.message}');
+      rethrow;
+    } catch (error) {
+      debugPrint('Unexpected Error in addTask: $error');
       rethrow;
     }
   }
 
-  /// Fetches a filtered summary of transactions for analytics
+  /// Toggles task status in the database
+  Future<void> toggleTaskStatus(String taskId, bool currentStatus) async {
+    try {
+      await client
+          .from('tasks')
+          .update({'is_completed': !currentStatus})
+          .eq('id', taskId);
+    } catch (error) {
+      debugPrint('Toggle Task Error: $error');
+    }
+  }
+
+  /// Deletes a specific task
+  Future<void> deleteTask(String taskId) async {
+    try {
+      await client.from('tasks').delete().eq('id', taskId);
+    } catch (error) {
+      debugPrint('Delete Task Error: $error');
+    }
+  }
+
+  /// Executes a wallet transaction linked to a specific task completion
+  Future<void> executeTaskTransaction(TaskModel task) async {
+    try {
+      if (task.linkedWalletId == null || task.amount <= 0) return;
+
+      // 1. Fetch linked wallet balance
+      final walletData = await client
+          .from('wallets')
+          .select('balance')
+          .eq('id', task.linkedWalletId!)
+          .single();
+      double currentBalance = (walletData['balance'] as num).toDouble();
+      double newBalance = currentBalance - task.amount;
+
+      // 2. Update wallet balance
+      await client
+          .from('wallets')
+          .update({'balance': newBalance})
+          .eq('id', task.linkedWalletId!);
+
+      // 3. Log into transactions history
+      await client.from('transactions').insert({
+        'user_id': task.userId,
+        'wallet_id': task.linkedWalletId,
+        'amount': task.amount,
+        'type': 'Expense',
+        'description': 'Linked Task Payment: ${task.title}',
+      });
+
+      debugPrint('Financial deduction successful for task: ${task.title}');
+    } catch (e) {
+      debugPrint('Task Transaction Action Error: $e');
+      rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 6. ANALYTICS LOGIC
+  // ===========================================================================
+
+  /// Fetches summary data for analytics
   Future<Map<String, double>> getFilteredSummary(String filter) async {
     try {
       final user = client.auth.currentUser;
@@ -266,7 +362,6 @@ class SupabaseService {
       for (var item in response as List) {
         String type = item['type'];
         double amount = (item['amount'] as num).toDouble();
-
         if (summary.containsKey(type)) {
           summary[type] = (summary[type] ?? 0) + amount;
         }
@@ -278,7 +373,59 @@ class SupabaseService {
     }
   }
 
-  /// Legacy compatibility alias
+  // 1. Get stats for the "Cards" at the top
+  Future<Map<String, int>> getTaskStats() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return {'total': 0, 'completed': 0, 'pending': 0};
+
+      final response = await client
+          .from('tasks')
+          .select('is_completed')
+          .eq('user_id', user.id);
+
+      final List tasks = response as List;
+      int total = tasks.length;
+      int completed = tasks.where((t) => t['is_completed'] == true).length;
+      int pending = total - completed;
+
+      return {'total': total, 'completed': completed, 'pending': pending};
+    } catch (e) {
+      debugPrint('Error fetching stats: $e');
+      return {'total': 0, 'completed': 0, 'pending': 0};
+    }
+  }
+
+  // 2. Get task counts per day for the Calendar
+  Future<Map<DateTime, int>> getTasksCountForMonth(DateTime month) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return {};
+
+      final firstDay = DateTime(month.year, month.month, 1);
+      final lastDay = DateTime(month.year, month.month + 1, 0);
+
+      final response = await client
+          .from('tasks')
+          .select('due_date')
+          .eq('user_id', user.id)
+          .gte('due_date', firstDay.toIso8601String())
+          .lte('due_date', lastDay.toIso8601String());
+
+      Map<DateTime, int> counts = {};
+      for (var row in response as List) {
+        DateTime date = DateTime.parse(row['due_date']);
+        DateTime normalizedDate = DateTime(date.year, date.month, date.day);
+        counts[normalizedDate] = (counts[normalizedDate] ?? 0) + 1;
+      }
+      return counts;
+    } catch (e) {
+      debugPrint('Error fetching calendar counts: $e');
+      return {};
+    }
+  }
+
+  /// Legacy compatibility
   Future<Map<String, double>> getCategorySummary() async {
     return await getFilteredSummary('Month');
   }
