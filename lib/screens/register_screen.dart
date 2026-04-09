@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -11,6 +12,7 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _userNameController = TextEditingController();
+  final _storage = const FlutterSecureStorage();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -33,6 +35,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _userNameController.text.trim(),
           _phoneController.text.trim(),
         );
+
+        await _storage.write(key: 'email', value: _emailController.text.trim());
+        await _storage.write(key: 'password', value: _passwordController.text.trim());
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
