@@ -1,6 +1,7 @@
 // lib/screens/settings_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/profile_model.dart';
@@ -18,18 +19,46 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _supabaseService = SupabaseService();
 
+  // Local Settings State
+  bool _isBiometricEnabled = false;
+  bool _isNotificationsEnabled = true;
+  String _selectedLanguage = "English";
+  String _selectedCurrency = "JOD (JD)";
+
   // Theme Constants
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
 
-  /// Logic: Sign out from Supabase and clear session
+  @override
+  void initState() {
+    super.initState();
+    _loadUserSettings(); // Load saved preferences on startup
+  }
+
+  // Fetch saved preferences from local storage
+  Future<void> _loadUserSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isBiometricEnabled = prefs.getBool('biometric_enabled') ?? false;
+      _isNotificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
+      _selectedLanguage = prefs.getString('language') ?? "English";
+      _selectedCurrency = prefs.getString('currency') ?? "JOD (JD)";
+    });
+  }
+
+  // Save specific preference to local storage
+  Future<void> _updatePreference(String key, dynamic value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value is bool) await prefs.setBool(key, value);
+    if (value is String) await prefs.setString(key, value);
+    _loadUserSettings();
+  }
+
   Future<void> _handleSignOut() async {
     try {
       await Supabase.instance.client.auth.signOut();
       if (!mounted) return;
-
-      // Navigate to Login and remove all previous routes
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -38,6 +67,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       debugPrint("Sign Out Error: $e");
     }
+  }
+
+  // Show detailed profile information in a Modal Bottom Sheet
+  void _showProfileDetails(ProfileModel profile) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+      ),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(25.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "User Details",
+              style: TextStyle(
+                color: _accentGreen,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Divider(color: Colors.white10, height: 30),
+            _detailRow("Full Name", profile.fullName),
+            _detailRow("Phone Number", profile.phone ?? "Not provided"),
+            _detailRow(
+              "Net Worth",
+              "JD ${profile.totalNetWorth.toStringAsFixed(2)}",
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey)),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -74,9 +158,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.fingerprint,
                 title: "Biometric Authentication",
                 trailing: Switch(
-                  value: true,
-                  onChanged: (val) {},
+                  value: _isBiometricEnabled,
+                  onChanged: (val) =>
+                      _updatePreference('biometric_enabled', val),
                   activeThumbColor: _accentGreen,
+                  activeTrackColor: _accentGreen.withOpacity(0.3),
+                  inactiveThumbColor: Colors.grey,
                 ),
               ),
             ]),
@@ -85,17 +172,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildSettingItem(
                 icon: Icons.language,
                 title: "Language",
-                subtitle: "English",
+                subtitle: _selectedLanguage,
+                onTap: () => _showSelectionDialog("Select Language", [
+                  "English",
+                  "Arabic",
+                ], 'language'),
               ),
               _buildSettingItem(
                 icon: Icons.monetization_on_outlined,
                 title: "Default Currency",
-                subtitle: "USD (\$)",
+                subtitle: _selectedCurrency,
+                onTap: () => _showSelectionDialog("Select Currency", [
+                  "JOD (JD)",
+                  "USD (\$)",
+                ], 'currency'),
               ),
               _buildSettingItem(
                 icon: Icons.notifications_none,
                 title: "Push Notifications",
-                trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                trailing: Switch(
+                  value: _isNotificationsEnabled,
+                  onChanged: (val) =>
+                      _updatePreference('notifications_enabled', val),
+                  activeThumbColor: _accentGreen,
+                ),
               ),
             ]),
             const SizedBox(height: 40),
@@ -106,46 +206,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _showSelectionDialog(String title, List<String> options, String key) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: options
+              .map(
+                (opt) => ListTile(
+                  title: Text(
+                    opt,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  onTap: () {
+                    _updatePreference(key, opt);
+                    Navigator.pop(context);
+                  },
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+
   Widget _buildProfileSection() {
     return FutureBuilder<ProfileModel>(
       future: _supabaseService.getProfileData(),
       builder: (context, snapshot) {
-        final name = snapshot.data?.fullName ?? "User";
-        final phone = snapshot.data?.phone ?? "No phone added";
-
-        return Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: _cardColor,
-            borderRadius: BorderRadius.circular(25),
-          ),
-          child: Row(
-            children: [
-              const CircleAvatar(
-                radius: 35,
-                backgroundColor: _accentGreen,
-                child: Icon(Icons.person, size: 40, color: Colors.black),
-              ),
-              const SizedBox(width: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+        if (!snapshot.hasData)
+          return const LinearProgressIndicator(color: _accentGreen);
+        final profile = snapshot.data!;
+        return InkWell(
+          onTap: () => _showProfileDetails(profile),
+          borderRadius: BorderRadius.circular(25),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _cardColor,
+              borderRadius: BorderRadius.circular(25),
+              border: Border.all(color: Colors.white.withOpacity(0.05)),
+            ),
+            child: Row(
+              children: [
+                const CircleAvatar(
+                  radius: 35,
+                  backgroundColor: _accentGreen,
+                  child: Icon(Icons.person, size: 40, color: Colors.black),
+                ),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        profile.fullName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        profile.phone ?? "Tap to view info",
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 5),
-                  Text(
-                    phone,
-                    style: const TextStyle(color: Colors.grey, fontSize: 14),
-                  ),
-                ],
-              ),
-            ],
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.grey,
+                  size: 16,
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -187,7 +329,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }) {
     return ListTile(
       onTap: onTap,
-      leading: Icon(icon, color: Colors.white70, size: 22),
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: Colors.white70, size: 20),
+      ),
       title: Text(
         title,
         style: const TextStyle(color: Colors.white, fontSize: 15),
@@ -198,7 +347,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: const TextStyle(color: Colors.grey, fontSize: 12),
             )
           : null,
-      trailing: trailing,
+      trailing:
+          trailing ??
+          (onTap != null
+              ? const Icon(Icons.chevron_right, color: Colors.grey, size: 20)
+              : null),
     );
   }
 

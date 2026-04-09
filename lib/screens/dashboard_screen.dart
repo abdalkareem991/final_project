@@ -5,6 +5,7 @@ import 'package:final_project/screens/ai_assistant_screen.dart'
 import 'package:final_project/screens/analytics_screen.dart';
 import 'package:final_project/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/profile_model.dart';
 import '../models/wallet_model.dart';
@@ -25,8 +26,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
 
-  final List<Widget> _screens = [
-    const _DashboardMainContent(),
+  // Global key to access the state of the main content for refreshing currency
+  final GlobalKey<_DashboardMainContentState> _mainContentKey = GlobalKey();
+
+  List<Widget> get _screens => [
+    _DashboardMainContent(key: _mainContentKey),
     const MyAccountScreen(),
     const AnalyticsScreen(),
     const TodoListScreen(),
@@ -37,6 +41,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bgColor,
+      // We use IndexedStack to maintain the scroll position of screens
       body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: _buildBottomNav(),
     );
@@ -49,7 +54,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       unselectedItemColor: Colors.grey,
       type: BottomNavigationBarType.fixed,
       currentIndex: _selectedIndex,
-      onTap: (index) => setState(() => _selectedIndex = index),
+      onTap: (index) {
+        setState(() => _selectedIndex = index);
+        // Force refresh currency settings when navigating back to Home
+        if (index == 0) {
+          _mainContentKey.currentState?.loadCurrencyPreference();
+        }
+      },
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home), label: "HOME"),
         BottomNavigationBarItem(
@@ -71,7 +82,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 }
 
 class _DashboardMainContent extends StatefulWidget {
-  const _DashboardMainContent();
+  const _DashboardMainContent({super.key});
 
   @override
   State<_DashboardMainContent> createState() => _DashboardMainContentState();
@@ -80,10 +91,42 @@ class _DashboardMainContent extends StatefulWidget {
 class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
 
+  // Currency Logic State
+  String _currencySymbol = "JD";
+  double _exchangeRate = 1.0;
+
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
   static const Color _expenseRed = Color(0xFFFF6B6B);
+
+  @override
+  void initState() {
+    super.initState();
+    loadCurrencyPreference();
+  }
+
+  // Fetch saved currency from SharedPreferences
+  Future<void> loadCurrencyPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    String savedCurrency = prefs.getString('currency') ?? "JOD (JD)";
+
+    setState(() {
+      if (savedCurrency.contains("USD")) {
+        _currencySymbol = "\$";
+        _exchangeRate = 1.41; // Assumption: 1 JOD = 1.41 USD
+      } else {
+        _currencySymbol = "JD";
+        _exchangeRate = 1.0;
+      }
+    });
+  }
+
+  // Utility to format any amount based on the current currency state
+  String _formatAmount(double amount) {
+    double converted = amount * _exchangeRate;
+    return "$_currencySymbol${converted.toStringAsFixed(2)}";
+  }
 
   void _showAddTransactionModal() {
     final amountController = TextEditingController();
@@ -150,7 +193,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     controller: amountController,
                     keyboardType: TextInputType.number,
                     style: const TextStyle(color: Colors.white, fontSize: 22),
-                    decoration: _inputStyle("Amount", Icons.attach_money),
+                    decoration: _inputStyle(
+                      "Amount (In JOD)",
+                      Icons.attach_money,
+                    ),
                   ),
                   const SizedBox(height: 15),
                   FutureBuilder<List<WalletModel>>(
@@ -194,7 +240,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         );
                         if (!mounted) return;
                         Navigator.pop(context);
-                        setState(() {}); // Refresh Dashboard
+                        setState(() {});
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -248,9 +294,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected
-                ? color.withValues(alpha: 0.2)
-                : Colors.transparent,
+            color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: isSelected ? color : Colors.white10),
           ),
@@ -283,7 +327,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         actions: [_buildAIChip(context), const SizedBox(width: 15)],
       ),
       body: RefreshIndicator(
-        onRefresh: () async => setState(() {}),
+        onRefresh: () async {
+          await loadCurrencyPreference();
+          setState(() {});
+        },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
@@ -291,24 +338,23 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
             children: [
               _buildTotalBalanceCard(_supabaseService),
               const SizedBox(height: 20),
-              // يمكنك لاحقاً ربط هذه المؤشرات ببيانات حقيقية عبر getFilteredSummary
+              // Dummy stats formatted with current currency
               _buildProgressCard(
                 "Monthly Income",
-                "\$4,200 / \$6,000",
+                "${_formatAmount(4200)} / ${_formatAmount(6000)}",
                 0.7,
                 _accentGreen,
               ),
               const SizedBox(height: 12),
               _buildProgressCard(
                 "Monthly Expenses",
-                "\$2,840 / \$3,500",
+                "${_formatAmount(2840)} / ${_formatAmount(3500)}",
                 0.8,
                 _expenseRed,
               ),
               const SizedBox(height: 25),
               _buildRecentTransactionsHeader(),
 
-              // --- التفعيل الحقيقي لكشف الحساب هنا ---
               FutureBuilder<List<Map<String, dynamic>>>(
                 future: _supabaseService.getTransactions(),
                 builder: (context, snapshot) {
@@ -335,7 +381,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                       return _buildTransactionItem(
                         tx['description'] ?? "Transaction",
                         tx['created_at'].toString().split('T')[0],
-                        "${isExpense ? '-' : '+'}\$${tx['amount']}",
+                        "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}",
                         isExpense ? _expenseRed : _accentGreen,
                         isExpense: isExpense,
                       );
@@ -355,7 +401,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  // الدوال المساعدة (UI Helper Functions) كما هي مع تحديث بسيط
   Widget _buildLeadingIcon() => Padding(
     padding: const EdgeInsets.all(8.0),
     child: Container(
@@ -375,9 +420,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: _accentGreen.withValues(alpha: 0.1),
+        color: _accentGreen.withOpacity(0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
+        border: Border.all(color: _accentGreen.withOpacity(0.3)),
       ),
       child: const Row(
         mainAxisSize: MainAxisSize.min,
@@ -402,8 +447,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
       future: service.getProfileData(),
       builder: (context, snapshot) {
         String balance = snapshot.hasData
-            ? "\$${snapshot.data!.totalNetWorth.toStringAsFixed(2)}"
-            : "\$0.00";
+            ? _formatAmount(snapshot.data!.totalNetWorth)
+            : _formatAmount(0.0);
         return Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
@@ -514,7 +559,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.2),
+              color: iconColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
