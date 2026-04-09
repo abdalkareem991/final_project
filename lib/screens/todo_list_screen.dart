@@ -22,6 +22,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
   // Data storage
   Map<String, int> _taskStats = {'total': 0, 'completed': 0, 'pending': 0};
+  // ignore: unused_field
   Map<DateTime, int> _tasksCountMap = {};
 
   // Multi-Selection Logic
