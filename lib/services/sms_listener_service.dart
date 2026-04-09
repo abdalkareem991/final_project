@@ -10,6 +10,7 @@ import 'supabase_service.dart';
 class SMSListenerService {
   final Telephony telephony = Telephony.instance;
   final AIService _aiService = AIService();
+  // ignore: unused_field
   final SupabaseService _supabaseService = SupabaseService();
 
   /// Starts listening for incoming SMS messages in both foreground and background
