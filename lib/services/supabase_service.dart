@@ -108,25 +108,38 @@ class SupabaseService {
   // 3. WALLET / ACCOUNT OPERATIONS
   // ===========================================================================
 
-  /// Adds a new wallet for the current user
-  Future<void> addWallet({
-    required String name,
-    required double balance,
-    required String type,
-  }) async {
+  /// Logic: Adds a new wallet using the WalletModel structure
+  Future<void> addWallet(WalletModel wallet) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
+      // Exclude 'id' because Supabase generates it automatically
       await client.from('wallets').insert({
         'user_id': user.id,
-        'name': name,
-        'balance': balance,
-        'type': type,
+        'name': wallet.name,
+        'balance': wallet.balance,
+        'type': wallet.type,
+        'currency': wallet.currency,
       });
+      debugPrint('Wallet added successfully');
     } catch (error) {
       debugPrint('Add Wallet Error: $error');
       rethrow;
+    }
+  }
+
+  /// Logic: Dynamically calculates the total balance from all active wallets
+  Future<double> calculateTotalNetWorth() async {
+    try {
+      final wallets = await getWallets();
+      if (wallets.isEmpty) return 0.0;
+
+      // Aggregate the balance of all wallets
+      return wallets.fold<double>(0.0, (sum, wallet) => sum + wallet.balance);
+    } catch (e) {
+      debugPrint('Calculate Net Worth Error: $e');
+      return 0.0;
     }
   }
 
@@ -156,6 +169,24 @@ class SupabaseService {
       debugPrint('Wallet deleted successfully');
     } catch (error) {
       debugPrint('Delete Wallet Error: $error');
+      rethrow;
+    }
+  }
+
+  /// Logic: Updates an existing wallet using the WalletModel structure
+  Future<void> updateWallet(WalletModel wallet) async {
+    try {
+      final Map<String, dynamic> updateData = {
+        'name': wallet.name,
+        'balance': wallet.balance,
+        'type': wallet.type,
+        'currency': wallet.currency,
+      };
+
+      await client.from('wallets').update(updateData).eq('id', wallet.id);
+      debugPrint('Wallet updated successfully');
+    } catch (error) {
+      debugPrint('Update Wallet Error: $error');
       rethrow;
     }
   }

@@ -5,12 +5,14 @@ class WalletModel {
   final String name; // Wallet or Account name
   final double balance; // Available funds
   final String currency; // Currency symbol (e.g., $, JOD, SAR)
+  final String type; // Wallet type (Bank, Cash, Mobile Wallet)
 
   // Standard Constructor with named parameters
   WalletModel({
     required this.id,
     required this.name,
     required this.balance,
+    required this.type,
     this.currency = '\$',
   });
 
@@ -22,11 +24,13 @@ class WalletModel {
     String? name,
     double? balance,
     String? currency,
+    String? type,
   }) {
     return WalletModel(
       id: id ?? this.id,
       name: name ?? this.name,
       balance: balance ?? this.balance,
+      type: type ?? this.type,
       currency: currency ?? this.currency,
     );
   }
@@ -37,13 +41,20 @@ class WalletModel {
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? 'Unnamed Account',
       balance: (json['balance'] as num? ?? 0.0).toDouble(),
+      type: json['type'] as String? ?? 'Bank',
       currency: json['currency'] as String? ?? '\$',
     );
   }
 
   /// Transformation: Object to JSON (for Database updates)
   Map<String, dynamic> toJson() {
-    return {'id': id, 'name': name, 'balance': balance, 'currency': currency};
+    return {
+      'id': id,
+      'name': name,
+      'balance': balance,
+      'type': type,
+      'currency': currency,
+    };
   }
 
   /// Logic: Performance/Efficiency Calculation
