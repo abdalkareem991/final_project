@@ -501,10 +501,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
         var tasks = snapshot.data ?? [];
 
         // Filter logic
-        if (_filterStatus == "Pending")
+        if (_filterStatus == "Pending") {
           tasks = tasks.where((t) => !t.isCompleted).toList();
-        if (_filterStatus == "Completed")
+        }
+        if (_filterStatus == "Completed") {
           tasks = tasks.where((t) => t.isCompleted).toList();
+        }
 
         // Sort logic: High > Medium > Low
         tasks.sort((a, b) {
@@ -598,10 +600,11 @@ class _TodoListScreenState extends State<TodoListScreen> {
               ),
               onChanged: (v) {
                 setState(() {
-                  if (v == true)
+                  if (v == true) {
                     _selectedTaskIds.add(task.id);
-                  else
+                  } else {
                     _selectedTaskIds.remove(task.id);
+                  }
                 });
               },
             )
@@ -774,10 +777,11 @@ class _TodoListScreenState extends State<TodoListScreen> {
       return GestureDetector(
         onTap: () {
           setState(() {
-            if (isSelectedForDelete)
+            if (isSelectedForDelete) {
               _selectedTaskIds.remove(task.id);
-            else
+            } else {
               _selectedTaskIds.add(task.id);
+            }
           });
         },
         child: cardContent,
@@ -1269,11 +1273,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     ),
                     lastDate: DateTime.now().add(const Duration(days: 365)),
                   );
-                  if (range != null)
+                  if (range != null) {
                     setModalState(() {
                       startDate = range.start;
                       endDate = range.end;
                     });
+                  }
                 },
                 child: Container(
                   padding: const EdgeInsets.all(16),
@@ -1388,11 +1393,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
                             context: context,
                             initialTime: TimeOfDay.now(),
                           );
-                          if (time != null)
+                          if (time != null) {
                             setModalState(() {
                               enableNotification = true;
                               notificationTime = time;
                             });
+                          }
                         } else {
                           setModalState(() {
                             enableNotification = false;
