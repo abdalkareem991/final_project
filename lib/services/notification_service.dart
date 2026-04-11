@@ -1,6 +1,8 @@
 // lib/services/notification_service.dart
 
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -12,6 +14,24 @@ class NotificationService {
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
+
+  /// Logic: Checks if notifications are globally enabled in settings
+  Future<bool> get isNotificationEnabled async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('notifications_enabled') ?? true;
+  }
+
+  /// Logic: Cancels a specific scheduled notification using its unique ID
+  Future<void> cancelNotification(int id) async {
+    await flutterLocalNotificationsPlugin.cancel(id);
+    debugPrint("Notification with ID $id cancelled.");
+  }
+
+  /// Logic: Clears all scheduled notifications (Useful for sign-out or bulk delete)
+  Future<void> cancelAllNotifications() async {
+    await flutterLocalNotificationsPlugin.cancelAll();
+    debugPrint("All notifications cancelled.");
+  }
 
   /// Logic: Initializes the notification settings for both Android and iOS
   Future<void> initNotification() async {
@@ -68,6 +88,12 @@ class NotificationService {
     String body,
     DateTime scheduledDate,
   ) async {
+    final isEnabled = await isNotificationEnabled;
+    if (!isEnabled) {
+      // Do not schedule if globally disabled
+      return;
+    }
+
     await flutterLocalNotificationsPlugin.zonedSchedule(
       id,
       title,

@@ -26,6 +26,8 @@ class _MyAccountScreenState extends State<MyAccountScreen>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+  late Future<ProfileModel> _profileFuture = _supabaseService.getProfileData();
+  late Future<List<WalletModel>> _walletsFuture = _supabaseService.getWallets();
 
   @override
   void initState() {
@@ -45,6 +47,11 @@ class _MyAccountScreenState extends State<MyAccountScreen>
           ),
         );
     _animationController.forward();
+  }
+
+  void _fetchData() {
+    _profileFuture = _supabaseService.getProfileData();
+    _walletsFuture = _supabaseService.getWallets();
   }
 
   @override
@@ -124,12 +131,14 @@ class _MyAccountScreenState extends State<MyAccountScreen>
                       balanceController.text.isNotEmpty) {
                     await _supabaseService.addWallet(
                       name: nameController.text,
-                      balance: double.parse(balanceController.text),
+                      balance: double.tryParse(balanceController.text) ?? 0.0,
                       type: selectedType,
                     );
                     if (!mounted) return;
                     Navigator.pop(context);
-                    setState(() {}); // Refresh the list after adding
+                    setState(() {
+                      _fetchData();
+                    });
                   }
                 },
                 style: ElevatedButton.styleFrom(
@@ -183,7 +192,12 @@ class _MyAccountScreenState extends State<MyAccountScreen>
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: () async => setState(() {}),
+        onRefresh: () async {
+          setState(() => _fetchData());
+          try {
+            await Future.wait([_profileFuture, _walletsFuture]);
+          } catch (_) {}
+        },
         color: _primaryGreen,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -222,7 +236,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
 
   Widget _buildTotalNetWorthHeader() {
     return FutureBuilder<ProfileModel>(
-      future: _supabaseService.getProfileData(),
+      future: _profileFuture,
       builder: (context, snapshot) {
         String netWorth = snapshot.hasData
             ? "\$${snapshot.data!.totalNetWorth.toStringAsFixed(2)}"
@@ -267,7 +281,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
 
   Widget _buildAccountsListWithAnimation() {
     return FutureBuilder<List<WalletModel>>(
-      future: _supabaseService.getWallets(),
+      future: _walletsFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -368,7 +382,9 @@ class _MyAccountScreenState extends State<MyAccountScreen>
                   ),
                 );
 
-                setState(() {}); // Refresh UI
+                setState(() {
+                  _fetchData();
+                });
               } catch (e) {
                 if (!mounted) return;
                 Navigator.pop(context);

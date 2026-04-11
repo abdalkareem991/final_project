@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:local_auth/local_auth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../services/supabase_service.dart';
 import 'update_password_screen.dart';
 
@@ -14,30 +17,38 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _storage = const FlutterSecureStorage(); //new
-final _auth = LocalAuthentication(); //new
+  final _auth = LocalAuthentication(); //new
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _supabaseService = SupabaseService();
   bool _isLoading = false;
   bool _isPasswordVisible = false;
+  late final StreamSubscription<AuthState> _authStateSubscription;
 
   @override
   void initState() {
     super.initState();
     // Listen for Auth state changes to handle password recovery redirection
-    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
-      final AuthChangeEvent event = data.event;
-      if (event == AuthChangeEvent.passwordRecovery) {
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const UpdatePasswordScreen(),
-            ),
-          );
-        }
-      }
-    });
+    _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
+        .listen((data) {
+          final AuthChangeEvent event = data.event;
+          if (event == AuthChangeEvent.passwordRecovery) {
+            if (mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const UpdatePasswordScreen(),
+                ),
+              );
+            }
+          }
+        });
+  }
+
+  @override
+  void dispose() {
+    _authStateSubscription.cancel();
+    super.dispose();
   }
 
   Future<void> _handleLogin() async {
@@ -54,8 +65,11 @@ final _auth = LocalAuthentication(); //new
         _emailController.text.trim(),
         _passwordController.text.trim(),
       );
-     await _storage.write(key: 'email', value: _emailController.text.trim());
-      await _storage.write(key: 'password', value: _passwordController.text.trim());
+      await _storage.write(key: 'email', value: _emailController.text.trim());
+      await _storage.write(
+        key: 'password',
+        value: _passwordController.text.trim(),
+      );
       // new
 
       if (mounted) {
@@ -74,50 +88,58 @@ final _auth = LocalAuthentication(); //new
       if (mounted) setState(() => _isLoading = false);
     }
   }
+
   Future<void> _handleBiometricLogin() async {
-  try {
-    // 1. Check if the device is capable of biometrics
-    final bool canAuthenticateWithBiometrics = await _auth.canCheckBiometrics;
-    final bool canAuthenticate = canAuthenticateWithBiometrics || await _auth.isDeviceSupported();
+    try {
+      // 1. Check if the device is capable of biometrics
+      final bool canAuthenticateWithBiometrics = await _auth.canCheckBiometrics;
+      final bool canAuthenticate =
+          canAuthenticateWithBiometrics || await _auth.isDeviceSupported();
 
-    if (!canAuthenticate) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Biometrics not available on this device.')),
-      );
-      return;
-    }
-
-    //  Trigger the actual fingerprint scan
-    final bool didAuthenticate = await _auth.authenticate(
-      localizedReason: 'Please authenticate to access your financial vault',
-      options: const AuthenticationOptions(
-        stickyAuth: true,    // Keeps the session if the user briefly leaves the app
-        biometricOnly: true, // Forces fingerprint (no PIN fallback)
-      ),
-    );
-
-    if (didAuthenticate && mounted) {
-      
-      String? savedEmail = await _storage.read(key: 'email');
-      String? savedPw = await _storage.read(key: 'password');
-
-      if (savedEmail != null && savedPw != null) {
-        // Log into Supabase automatically using the saved data
-        await _supabaseService.signIn(savedEmail, savedPw);
-        
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/dashboard');
-        }
-      } else {
+      if (!canAuthenticate) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please log in with your password first to enable fingerprints.')),
+          const SnackBar(
+            content: Text('Biometrics not available on this device.'),
+          ),
         );
+        return;
       }
+
+      //  Trigger the actual fingerprint scan
+      final bool didAuthenticate = await _auth.authenticate(
+        localizedReason: 'Please authenticate to access your financial vault',
+        options: const AuthenticationOptions(
+          stickyAuth:
+              true, // Keeps the session if the user briefly leaves the app
+          biometricOnly: true, // Forces fingerprint (no PIN fallback)
+        ),
+      );
+
+      if (didAuthenticate && mounted) {
+        String? savedEmail = await _storage.read(key: 'email');
+        String? savedPw = await _storage.read(key: 'password');
+
+        if (savedEmail != null && savedPw != null) {
+          // Log into Supabase automatically using the saved data
+          await _supabaseService.signIn(savedEmail, savedPw);
+
+          if (mounted) {
+            Navigator.pushReplacementNamed(context, '/dashboard');
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Please log in with your password first to enable fingerprints.',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Biometric error: $e");
     }
-  } catch (e) {
-    debugPrint("Biometric error: $e");
   }
-}
 
   Future<void> _showForgotPasswordDialog() async {
     final TextEditingController resetEmailController = TextEditingController();
@@ -337,15 +359,16 @@ final _auth = LocalAuthentication(); //new
 
               const SizedBox(height: 50),
               // NEW CODE:
-Row(
-  mainAxisAlignment: MainAxisAlignment.center,
-  children: [
-    GestureDetector(
-      onTap: _handleBiometricLogin, // This links the icon to your fingerprint logic
-      child: _buildQuickLoginIcon(Icons.fingerprint),
-    ),
-  ],
-),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  GestureDetector(
+                    onTap:
+                        _handleBiometricLogin, // This links the icon to your fingerprint logic
+                    child: _buildQuickLoginIcon(Icons.fingerprint),
+                  ),
+                ],
+              ),
             ],
           ),
         ),

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/profile_model.dart';
 import '../models/task_model.dart';
 import '../models/wallet_model.dart';
+import 'notification_service.dart';
 
 class SupabaseService {
   // Initialize Supabase Client
@@ -251,16 +252,53 @@ class SupabaseService {
     }
   }
 
-  /// Adds a new task with safety checks
-  Future<void> addTask(TaskModel task) async {
+  /// Adds a new task and returns the created model with the DB-generated ID
+  Future<TaskModel> addTask(TaskModel task) async {
     try {
-      await client.from('tasks').insert(task.toJson());
+      final response = await client
+          .from('tasks')
+          .insert(task.toJson())
+          .select()
+          .single();
       debugPrint('Task saved successfully to cloud database.');
+      return TaskModel.fromJson(response);
     } on PostgrestException catch (error) {
       debugPrint('Postgrest Error (Code: ${error.code}): ${error.message}');
       rethrow;
     } catch (error) {
       debugPrint('Unexpected Error in addTask: $error');
+      rethrow;
+    }
+  }
+
+  /// Updates an existing task, cleans up old notifications, and reschedules if needed
+  Future<void> updateTask(
+    TaskModel task, {
+    bool rescheduleAlert = false,
+    DateTime? newAlertTime,
+  }) async {
+    try {
+      // 1. Update the record in the Supabase database
+      await client.from('tasks').update(task.toJson()).eq('id', task.id);
+      debugPrint('Task updated successfully in cloud.');
+
+      // 2. Clean up: Always cancel the existing notification using the unique task ID hash
+      await NotificationService().cancelNotification(task.id.hashCode);
+
+      // 3. Reschedule: Set a new notification if requested and the time is valid
+      if (rescheduleAlert &&
+          newAlertTime != null &&
+          newAlertTime.isAfter(DateTime.now())) {
+        await NotificationService().scheduleNotification(
+          task.id.hashCode, // Maintain the same unique ID hash
+          "Task Reminder",
+          task.title,
+          newAlertTime,
+        );
+        debugPrint('New notification scheduled for updated task.');
+      }
+    } catch (error) {
+      debugPrint('Update Task Error: $error');
       rethrow;
     }
   }
@@ -277,10 +315,26 @@ class SupabaseService {
     }
   }
 
-  /// Deletes a specific task
+  /// Updates task notification status indicator
+  Future<void> updateTaskNotificationStatus(
+    String taskId,
+    bool hasNotification,
+  ) async {
+    try {
+      await client
+          .from('tasks')
+          .update({'has_notification': hasNotification})
+          .eq('id', taskId);
+    } catch (error) {
+      debugPrint('Update Notification Status Error: $error');
+    }
+  }
+
+  /// Deletes a specific task and cancels its associated local notification
   Future<void> deleteTask(String taskId) async {
     try {
       await client.from('tasks').delete().eq('id', taskId);
+      await NotificationService().cancelNotification(taskId.hashCode);
     } catch (error) {
       debugPrint('Delete Task Error: $error');
     }
@@ -373,16 +427,20 @@ class SupabaseService {
     }
   }
 
-  // 1. Get stats for the "Cards" at the top
-  Future<Map<String, int>> getTaskStats() async {
+  /// Logic: Get task statistics for a SPECIFIC DAY (Total, Completed, Pending)
+  Future<Map<String, int>> getDailyTaskStats(DateTime date) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) return {'total': 0, 'completed': 0, 'pending': 0};
 
+      final dateStr = date.toIso8601String().split('T')[0];
+
       final response = await client
           .from('tasks')
           .select('is_completed')
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .gte('due_date', '$dateStr 00:00:00')
+          .lte('due_date', '$dateStr 23:59:59');
 
       final List tasks = response as List;
       int total = tasks.length;
@@ -391,7 +449,35 @@ class SupabaseService {
 
       return {'total': total, 'completed': completed, 'pending': pending};
     } catch (e) {
-      debugPrint('Error fetching stats: $e');
+      debugPrint('Error fetching daily stats: $e');
+      return {'total': 0, 'completed': 0, 'pending': 0};
+    }
+  }
+
+  /// Logic: Get task statistics for a SPECIFIC MONTH (Used for Progress Bar)
+  Future<Map<String, int>> getMonthlyTaskStats(DateTime month) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return {'total': 0, 'completed': 0, 'pending': 0};
+
+      final firstDay = DateTime(month.year, month.month, 1);
+      final lastDay = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+
+      final response = await client
+          .from('tasks')
+          .select('is_completed')
+          .eq('user_id', user.id)
+          .gte('due_date', firstDay.toIso8601String())
+          .lte('due_date', lastDay.toIso8601String());
+
+      final List tasks = response as List;
+      int total = tasks.length;
+      int completed = tasks.where((t) => t['is_completed'] == true).length;
+      int pending = total - completed;
+
+      return {'total': total, 'completed': completed, 'pending': pending};
+    } catch (e) {
+      debugPrint('Error fetching monthly stats: $e');
       return {'total': 0, 'completed': 0, 'pending': 0};
     }
   }

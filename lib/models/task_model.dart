@@ -10,6 +10,7 @@ class TaskModel {
   final String? linkedWalletId;
   final double amount;
   final bool isRecurring; // Added this
+  final bool hasNotification;
 
   TaskModel({
     required this.id,
@@ -23,6 +24,7 @@ class TaskModel {
     this.linkedWalletId,
     this.amount = 0.0,
     this.isRecurring = false, // Added this
+    this.hasNotification = false,
   });
 
   factory TaskModel.fromJson(Map<String, dynamic> json) {
@@ -38,6 +40,7 @@ class TaskModel {
       linkedWalletId: json['linked_wallet_id'],
       amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
       isRecurring: json['is_recurring'] ?? false,
+      hasNotification: json['has_notification'] ?? false,
     );
   }
 
@@ -52,5 +55,6 @@ class TaskModel {
     'linked_wallet_id': linkedWalletId,
     'amount': amount,
     'is_recurring': isRecurring,
+    'has_notification': hasNotification,
   };
 }

@@ -1,15 +1,15 @@
 // lib/screens/settings_screen.dart
 
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:final_project/services/notification_service.dart';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/profile_model.dart';
 import '../services/supabase_service.dart';
+import 'bank_selection_screen.dart'; // Your new Privacy feature screen
 import 'login_screen.dart';
 import 'update_password_screen.dart';
-import 'bank_selection_screen.dart'; // Your new Privacy feature screen
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -26,6 +26,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isNotificationsEnabled = true;
   String _selectedLanguage = "English";
   String _selectedCurrency = "JOD (JD)";
+  late final Future<ProfileModel> _profileFuture = _supabaseService
+      .getProfileData();
 
   // UI Theme Constants (Neon-Dark Professional Style)
   static const Color _bgColor = Color(0xFF061414);
@@ -153,7 +155,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: "Change Password",
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const UpdatePasswordScreen()),
+                  MaterialPageRoute(
+                    builder: (context) => const UpdatePasswordScreen(),
+                  ),
                 ),
               ),
               _buildSettingItem(
@@ -161,8 +165,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: "Biometric Authentication",
                 trailing: Switch(
                   value: _isBiometricEnabled,
-                  onChanged: (val) => _updatePreference('biometric_enabled', val),
-                  activeColor: _accentGreen,
+                  onChanged: (val) =>
+                      _updatePreference('biometric_enabled', val),
+                  activeThumbColor: _accentGreen,
                   activeTrackColor: _accentGreen.withOpacity(0.3),
                   inactiveThumbColor: Colors.grey,
                 ),
@@ -176,7 +181,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: "Select banks to track transactions",
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const BankSelectionScreen()),
+                  MaterialPageRoute(
+                    builder: (context) => const BankSelectionScreen(),
+                  ),
                 ),
               ),
               _buildSettingItem(
@@ -194,7 +201,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     }
                   },
-                  activeColor: _accentGreen,
+                  activeThumbColor: _accentGreen,
                 ),
               ),
             ]),
@@ -204,13 +211,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.language,
                 title: "Language",
                 subtitle: _selectedLanguage,
-                onTap: () => _showSelectionDialog("Select Language", ["English", "Arabic"], 'language'),
+                onTap: () => _showSelectionDialog("Select Language", [
+                  "English",
+                  "Arabic",
+                ], 'language'),
               ),
               _buildSettingItem(
                 icon: Icons.monetization_on_outlined,
                 title: "Default Currency",
                 subtitle: _selectedCurrency,
-                onTap: () => _showSelectionDialog("Select Currency", ["JOD (JD)", "USD (\$)"], 'currency'),
+                onTap: () => _showSelectionDialog("Select Currency", [
+                  "JOD (JD)",
+                  "USD (\$)",
+                ], 'currency'),
               ),
             ]),
             const SizedBox(height: 40),
@@ -230,13 +243,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: Text(title, style: const TextStyle(color: Colors.white)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          children: options.map((opt) => ListTile(
-            title: Text(opt, style: const TextStyle(color: Colors.white70)),
-            onTap: () {
-              _updatePreference(key, opt);
-              Navigator.pop(context);
-            },
-          )).toList(),
+          children: options
+              .map(
+                (opt) => ListTile(
+                  title: Text(
+                    opt,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  onTap: () {
+                    _updatePreference(key, opt);
+                    Navigator.pop(context);
+                  },
+                ),
+              )
+              .toList(),
         ),
       ),
     );
@@ -244,9 +264,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildProfileSection() {
     return FutureBuilder<ProfileModel>(
-      future: _supabaseService.getProfileData(),
+      future: _profileFuture,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const LinearProgressIndicator(color: _accentGreen);
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const LinearProgressIndicator(color: _accentGreen);
+        }
+        if (snapshot.hasError || !snapshot.hasData) {
+          return const SizedBox();
+        }
         final profile = snapshot.data!;
         return InkWell(
           onTap: () => _showProfileDetails(profile),
@@ -272,17 +297,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Text(
                         profile.fullName,
-                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 5),
                       Text(
                         profile.phone ?? "No phone number added",
-                        style: const TextStyle(color: Colors.grey, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 14,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const Icon(Icons.arrow_forward_ios, color: Colors.grey, size: 16),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.grey,
+                  size: 16,
+                ),
               ],
             ),
           ),
@@ -299,11 +335,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           padding: const EdgeInsets.fromLTRB(10, 0, 0, 10),
           child: Text(
             title,
-            style: const TextStyle(color: _accentGreen, fontWeight: FontWeight.bold, fontSize: 13),
+            style: const TextStyle(
+              color: _accentGreen,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
           ),
         ),
         Container(
-          decoration: BoxDecoration(color: _cardColor, borderRadius: BorderRadius.circular(20)),
+          decoration: BoxDecoration(
+            color: _cardColor,
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Column(children: items),
         ),
       ],
@@ -327,9 +370,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         child: Icon(icon, color: Colors.white70, size: 20),
       ),
-      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 15)),
-      subtitle: subtitle != null ? Text(subtitle, style: const TextStyle(color: Colors.grey, fontSize: 12)) : null,
-      trailing: trailing ?? (onTap != null ? const Icon(Icons.chevron_right, color: Colors.grey, size: 20) : null),
+      title: Text(
+        title,
+        style: const TextStyle(color: Colors.white, fontSize: 15),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
+            )
+          : null,
+      trailing:
+          trailing ??
+          (onTap != null
+              ? const Icon(Icons.chevron_right, color: Colors.grey, size: 20)
+              : null),
     );
   }
 
@@ -337,7 +392,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ElevatedButton.icon(
       onPressed: _handleSignOut,
       icon: const Icon(Icons.logout, color: Colors.black),
-      label: const Text("Logout", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+      label: const Text(
+        "Logout",
+        style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+      ),
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.white,
         minimumSize: const Size(double.infinity, 55),
