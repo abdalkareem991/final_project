@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../models/category_model.dart';
 import '../models/profile_model.dart';
 import '../models/task_model.dart';
 import '../models/wallet_model.dart';
@@ -132,10 +132,11 @@ class SupabaseService {
   /// Logic: Dynamically calculates the total balance from all active wallets
   Future<double> calculateTotalNetWorth() async {
     try {
-      final wallets = await getWallets();
+      // We call getWallets() first to make sure we have the latest data from the DB
+      final wallets = await getWallets(); 
       if (wallets.isEmpty) return 0.0;
 
-      // Aggregate the balance of all wallets
+      // This sums up every wallet's balance into one total number
       return wallets.fold<double>(0.0, (sum, wallet) => sum + wallet.balance);
     } catch (e) {
       debugPrint('Calculate Net Worth Error: $e');
@@ -213,45 +214,101 @@ class SupabaseService {
       return [];
     }
   }
+  /// Fetches all categories (Income & Expense) for the user
+  Future<List<CategoryModel>> getCategories() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return [];
 
+      final response = await client
+          .from('categories')
+          .select()
+          .eq('user_id', user.id);
+
+      return (response as List)
+          .map((json) => CategoryModel.fromJson(json))
+          .toList();
+    } catch (error) {
+      debugPrint('Fetch Categories Error: $error');
+      return [];
+    }
+  }
+
+  /// Records a manual transaction and updates wallet balance
   /// Records a manual transaction and updates wallet balance
   Future<void> createTransaction({
     required String walletId,
     required double amount,
     required String type,
     required String description,
+    required int categoryId, // Added Category Support
   }) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // 1. Insert transaction record
+      // 1. Insert transaction record with Category ID
       await client.from('transactions').insert({
         'user_id': user.id,
         'wallet_id': walletId,
         'amount': amount,
         'type': type,
         'description': description,
+        'category_id': categoryId, // Links to your CategoryModel
       });
 
-      // 2. Update wallet balance
+      // 2. Fetch current wallet balance
       final walletData = await client
           .from('wallets')
           .select('balance')
           .eq('id', walletId)
           .single();
+          
       double currentBalance = (walletData['balance'] as num).toDouble();
+      
+      // 3. Calculate new balance
+      // Logic: If Income -> Add, If Expense -> Subtract
       double newBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
 
+      // 4. Update the wallet
       await client
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', walletId);
-      debugPrint('Manual transaction successful.');
+          
+      debugPrint('Transaction and Balance Update Successful');
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
+      rethrow;
+    }
+  }
+  /// Deletes a transaction and REVERSES the balance impact on the wallet
+  Future<void> deleteTransaction(Map<String, dynamic> transaction) async {
+    try {
+      final String walletId = transaction['wallet_id'];
+      final double amount = (transaction['amount'] as num).toDouble();
+      final String type = transaction['type'];
+
+      // 1. Delete from transactions table
+      await client.from('transactions').delete().eq('id', transaction['id']);
+
+      // 2. Reverse the balance math
+      // If we delete an Expense, we must ADD the money back.
+      // If we delete Income, we must SUBTRACT the money.
+      final walletData = await client.from('wallets').select('balance').eq('id', walletId).single();
+      double currentBalance = (walletData['balance'] as num).toDouble();
+      
+      double correctedBalance = type.toLowerCase() == 'expense' 
+          ? currentBalance + amount 
+          : currentBalance - amount;
+
+      await client.from('wallets').update({'balance': correctedBalance}).eq('id', walletId);
+      
+      debugPrint('Transaction deleted and balance reversed.');
+    } catch (error) {
+      debugPrint('Delete Transaction Error: $error');
       rethrow;
     }
   }

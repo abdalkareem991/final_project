@@ -16,11 +16,12 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _storage = const FlutterSecureStorage(); //new
-  final _auth = LocalAuthentication(); //new
+  final _storage = const FlutterSecureStorage();
+  final _auth = LocalAuthentication();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _supabaseService = SupabaseService();
+  
   bool _isLoading = false;
   bool _isPasswordVisible = false;
   late final StreamSubscription<AuthState> _authStateSubscription;
@@ -28,7 +29,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    // Listen for Auth state changes to handle password recovery redirection
+
+    // 1. Listen for password recovery events
     _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
         .listen((data) {
           final AuthChangeEvent event = data.event;
@@ -43,11 +45,26 @@ class _LoginScreenState extends State<LoginScreen> {
             }
           }
         });
+
+    // 2. AUTO-TRIGGER: Check for biometrics as soon as the screen is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAutoBiometricLogin();
+    });
+  }
+
+  // New helper to trigger the popup automatically
+  Future<void> _checkAutoBiometricLogin() async {
+    final useBio = await _storage.read(key: 'use_biometrics');
+    if (useBio == 'true') {
+      await _handleBiometricLogin();
+    }
   }
 
   @override
   void dispose() {
     _authStateSubscription.cancel();
+    _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -61,16 +78,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      await _supabaseService.signIn(
-        _emailController.text.trim(),
-        _passwordController.text.trim(),
-      );
-      await _storage.write(key: 'email', value: _emailController.text.trim());
-      await _storage.write(
-        key: 'password',
-        value: _passwordController.text.trim(),
-      );
-      // new
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+
+      await _supabaseService.signIn(email, password);
+
+      // Save credentials for future biometric use
+      await _storage.write(key: 'email', value: email);
+      await _storage.write(key: 'password', value: password);
 
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/dashboard');
@@ -91,27 +106,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleBiometricLogin() async {
     try {
-      // 1. Check if the device is capable of biometrics
       final bool canAuthenticateWithBiometrics = await _auth.canCheckBiometrics;
       final bool canAuthenticate =
           canAuthenticateWithBiometrics || await _auth.isDeviceSupported();
 
       if (!canAuthenticate) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Biometrics not available on this device.'),
-          ),
-        );
+        // Only show error if triggered by the manual button, not auto-start
         return;
       }
 
-      //  Trigger the actual fingerprint scan
       final bool didAuthenticate = await _auth.authenticate(
         localizedReason: 'Please authenticate to access your financial vault',
         options: const AuthenticationOptions(
-          stickyAuth:
-              true, // Keeps the session if the user briefly leaves the app
-          biometricOnly: true, // Forces fingerprint (no PIN fallback)
+          stickyAuth: true,
+          biometricOnly: true,
         ),
       );
 
@@ -120,7 +128,8 @@ class _LoginScreenState extends State<LoginScreen> {
         String? savedPw = await _storage.read(key: 'password');
 
         if (savedEmail != null && savedPw != null) {
-          // Log into Supabase automatically using the saved data
+          setState(() => _isLoading = true);
+          
           await _supabaseService.signIn(savedEmail, savedPw);
 
           if (mounted) {
@@ -129,17 +138,19 @@ class _LoginScreenState extends State<LoginScreen> {
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text(
-                'Please log in with your password first to enable fingerprints.',
-              ),
+              content: Text('Please log in with password first to enable biometrics.'),
             ),
           );
         }
       }
     } catch (e) {
       debugPrint("Biometric error: $e");
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+
+  // Note: Keep your _showForgotPasswordDialog, build, and _buildTextField methods below this
 
   Future<void> _showForgotPasswordDialog() async {
     final TextEditingController resetEmailController = TextEditingController();

@@ -194,6 +194,9 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     return FutureBuilder<double>(
       future: _totalNetWorthFuture,
       builder: (context, snapshot) {
+        // Updated label name
+        const String labelText = "CREDIT TOTAL";
+        
         String netWorth = snapshot.hasData
             ? "JD ${snapshot.data!.toStringAsFixed(2)}"
             : "JD 0.00";
@@ -209,14 +212,21 @@ class _MyAccountScreenState extends State<MyAccountScreen>
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: _accentGreen.withOpacity(0.2),
+                blurRadius: 15,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "TOTAL NET WORTH",
+                labelText, // Uses the new name
                 style: TextStyle(
-                  color: Colors.black.withValues(alpha: 0.5),
+                  color: Colors.black.withOpacity(0.5),
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 1.5,

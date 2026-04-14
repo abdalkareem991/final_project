@@ -5,7 +5,7 @@ import 'package:final_project/screens/analytics_screen.dart';
 import 'package:final_project/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import '../models/category_model.dart';
 import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
 import 'my_account_screen.dart';
@@ -471,11 +471,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  void _showAddTransactionModal() {
-    final amountController = TextEditingController();
-    final descController = TextEditingController();
-    String selectedType = 'Expense';
-    String? selectedWalletId;
+ void _showAddTransactionModal() {
+  final amountController = TextEditingController();
+  final descController = TextEditingController();
+  String selectedType = 'Expense';
+  String? selectedWalletId;
+  int? selectedCategoryId; // <--- Change this from String? to int?
 
     showModalBottomSheet(
       context: context,
@@ -567,44 +568,75 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     },
                   ),
                   const SizedBox(height: 15),
+                  FutureBuilder<List<CategoryModel>>(
+  future: _supabaseService.getCategories(),
+  builder: (context, snapshot) {
+    return DropdownButtonFormField<int>( // <--- Change <String> to <int>
+      dropdownColor: _cardColor,
+      style: const TextStyle(color: Colors.white),
+      decoration: _inputStyle("Select Category", Icons.category),
+      items: snapshot.data?.map((cat) => DropdownMenuItem<int>(
+        value: cat.id, // Ensure your CategoryModel.id is an int
+        child: Text(cat.name),
+      )).toList(),
+      onChanged: (val) {
+        setModalState(() {
+          selectedCategoryId = val; // No .toString() needed here
+        });
+      },
+    );
+  },
+),
+
+const SizedBox(height: 15),
                   TextField(
                     controller: descController,
                     style: const TextStyle(color: Colors.white),
                     decoration: _inputStyle("Description", Icons.edit),
                   ),
                   const SizedBox(height: 25),
-                  ElevatedButton(
-                    onPressed: () async {
-                      if (amountController.text.isNotEmpty &&
-                          selectedWalletId != null) {
-                        await _supabaseService.createTransaction(
-                          walletId: selectedWalletId!,
-                          amount: double.parse(amountController.text),
-                          type: selectedType,
-                          description: descController.text.isEmpty
-                              ? selectedType
-                              : descController.text,
-                        );
-                        if (!mounted) return;
-                        Navigator.pop(context);
-                        refreshDashboard(); // Refresh all data instantly
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _accentGreen,
-                      minimumSize: const Size(double.infinity, 55),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                    ),
-                    child: const Text(
-                      "SAVE TRANSACTION",
-                      style: TextStyle(
-                        color: Colors.black,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
+                 ElevatedButton(
+  onPressed: () async {
+    // 1. Added selectedCategoryId != null to the check
+    if (amountController.text.isNotEmpty &&
+        selectedWalletId != null &&
+        selectedCategoryId != null) { 
+      
+      await _supabaseService.createTransaction(
+  walletId: selectedWalletId!,
+  categoryId: selectedCategoryId!, // This is now an int, matching your service
+  amount: double.parse(amountController.text),
+  type: selectedType,
+  description: descController.text.isEmpty
+      ? selectedType
+      : descController.text,
+);
+
+      if (!mounted) return;
+      Navigator.pop(context);
+      refreshDashboard(); 
+    } else {
+      // Optional: Show a message if they forgot to pick something
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select an account and category")),
+      );
+    }
+  },
+  style: ElevatedButton.styleFrom(
+    backgroundColor: _accentGreen,
+    minimumSize: const Size(double.infinity, 55),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(15),
+    ),
+  ),
+  child: const Text(
+    "SAVE TRANSACTION",
+    style: TextStyle(
+      color: Colors.black,
+      fontWeight: FontWeight.bold,
+    ),
+  ),
+),
                   const SizedBox(height: 30),
                 ],
               ),

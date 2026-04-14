@@ -25,6 +25,7 @@ class CategoryModel {
       color: json['color'],
     );
   }
+  
 
   Map<String, dynamic> toJson() => {
     'user_id': userId,
@@ -33,4 +34,5 @@ class CategoryModel {
     'type': type,
     'color': color,
   };
+  
 }

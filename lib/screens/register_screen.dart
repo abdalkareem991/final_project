@@ -54,85 +54,49 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// Logic: Validates inputs and handles user registration
   Future<void> _handleRegister() async {
-    if (_userNameController.text.trim().isEmpty ||
-        _emailController.text.trim().isEmpty ||
-        _phoneController.text.trim().isEmpty ||
-        _passwordController.text.trim().isEmpty) {
-      _showErrorSnackBar('Please fill in all fields.');
-      return;
-    }
+  setState(() => _isLoading = true);
+  try {
+    final response = await _supabaseService.signUp(
+      _emailController.text.trim(),
+      _passwordController.text.trim(),
+    );
 
-    if (_passwordController.text != _confirmPasswordController.text) {
-      _showErrorSnackBar('Passwords do not match.');
-      return;
-    }
+    if (response.user != null) {
+      // 1. Save credentials to Secure Storage
+      await _storage.write(key: 'email', value: _emailController.text.trim());
+      await _storage.write(key: 'password', value: _passwordController.text.trim());
+      
+      if (_enableBiometrics) {
+        await _storage.write(key: 'use_biometrics', value: 'true');
+      }
 
-    if (!_agreeToTerms) {
-      _showErrorSnackBar('You must agree to the Terms and Privacy Policy.');
-      return;
-    }
+      // 2. THE FIX: Wait 1 second for the Supabase Auth session to stabilize
+      await Future.delayed(const Duration(seconds: 1));
 
-    setState(() => _isLoading = true);
-
-    try {
-      final AuthResponse response = await _supabaseService.signUp(
-        _emailController.text.trim(),
-        _passwordController.text.trim(),
+      // 3. Now create the user profile
+      await _supabaseService.createUserProfile(
+        response.user!.id,
+        _userNameController.text.trim(),
+        _phoneController.text.trim(),
       );
 
-      if (response.user != null) {
-        await _supabaseService.createUserProfile(
-          response.user!.id,
-          _userNameController.text.trim(),
-          _phoneController.text.trim(),
-        );
-
-        await _storage.write(key: 'email', value: _emailController.text.trim());
-        await _storage.write(
-          key: 'password',
-          value: _passwordController.text.trim(),
-        );
-
-        if (_enableBiometrics) {
-          await _storage.write(key: 'use_biometrics', value: 'true');
-        } else {
-          await _storage.delete(key: 'use_biometrics');
-        }
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Registration Successful!',
-                style: TextStyle(
-                  color: Colors.black,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              backgroundColor: _accentGreen,
-            ),
-          );
-          Navigator.pop(context);
-        }
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/dashboard');
       }
-    } on AuthException catch (e) {
-      _showErrorSnackBar(e.message);
-    } catch (e) {
-      _showErrorSnackBar('An unexpected error occurred. Please try again.');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
     }
+  } catch (e) {
+    debugPrint("Registration Error: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('An unexpected error occurred. Please try again.')),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _isLoading = false);
   }
+}
 
-  void _showErrorSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-  }
+  
 
   @override
   Widget build(BuildContext context) {
