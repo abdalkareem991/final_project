@@ -26,20 +26,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
 
-  // Global keys to sync states across tabs
   final GlobalKey<_DashboardMainContentState> _mainContentKey = GlobalKey();
-  final GlobalKey<MyAccountScreenState> _accountsKey =
-      GlobalKey(); // Added Account Key
+  final GlobalKey<MyAccountScreenState> _accountsKey = GlobalKey();
 
   late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
-    // Initialize screens using late final to prevent recreation, and inject keys
     _screens = [
-      _DashboardMainContent(key: _mainContentKey),
-      MyAccountScreen(key: _accountsKey), // Link the key to the screen
+      _DashboardMainContent(
+        key: _mainContentKey,
+        // SAFE SYNC: Using block syntax prevents 'Null' subtype errors
+        onTransactionChanged: () {
+          if (_accountsKey.currentState != null) {
+            _accountsKey.currentState!.refreshAccounts();
+          }
+        },
+      ),
+      MyAccountScreen(key: _accountsKey),
       const AnalyticsScreen(),
       const TodoListScreen(),
       const SettingsScreen(),
@@ -64,12 +69,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       currentIndex: _selectedIndex,
       onTap: (index) {
         setState(() => _selectedIndex = index);
-        // Sync Data when switching tabs
         if (index == 0) {
           _mainContentKey.currentState?.refreshDashboard();
         } else if (index == 1) {
-          _accountsKey.currentState
-              ?.refreshAccounts(); // Refresh Accounts Screen Data
+          _accountsKey.currentState?.refreshAccounts();
         }
       },
       items: const [
@@ -93,7 +96,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 }
 
 class _DashboardMainContent extends StatefulWidget {
-  const _DashboardMainContent({super.key});
+  // Made optional to prevent strict requirement errors
+  final VoidCallback? onTransactionChanged;
+
+  const _DashboardMainContent({super.key, this.onTransactionChanged});
 
   @override
   State<_DashboardMainContent> createState() => _DashboardMainContentState();
@@ -105,6 +111,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   late Future<Map<String, double>> _balancesFuture;
   late Future<List<Map<String, dynamic>>> _transactionsFuture;
   late Future<Map<String, double>> _monthlySummaryFuture;
+
+  final Set<String> _hiddenTransactions = {};
+  bool _showHidden = false;
 
   String _currencySymbol = "JD";
   double _exchangeRate = 1.0;
@@ -188,15 +197,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        heroTag: 'dashboard_add_btn',
-        onPressed: _showAddTransactionModal,
+        heroTag:
+            'dashboard_add_btn', // Fixed the "multiple heroes" animation bug
+        onPressed: () => _showTransactionModal(),
         backgroundColor: _accentGreen,
         child: const Icon(Icons.add, color: Colors.black, size: 30),
       ),
     );
   }
 
-  /// UI: Centralized Total Balance Card showing Total and always showing Cash balance
   Widget _buildTotalBalanceCard() {
     return FutureBuilder<Map<String, double>>(
       future: _balancesFuture,
@@ -308,7 +317,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
             ),
           );
         }
-        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+
+        final visibleTransactions = snapshot.data
+            ?.where(
+              (tx) =>
+                  _showHidden ||
+                  !_hiddenTransactions.contains(tx['id'].toString()),
+            )
+            .toList();
+
+        if (visibleTransactions == null || visibleTransactions.isEmpty) {
           return const Padding(
             padding: EdgeInsets.all(20),
             child: Text(
@@ -318,20 +336,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           );
         }
 
-        final recentTransactions = snapshot.data!.take(5).toList();
+        final recentTransactions = visibleTransactions.take(5).toList();
 
         return Column(
           children: recentTransactions.map((tx) {
-            final bool isExpense = tx['type'] == 'Expense';
-            final String walletName = tx['wallets']?['name'] ?? 'Account';
-
-            return _buildTransactionItem(
-              tx['description'] ?? "Transaction",
-              "${tx['created_at'].toString().split('T')[0]} • $walletName",
-              "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}",
-              isExpense ? _expenseRed : _accentGreen,
-              isExpense: isExpense,
+            final bool isHidden = _hiddenTransactions.contains(
+              tx['id'].toString(),
             );
+            return _buildTransactionItem(tx, isHidden: isHidden);
           }).toList(),
         );
       },
@@ -390,9 +402,27 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           fontWeight: FontWeight.bold,
         ),
       ),
-      TextButton(
-        onPressed: () {},
-        child: const Text("See All", style: TextStyle(color: _accentGreen)),
+      Row(
+        children: [
+          if (_hiddenTransactions.isNotEmpty)
+            IconButton(
+              icon: Icon(
+                _showHidden ? Icons.visibility : Icons.visibility_off,
+                color: Colors.grey,
+                size: 20,
+              ),
+              tooltip: _showHidden ? "Hide invisible" : "Show hidden",
+              onPressed: () {
+                setState(() {
+                  _showHidden = !_showHidden;
+                });
+              },
+            ),
+          TextButton(
+            onPressed: () {},
+            child: const Text("See All", style: TextStyle(color: _accentGreen)),
+          ),
+        ],
       ),
     ],
   );
@@ -437,57 +467,236 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   }
 
   Widget _buildTransactionItem(
-    String title,
-    String date,
-    String amount,
-    Color iconColor, {
-    required bool isExpense,
+    Map<String, dynamic> tx, {
+    bool isHidden = false,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _cardColor,
-        borderRadius: BorderRadius.circular(15),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              isExpense ? Icons.arrow_downward : Icons.arrow_upward,
-              color: iconColor,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+    final bool isExpense = tx['type'] == 'Expense';
+    final Color iconColor = isExpense ? _expenseRed : _accentGreen;
+    final String walletName = tx['wallets']?['name'] ?? 'Account';
+    final String title = tx['description'] ?? "Transaction";
+    final String date =
+        "${tx['created_at'].toString().split('T')[0]} • $walletName";
+    final String amount =
+        "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}";
+
+    final bool isTransfer = title.toLowerCase().contains('transfer');
+
+    return Opacity(
+      opacity: isHidden ? 0.5 : 1.0,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: _cardColor,
+          borderRadius: BorderRadius.circular(15),
+          border: isHidden
+              ? Border.all(color: Colors.grey.withOpacity(0.3), width: 1)
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(15),
+            onTap: () => _showTransactionDetailsDialog(tx),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: iconColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      isExpense ? Icons.arrow_downward : Icons.arrow_upward,
+                      color: iconColor,
+                      size: 20,
+                    ),
                   ),
-                ),
-                Text(
-                  date,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ],
+                  const SizedBox(width: 15),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          date,
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    amount,
+                    style: TextStyle(
+                      color: iconColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  PopupMenuButton<String>(
+                    icon: const Icon(
+                      Icons.more_vert,
+                      color: Colors.grey,
+                      size: 20,
+                    ),
+                    color: _bgColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    onSelected: (value) async {
+                      if (value == 'details') {
+                        _showTransactionDetailsDialog(tx);
+                      } else if (value == 'edit') {
+                        _showTransactionModal(existingTx: tx);
+                      } else if (value == 'hide') {
+                        setState(() {
+                          _hiddenTransactions.add(tx['id'].toString());
+                        });
+                      } else if (value == 'unhide') {
+                        setState(() {
+                          _hiddenTransactions.remove(tx['id'].toString());
+                        });
+                      } else if (value == 'delete') {
+                        await _deleteTransactionWithConfirm(tx);
+                      }
+                    },
+                    itemBuilder: (BuildContext context) => [
+                      const PopupMenuItem(
+                        value: 'details',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              color: Colors.blueAccent,
+                              size: 18,
+                            ),
+                            SizedBox(width: 10),
+                            Text(
+                              "Details",
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!isTransfer)
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.edit,
+                                color: Colors.orangeAccent,
+                                size: 18,
+                              ),
+                              SizedBox(width: 10),
+                              Text(
+                                "Edit",
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      PopupMenuItem(
+                        value: isHidden ? 'unhide' : 'hide',
+                        child: Row(
+                          children: [
+                            Icon(
+                              isHidden
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              color: Colors.grey,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              isHidden ? "Unhide" : "Hide",
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.delete,
+                              color: Colors.redAccent,
+                              size: 18,
+                            ),
+                            SizedBox(width: 10),
+                            Text(
+                              "Delete",
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
-          Text(
-            amount,
-            style: TextStyle(
-              color: isExpense ? _expenseRed : _accentGreen,
-              fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  void _showTransactionDetailsDialog(Map<String, dynamic> tx) {
+    final String walletName = tx['wallets']?['name'] ?? 'Unknown Account';
+    final String catName = tx['categories']?['name'] ?? 'No Category';
+    final bool isExpense = tx['type'] == 'Expense';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Center(
+          child: Text(
+            "Transaction Details",
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Divider(color: Colors.white10),
+            const SizedBox(height: 10),
+            _buildDetailRow("Description", tx['description'] ?? 'N/A'),
+            _buildDetailRow(
+              "Amount",
+              _formatAmount((tx['amount'] as num).toDouble()),
+              valueColor: isExpense ? _expenseRed : _accentGreen,
+            ),
+            _buildDetailRow("Type", tx['type']),
+            _buildDetailRow("Account", walletName),
+            _buildDetailRow("Category", catName),
+            _buildDetailRow("Date", tx['created_at'].toString().split('T')[0]),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _accentGreen),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              "Close",
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],
@@ -495,14 +704,87 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  void _showAddTransactionModal() {
-    final amountController = TextEditingController();
-    final descController = TextEditingController();
+  Widget _buildDetailRow(
+    String label,
+    String value, {
+    Color valueColor = Colors.white,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: valueColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    String selectedType = 'Expense';
-    String? selectedWalletId;
+  Future<void> _deleteTransactionWithConfirm(Map<String, dynamic> tx) async {
+    bool? confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: const Text(
+          "Delete Transaction",
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          "Are you sure? This will reverse the balance in your account.",
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Delete", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _supabaseService.deleteTransaction(tx);
+        refreshDashboard();
+        widget.onTransactionChanged?.call(); // SAFE SYNC
+      } catch (e) {
+        _showError(context, "Error deleting: $e");
+      }
+    }
+  }
+
+  void _showTransactionModal({Map<String, dynamic>? existingTx}) {
+    final isEditing = existingTx != null;
+
+    final amountController = TextEditingController(
+      text: isEditing ? existingTx['amount'].toString() : '',
+    );
+    final descController = TextEditingController(
+      text: isEditing ? existingTx['description'] : '',
+    );
+
+    String selectedType = isEditing ? existingTx['type'] : 'Expense';
+    String? selectedWalletId = isEditing ? existingTx['wallet_id'] : null;
     String? targetWalletId;
-    int? selectedCategoryId;
+    int? selectedCategoryId = isEditing ? existingTx['category_id'] : null;
 
     showModalBottomSheet(
       context: context,
@@ -532,9 +814,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  const Text(
-                    "New Transaction",
-                    style: TextStyle(
+                  Text(
+                    isEditing ? "Edit Transaction" : "New Transaction",
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -557,13 +839,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         _accentGreen,
                         () => setModalState(() => selectedType = 'Income'),
                       ),
-                      const SizedBox(width: 10),
-                      _buildModalToggle(
-                        "Transfer",
-                        selectedType == 'Transfer',
-                        _transferBlue,
-                        () => setModalState(() => selectedType = 'Transfer'),
-                      ),
+                      if (!isEditing) ...[
+                        const SizedBox(width: 10),
+                        _buildModalToggle(
+                          "Transfer",
+                          selectedType == 'Transfer',
+                          _transferBlue,
+                          () => setModalState(() => selectedType = 'Transfer'),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -590,6 +874,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                       return Column(
                         children: [
                           DropdownButtonFormField<String>(
+                            initialValue: selectedWalletId,
                             dropdownColor: _cardColor,
                             style: const TextStyle(color: Colors.white),
                             decoration: _inputStyle(
@@ -609,7 +894,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                             onChanged: (val) => selectedWalletId = val,
                           ),
 
-                          if (selectedType == 'Transfer') ...[
+                          if (selectedType == 'Transfer' && !isEditing) ...[
                             const SizedBox(height: 15),
                             DropdownButtonFormField<String>(
                               dropdownColor: _cardColor,
@@ -643,6 +928,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                             future: _supabaseService.getCategories(),
                             builder: (context, snapshot) {
                               return DropdownButtonFormField<int>(
+                                initialValue: selectedCategoryId,
                                 dropdownColor: _cardColor,
                                 style: const TextStyle(color: Colors.white),
                                 decoration: _inputStyle(
@@ -705,7 +991,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         return;
                       }
 
-                      if (selectedType == 'Transfer') {
+                      if (selectedType == 'Transfer' && !isEditing) {
                         if (targetWalletId == null ||
                             selectedWalletId == targetWalletId) {
                           _showError(
@@ -719,58 +1005,58 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         return;
                       }
 
-                      if (selectedType == 'Expense' ||
-                          selectedType == 'Transfer') {
-                        final wallets = await _supabaseService.getWallets();
-                        final sourceWallet = wallets.firstWhere(
-                          (w) => w.id == selectedWalletId,
-                        );
-
-                        if (parsedAmount > sourceWallet.balance) {
-                          _showError(
-                            context,
-                            "Insufficient balance in the source account.",
-                          );
-                          return;
-                        }
-                      }
-
                       try {
-                        if (selectedType == 'Transfer') {
-                          final cats = await _supabaseService.getCategories();
-                          final transferCategory = cats.firstWhere(
-                            (c) => c.name.toLowerCase() == 'transfer',
-                            orElse: () => cats.first,
-                          );
-
-                          await _supabaseService.transferFunds(
-                            fromWalletId: selectedWalletId!,
-                            toWalletId: targetWalletId!,
-                            amount: parsedAmount,
-                            description: descController.text.isEmpty
-                                ? 'Transfer'
-                                : descController.text,
-                            categoryId: transferCategory.id,
+                        if (isEditing) {
+                          await _supabaseService.updateTransaction(
+                            oldTx: existingTx,
+                            newTx: {
+                              'wallet_id': selectedWalletId,
+                              'category_id': selectedCategoryId,
+                              'amount': parsedAmount,
+                              'type': selectedType,
+                              'description': descController.text.isEmpty
+                                  ? selectedType
+                                  : descController.text,
+                            },
                           );
                         } else {
-                          await _supabaseService.createTransaction(
-                            walletId: selectedWalletId!,
-                            categoryId: selectedCategoryId!,
-                            amount: parsedAmount,
-                            type: selectedType,
-                            description: descController.text.isEmpty
-                                ? selectedType
-                                : descController.text,
-                          );
+                          if (selectedType == 'Transfer') {
+                            final cats = await _supabaseService.getCategories();
+                            final transferCategory = cats.firstWhere(
+                              (c) => c.name.toLowerCase() == 'transfer',
+                              orElse: () => cats.first,
+                            );
+
+                            await _supabaseService.transferFunds(
+                              fromWalletId: selectedWalletId!,
+                              toWalletId: targetWalletId!,
+                              amount: parsedAmount,
+                              description: descController.text.isEmpty
+                                  ? 'Transfer'
+                                  : descController.text,
+                              categoryId: transferCategory.id,
+                            );
+                          } else {
+                            await _supabaseService.createTransaction(
+                              walletId: selectedWalletId!,
+                              categoryId: selectedCategoryId!,
+                              amount: parsedAmount,
+                              type: selectedType,
+                              description: descController.text.isEmpty
+                                  ? selectedType
+                                  : descController.text,
+                            );
+                          }
                         }
 
                         if (!mounted) return;
                         Navigator.pop(context);
                         refreshDashboard();
+                        widget.onTransactionChanged?.call(); // SAFE SYNC
                       } catch (e) {
                         _showError(
                           context,
-                          "An error occurred while saving the transaction.",
+                          e.toString().replaceAll("Exception:", "").trim(),
                         );
                       }
                     },
@@ -781,9 +1067,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         borderRadius: BorderRadius.circular(15),
                       ),
                     ),
-                    child: const Text(
-                      "SAVE TRANSACTION",
-                      style: TextStyle(
+                    child: Text(
+                      isEditing ? "UPDATE TRANSACTION" : "SAVE TRANSACTION",
+                      style: const TextStyle(
                         color: Colors.black,
                         fontWeight: FontWeight.bold,
                       ),

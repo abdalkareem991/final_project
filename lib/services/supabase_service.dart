@@ -17,7 +17,6 @@ class SupabaseService {
   // 1. AUTHENTICATION OPERATIONS
   // ===========================================================================
 
-  /// Signs in a user with email and password
   Future<AuthResponse> signIn(String email, String password) async {
     try {
       return await client.auth.signInWithPassword(
@@ -30,7 +29,6 @@ class SupabaseService {
     }
   }
 
-  /// Registers a new user
   Future<AuthResponse> signUp(String email, String password) async {
     try {
       return await client.auth.signUp(email: email, password: password);
@@ -40,7 +38,6 @@ class SupabaseService {
     }
   }
 
-  /// Sends a password reset link to the user's email
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await client.auth.resetPasswordForEmail(
@@ -53,7 +50,6 @@ class SupabaseService {
     }
   }
 
-  /// Updates the current user's password
   Future<void> updatePassword(String newPassword) async {
     try {
       await client.auth.updateUser(UserAttributes(password: newPassword));
@@ -64,10 +60,9 @@ class SupabaseService {
   }
 
   // ===========================================================================
-  // 2. PROFILE & USER DATA OPERATIONS
+  // 2. PROFILE OPERATIONS
   // ===========================================================================
 
-  /// Creates a new user profile entry in the database
   Future<void> createUserProfile(
     String id,
     String userName,
@@ -86,7 +81,6 @@ class SupabaseService {
     }
   }
 
-  /// Retrieves the current logged-in user's profile
   Future<ProfileModel> getProfileData() async {
     try {
       final user = client.auth.currentUser;
@@ -97,7 +91,6 @@ class SupabaseService {
           .select()
           .eq('id', user.id)
           .single();
-
       return ProfileModel.fromJson(response);
     } catch (error) {
       debugPrint('Get Profile Error: $error');
@@ -106,10 +99,9 @@ class SupabaseService {
   }
 
   // ===========================================================================
-  // 3. WALLET / ACCOUNT OPERATIONS
+  // 3. WALLET OPERATIONS
   // ===========================================================================
 
-  /// Adds a new wallet using the WalletModel structure
   Future<void> addWallet(WalletModel wallet) async {
     try {
       final user = client.auth.currentUser;
@@ -122,19 +114,16 @@ class SupabaseService {
         'type': wallet.type,
         'currency': wallet.currency,
       });
-      debugPrint('Wallet added successfully');
     } catch (error) {
       debugPrint('Add Wallet Error: $error');
       rethrow;
     }
   }
 
-  /// Dynamically calculates the total balance from all active wallets
   Future<double> calculateTotalNetWorth() async {
     try {
       final wallets = await getWallets();
       if (wallets.isEmpty) return 0.0;
-
       return wallets.fold<double>(0.0, (sum, wallet) => sum + wallet.balance);
     } catch (e) {
       debugPrint('Calculate Net Worth Error: $e');
@@ -142,7 +131,6 @@ class SupabaseService {
     }
   }
 
-  /// Separates Bank balances from Cash balances
   Future<Map<String, double>> getBalancesByType() async {
     try {
       final wallets = await getWallets();
@@ -167,7 +155,6 @@ class SupabaseService {
     }
   }
 
-  /// Fetches all wallets associated with the current user
   Future<List<WalletModel>> getWallets() async {
     try {
       final user = client.auth.currentUser;
@@ -177,7 +164,6 @@ class SupabaseService {
           .from('wallets')
           .select()
           .eq('user_id', user.id);
-
       return (response as List)
           .map((json) => WalletModel.fromJson(json))
           .toList();
@@ -187,18 +173,15 @@ class SupabaseService {
     }
   }
 
-  /// Deletes a specific wallet and its linked data
   Future<void> deleteWallet(String walletId) async {
     try {
       await client.from('wallets').delete().eq('id', walletId);
-      debugPrint('Wallet deleted successfully');
     } catch (error) {
       debugPrint('Delete Wallet Error: $error');
       rethrow;
     }
   }
 
-  /// Updates an existing wallet using the WalletModel structure
   Future<void> updateWallet(WalletModel wallet) async {
     try {
       final Map<String, dynamic> updateData = {
@@ -207,9 +190,7 @@ class SupabaseService {
         'type': wallet.type,
         'currency': wallet.currency,
       };
-
       await client.from('wallets').update(updateData).eq('id', wallet.id);
-      debugPrint('Wallet updated successfully');
     } catch (error) {
       debugPrint('Update Wallet Error: $error');
       rethrow;
@@ -220,7 +201,6 @@ class SupabaseService {
   // 4. CATEGORY OPERATIONS
   // ===========================================================================
 
-  /// Fetches all categories (Income & Expense) for the user
   Future<List<CategoryModel>> getCategories() async {
     try {
       final user = client.auth.currentUser;
@@ -230,7 +210,6 @@ class SupabaseService {
           .from('categories')
           .select()
           .eq('user_id', user.id);
-
       return (response as List)
           .map((json) => CategoryModel.fromJson(json))
           .toList();
@@ -240,7 +219,6 @@ class SupabaseService {
     }
   }
 
-  /// Adds a new custom category for the current user
   Future<CategoryModel> addCustomCategory(String name, String type) async {
     try {
       final user = client.auth.currentUser;
@@ -258,7 +236,6 @@ class SupabaseService {
           .select()
           .single();
 
-      debugPrint('Custom category added successfully');
       return CategoryModel.fromJson(response);
     } catch (error) {
       debugPrint('Add Category Error: $error');
@@ -270,16 +247,16 @@ class SupabaseService {
   // 5. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
 
-  /// Fetches transactions for account statement
+  /// Fetches transactions with both wallet name and category name included
   Future<List<Map<String, dynamic>>> getTransactions() async {
     try {
       final user = client.auth.currentUser;
       if (user == null) return [];
 
-      // Join with wallets to get the bank name
+      // Join wallets and categories to get their names for the details view
       final response = await client
           .from('transactions')
-          .select('*, wallets(name)')
+          .select('*, wallets(name), categories(name)')
           .eq('user_id', user.id)
           .order('created_at', ascending: false);
 
@@ -290,7 +267,6 @@ class SupabaseService {
     }
   }
 
-  /// Records a manual transaction and updates wallet balance
   Future<void> createTransaction({
     required String walletId,
     required double amount,
@@ -302,7 +278,6 @@ class SupabaseService {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // 1. Insert transaction record
       await client.from('transactions').insert({
         'user_id': user.id,
         'wallet_id': walletId,
@@ -312,34 +287,95 @@ class SupabaseService {
         'category_id': categoryId,
       });
 
-      // 2. Fetch current wallet balance
       final walletData = await client
           .from('wallets')
           .select('balance')
           .eq('id', walletId)
           .single();
-
       double currentBalance = (walletData['balance'] as num).toDouble();
 
-      // 3. Calculate new balance
       double newBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
 
-      // 4. Update the wallet
       await client
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', walletId);
-
-      debugPrint('Transaction and Balance Update Successful');
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
       rethrow;
     }
   }
 
-  /// Executes a secure transfer between two wallets and logs the transactions
+  /// Complex Logic: Safely updates a transaction by reversing old balances and applying new ones
+  Future<void> updateTransaction({
+    required Map<String, dynamic> oldTx,
+    required Map<String, dynamic> newTx,
+  }) async {
+    try {
+      final oldWalletId = oldTx['wallet_id'];
+      final oldAmount = (oldTx['amount'] as num).toDouble();
+      final oldType = oldTx['type'];
+
+      // 1. Reverse the old transaction impact
+      final oldWalletData = await client
+          .from('wallets')
+          .select('balance')
+          .eq('id', oldWalletId)
+          .single();
+      double oldWalletBalance = (oldWalletData['balance'] as num).toDouble();
+
+      double restoredBalance = oldType.toLowerCase() == 'expense'
+          ? oldWalletBalance + oldAmount
+          : oldWalletBalance - oldAmount;
+
+      await client
+          .from('wallets')
+          .update({'balance': restoredBalance})
+          .eq('id', oldWalletId);
+
+      // 2. Apply the new transaction impact
+      final newWalletId = newTx['wallet_id'];
+      final newAmount = (newTx['amount'] as num).toDouble();
+      final newType = newTx['type'];
+
+      final newWalletData = await client
+          .from('wallets')
+          .select('balance')
+          .eq('id', newWalletId)
+          .single();
+      double currentNewWalletBalance = (newWalletData['balance'] as num)
+          .toDouble();
+
+      double finalBalance = newType.toLowerCase() == 'income'
+          ? currentNewWalletBalance + newAmount
+          : currentNewWalletBalance - newAmount;
+
+      await client
+          .from('wallets')
+          .update({'balance': finalBalance})
+          .eq('id', newWalletId);
+
+      // 3. Update the transaction record in DB
+      await client
+          .from('transactions')
+          .update({
+            'wallet_id': newWalletId,
+            'category_id': newTx['category_id'],
+            'amount': newAmount,
+            'type': newType,
+            'description': newTx['description'],
+          })
+          .eq('id', oldTx['id']);
+
+      debugPrint('Transaction successfully updated and balanced restored.');
+    } catch (error) {
+      debugPrint('Update Transaction Error: $error');
+      rethrow;
+    }
+  }
+
   Future<void> transferFunds({
     required String fromWalletId,
     required String toWalletId,
@@ -351,7 +387,6 @@ class SupabaseService {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // 1. Fetch current balances
       final fromWalletData = await client
           .from('wallets')
           .select('balance')
@@ -366,10 +401,8 @@ class SupabaseService {
       double fromBalance = (fromWalletData['balance'] as num).toDouble();
       double toBalance = (toWalletData['balance'] as num).toDouble();
 
-      // 2. Logical Validation
       if (fromBalance < amount) throw Exception("Insufficient funds.");
 
-      // 3. Update balances
       await client
           .from('wallets')
           .update({'balance': fromBalance - amount})
@@ -379,7 +412,6 @@ class SupabaseService {
           .update({'balance': toBalance + amount})
           .eq('id', toWalletId);
 
-      // 4. Log transactions
       await client.from('transactions').insert([
         {
           'user_id': user.id,
@@ -404,7 +436,6 @@ class SupabaseService {
     }
   }
 
-  /// Deletes a transaction and REVERSES the balance impact on the wallet
   Future<void> deleteTransaction(Map<String, dynamic> transaction) async {
     try {
       final String walletId = transaction['wallet_id'];
@@ -455,7 +486,6 @@ class SupabaseService {
           .map((task) => TaskModel.fromJson(task))
           .toList();
     } catch (error) {
-      debugPrint('Fetch Tasks Error: $error');
       return [];
     }
   }
