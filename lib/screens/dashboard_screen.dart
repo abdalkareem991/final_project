@@ -605,7 +605,7 @@ const SizedBox(height: 15),
       await _supabaseService.createTransaction(
   walletId: selectedWalletId!,
   categoryId: selectedCategoryId!, // This is now an int, matching your service
-  amount: double.parse(amountController.text),
+  amount: double.tryParse(amountController.text) ?? 0.0,
   type: selectedType,
   description: descController.text.isEmpty
       ? selectedType
