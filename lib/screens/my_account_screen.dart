@@ -10,24 +10,24 @@ class MyAccountScreen extends StatefulWidget {
   const MyAccountScreen({super.key});
 
   @override
-  State<MyAccountScreen> createState() => _MyAccountScreenState();
+  // Notice: State is public now to allow GlobalKey access
+  State<MyAccountScreen> createState() => MyAccountScreenState();
 }
 
-class _MyAccountScreenState extends State<MyAccountScreen>
+class MyAccountScreenState extends State<MyAccountScreen>
     with SingleTickerProviderStateMixin {
   final SupabaseService _supabaseService = SupabaseService();
 
   // Dynamic Data Futures
-  late Future<double> _totalNetWorthFuture = _supabaseService
-      .calculateTotalNetWorth();
-  late Future<List<WalletModel>> _walletsFuture = _supabaseService.getWallets();
+  late Future<double> _totalNetWorthFuture;
+  late Future<List<WalletModel>> _walletsFuture;
 
   // --- Animation Controllers ---
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  // --- Theme Constants (Matched to your app's design system) ---
+  // --- Theme Constants ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
@@ -37,11 +37,8 @@ class _MyAccountScreenState extends State<MyAccountScreen>
   @override
   void initState() {
     super.initState();
-
-    // Initialize futures synchronously to prevent LateInitializationError
     _fetchData();
 
-    // Initialize animations for smooth loading
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -63,6 +60,13 @@ class _MyAccountScreenState extends State<MyAccountScreen>
   void dispose() {
     _animationController.dispose();
     super.dispose();
+  }
+
+  /// Public method to force refresh data from external screens
+  void refreshAccounts() {
+    setState(() {
+      _fetchData();
+    });
   }
 
   /// Logic: Fetches dynamically calculated net worth and the list of wallets
@@ -113,9 +117,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
 
     if (confirm == true) {
       await _supabaseService.deleteWallet(walletId);
-      setState(() {
-        _fetchData(); // Refresh UI after deletion
-      });
+      refreshAccounts();
     }
   }
 
@@ -139,7 +141,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
       body: RefreshIndicator(
         color: _accentGreen,
         onRefresh: () async {
-          setState(() => _fetchData());
+          refreshAccounts();
           try {
             await Future.wait([_totalNetWorthFuture, _walletsFuture]);
           } catch (_) {}
@@ -170,6 +172,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: FloatingActionButton.extended(
+          heroTag: 'account_add_btn',
           backgroundColor: _accentGreen,
           elevation: 5,
           shape: RoundedRectangleBorder(
@@ -195,7 +198,6 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     return FutureBuilder<double>(
       future: _totalNetWorthFuture,
       builder: (context, snapshot) {
-        // Updated label name
         const String labelText = "CREDIT TOTAL";
 
         String netWorth = snapshot.hasData
@@ -225,7 +227,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                labelText, // Uses the new name
+                labelText,
                 style: TextStyle(
                   color: Colors.black.withOpacity(0.5),
                   fontSize: 12,
@@ -296,7 +298,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
                 right: 20,
                 top: 5,
                 bottom: 80,
-              ), // Added bottom padding to avoid FAB overlap
+              ),
               itemCount: snapshot.data!.length,
               itemBuilder: (context, index) {
                 final account = snapshot.data![index];
@@ -309,8 +311,15 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     );
   }
 
-  /// UI: Single Wallet Card with Edit/Delete Menu
+  /// UI: Single Wallet Card
   Widget _buildAccountCard(WalletModel account) {
+    IconData walletIcon = Icons.account_balance_wallet;
+    if (account.type.toLowerCase() == 'cash') {
+      walletIcon = Icons.money;
+    } else if (account.type.toLowerCase() == 'mobile wallet') {
+      walletIcon = Icons.phone_iphone;
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(18),
@@ -326,24 +335,28 @@ class _MyAccountScreenState extends State<MyAccountScreen>
               color: _accentGreen.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
-              Icons.account_balance_wallet,
-              color: _accentGreen,
-              size: 20,
-            ),
+            child: Icon(walletIcon, color: _accentGreen, size: 20),
           ),
           const SizedBox(width: 15),
           Expanded(
-            child: Text(
-              account.name,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  account.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  account.type,
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
             ),
           ),
-          // Displays JD formatting via WalletModel
           Text(
             account.formattedBalance,
             style: const TextStyle(
@@ -353,7 +366,6 @@ class _MyAccountScreenState extends State<MyAccountScreen>
             ),
           ),
           const SizedBox(width: 5),
-          // Interactive Edit/Delete Menu
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
             color: _bgColor,
@@ -395,7 +407,6 @@ class _MyAccountScreenState extends State<MyAccountScreen>
     );
   }
 
-  /// UI & Logic: Reusable Modal for both ADDING and EDITING an account using WalletModel
   void _showWalletModal({required BuildContext context, WalletModel? wallet}) {
     final isEditing = wallet != null;
     final nameController = TextEditingController(
@@ -494,16 +505,14 @@ class _MyAccountScreenState extends State<MyAccountScreen>
                     double balance =
                         double.tryParse(balanceController.text) ?? 0.0;
 
-                    // Construct the WalletModel object
                     final walletData = WalletModel(
-                      id: isEditing ? wallet.id : '', // Empty string if new
+                      id: isEditing ? wallet.id : '',
                       name: nameController.text.trim(),
                       balance: balance,
                       type: selectedType,
-                      currency: 'JD ', // Set Currency to JOD
+                      currency: 'JD ',
                     );
 
-                    // Use the model for database operations
                     if (isEditing) {
                       await _supabaseService.updateWallet(walletData);
                     } else {
@@ -512,9 +521,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
 
                     if (!mounted) return;
                     Navigator.pop(context);
-                    setState(() {
-                      _fetchData(); // Refresh UI to show new or updated wallet
-                    });
+                    refreshAccounts();
                   }
                 },
                 style: ElevatedButton.styleFrom(

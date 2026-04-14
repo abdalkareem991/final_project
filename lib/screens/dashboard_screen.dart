@@ -26,18 +26,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
 
-  // Global key to access the state of the main content for refreshing
+  // Global keys to sync states across tabs
   final GlobalKey<_DashboardMainContentState> _mainContentKey = GlobalKey();
+  final GlobalKey<MyAccountScreenState> _accountsKey =
+      GlobalKey(); // Added Account Key
 
   late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
-    // Initialize screens once to prevent state loss when navigating tabs
+    // Initialize screens using late final to prevent recreation, and inject keys
     _screens = [
       _DashboardMainContent(key: _mainContentKey),
-      const MyAccountScreen(),
+      MyAccountScreen(key: _accountsKey), // Link the key to the screen
       const AnalyticsScreen(),
       const TodoListScreen(),
       const SettingsScreen(),
@@ -48,7 +50,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bgColor,
-      // Use IndexedStack to maintain the scroll position of screens
       body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: _buildBottomNav(),
     );
@@ -63,9 +64,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       currentIndex: _selectedIndex,
       onTap: (index) {
         setState(() => _selectedIndex = index);
-        // Force refresh dashboard data when navigating back to Home
+        // Sync Data when switching tabs
         if (index == 0) {
           _mainContentKey.currentState?.refreshDashboard();
+        } else if (index == 1) {
+          _accountsKey.currentState
+              ?.refreshAccounts(); // Refresh Accounts Screen Data
         }
       },
       items: const [
@@ -98,15 +102,10 @@ class _DashboardMainContent extends StatefulWidget {
 class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
 
-  // Dynamic Data Futures
-  late Future<Map<String, double>> _balancesFuture = _supabaseService
-      .getBalancesByType();
-  late Future<List<Map<String, dynamic>>> _transactionsFuture = _supabaseService
-      .getTransactions();
-  late Future<Map<String, double>> _monthlySummaryFuture = _supabaseService
-      .getFilteredSummary('Month');
+  late Future<Map<String, double>> _balancesFuture;
+  late Future<List<Map<String, dynamic>>> _transactionsFuture;
+  late Future<Map<String, double>> _monthlySummaryFuture;
 
-  // Currency Logic State
   String _currencySymbol = "JD";
   double _exchangeRate = 1.0;
 
@@ -114,18 +113,17 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
   static const Color _expenseRed = Color(0xFFFF6B6B);
+  static const Color _transferBlue = Color(0xFF3B82F6);
 
   @override
   void initState() {
     super.initState();
-    // Initialize futures synchronously before build() executes
     _balancesFuture = _supabaseService.getBalancesByType();
     _transactionsFuture = _supabaseService.getTransactions();
     _monthlySummaryFuture = _supabaseService.getFilteredSummary('Month');
     loadCurrencyPreference();
   }
 
-  /// Refreshes all dashboard components
   void refreshDashboard() {
     loadCurrencyPreference();
     setState(() {
@@ -135,7 +133,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     });
   }
 
-  // Fetch saved currency from SharedPreferences
   Future<void> loadCurrencyPreference() async {
     final prefs = await SharedPreferences.getInstance();
     String savedCurrency = prefs.getString('currency') ?? "JOD (JD)";
@@ -143,7 +140,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     setState(() {
       if (savedCurrency.contains("USD")) {
         _currencySymbol = "\$";
-        _exchangeRate = 1.41; // Assumption: 1 JOD = 1.41 USD
+        _exchangeRate = 1.41;
       } else {
         _currencySymbol = "JD";
         _exchangeRate = 1.0;
@@ -151,7 +148,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     });
   }
 
-  // Utility to format any amount based on the current currency state
   String _formatAmount(double amount) {
     double converted = amount * _exchangeRate;
     return "$_currencySymbol${converted.toStringAsFixed(2)}";
@@ -192,6 +188,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'dashboard_add_btn',
         onPressed: _showAddTransactionModal,
         backgroundColor: _accentGreen,
         child: const Icon(Icons.add, color: Colors.black, size: 30),
@@ -199,7 +196,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// UI: Centralized Total Balance Card dynamically linked to Wallets and Cash
+  /// UI: Centralized Total Balance Card showing Total and always showing Cash balance
   Widget _buildTotalBalanceCard() {
     return FutureBuilder<Map<String, double>>(
       future: _balancesFuture,
@@ -235,35 +232,32 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              // Conditionally display Cash balance if greater than 0
-              if (cash > 0) ...[
-                const SizedBox(height: 15),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.money, color: Colors.black54, size: 16),
-                      const SizedBox(width: 5),
-                      Text(
-                        "Cash: ${_formatAmount(cash)}",
-                        style: const TextStyle(
-                          color: Colors.black87,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
+              const SizedBox(height: 15),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
                 ),
-              ],
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.money, color: Colors.black54, size: 16),
+                    const SizedBox(width: 5),
+                    Text(
+                      "Cash: ${_formatAmount(cash)}",
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         );
@@ -271,7 +265,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// UI & Logic: Dynamic Monthly Analytics Cards
   Widget _buildAnalyticsSection() {
     return FutureBuilder<Map<String, double>>(
       future: _monthlySummaryFuture,
@@ -279,7 +272,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         double income = snapshot.data?['Income'] ?? 0.0;
         double expense = snapshot.data?['Expense'] ?? 0.0;
 
-        // Target caps (Can be made dynamic in future updates)
         double incomeProgress = (income).clamp(0.0, 1.0);
         double expenseProgress = (expense).clamp(0.0, 1.0);
 
@@ -304,7 +296,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// UI: Displays the recent transactions dynamically with linked wallet names
   Widget _buildTransactionsList() {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _transactionsFuture,
@@ -327,18 +318,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           );
         }
 
-        // Show only the 5 most recent transactions
         final recentTransactions = snapshot.data!.take(5).toList();
 
         return Column(
           children: recentTransactions.map((tx) {
             final bool isExpense = tx['type'] == 'Expense';
-            // Extract wallet name from the joined query
             final String walletName = tx['wallets']?['name'] ?? 'Account';
 
             return _buildTransactionItem(
               tx['description'] ?? "Transaction",
-              // Combine date with the wallet name
               "${tx['created_at'].toString().split('T')[0]} • $walletName",
               "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}",
               isExpense ? _expenseRed : _accentGreen,
@@ -349,8 +337,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
       },
     );
   }
-
-  // --- Reusable UI Components below ---
 
   Widget _buildLeadingIcon() => Padding(
     padding: const EdgeInsets.all(8.0),
@@ -405,9 +391,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         ),
       ),
       TextButton(
-        onPressed: () {
-          // Can navigate to a full transaction history screen in the future
-        },
+        onPressed: () {},
         child: const Text("See All", style: TextStyle(color: _accentGreen)),
       ),
     ],
@@ -514,8 +498,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   void _showAddTransactionModal() {
     final amountController = TextEditingController();
     final descController = TextEditingController();
+
     String selectedType = 'Expense';
     String? selectedWalletId;
+    String? targetWalletId;
     int? selectedCategoryId;
 
     showModalBottomSheet(
@@ -555,6 +541,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
                   Row(
                     children: [
                       _buildModalToggle(
@@ -570,17 +557,23 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         _accentGreen,
                         () => setModalState(() => selectedType = 'Income'),
                       ),
+                      const SizedBox(width: 10),
+                      _buildModalToggle(
+                        "Transfer",
+                        selectedType == 'Transfer',
+                        _transferBlue,
+                        () => setModalState(() => selectedType = 'Transfer'),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 20),
-                  // Restricted Input field (Numbers only)
+
                   TextField(
                     controller: amountController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     inputFormatters: [
-                      // Allows only digits and a single decimal point
                       FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d*')),
                     ],
                     style: const TextStyle(color: Colors.white, fontSize: 22),
@@ -590,79 +583,108 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ),
                   ),
                   const SizedBox(height: 15),
+
                   FutureBuilder<List<WalletModel>>(
                     future: _supabaseService.getWallets(),
                     builder: (context, snapshot) {
-                      return DropdownButtonFormField<String>(
-                        dropdownColor: _cardColor,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _inputStyle(
-                          "Select Account",
-                          Icons.account_balance_wallet,
-                        ),
-                        items: snapshot.data
-                            ?.map(
-                              (w) => DropdownMenuItem(
-                                value: w.id,
-                                child: Text(w.name),
+                      return Column(
+                        children: [
+                          DropdownButtonFormField<String>(
+                            dropdownColor: _cardColor,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: _inputStyle(
+                              selectedType == 'Transfer'
+                                  ? "From Account"
+                                  : "Select Account",
+                              Icons.account_balance_wallet,
+                            ),
+                            items: snapshot.data
+                                ?.map(
+                                  (w) => DropdownMenuItem(
+                                    value: w.id,
+                                    child: Text(w.name),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (val) => selectedWalletId = val,
+                          ),
+
+                          if (selectedType == 'Transfer') ...[
+                            const SizedBox(height: 15),
+                            DropdownButtonFormField<String>(
+                              dropdownColor: _cardColor,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputStyle(
+                                "To Account",
+                                Icons.account_balance,
                               ),
-                            )
-                            .toList(),
-                        onChanged: (val) => selectedWalletId = val,
+                              items: snapshot.data
+                                  ?.map(
+                                    (w) => DropdownMenuItem(
+                                      value: w.id,
+                                      child: Text(w.name),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (val) => targetWalletId = val,
+                            ),
+                          ],
+                        ],
                       );
                     },
                   ),
                   const SizedBox(height: 15),
 
-                  // Category Dropdown + Add Custom Category Button
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FutureBuilder<List<CategoryModel>>(
-                          future: _supabaseService.getCategories(),
-                          builder: (context, snapshot) {
-                            return DropdownButtonFormField<int>(
-                              dropdownColor: _cardColor,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _inputStyle(
-                                "Select Category",
-                                Icons.category,
-                              ),
-                              items: snapshot.data
-                                  ?.map(
-                                    (cat) => DropdownMenuItem<int>(
-                                      value: cat.id,
-                                      child: Text(cat.name),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (val) {
-                                setModalState(() {
-                                  selectedCategoryId = val;
-                                });
-                              },
-                            );
-                          },
+                  if (selectedType != 'Transfer') ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FutureBuilder<List<CategoryModel>>(
+                            future: _supabaseService.getCategories(),
+                            builder: (context, snapshot) {
+                              return DropdownButtonFormField<int>(
+                                dropdownColor: _cardColor,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _inputStyle(
+                                  "Select Category",
+                                  Icons.category,
+                                ),
+                                items: snapshot.data
+                                    ?.map(
+                                      (cat) => DropdownMenuItem<int>(
+                                        value: cat.id,
+                                        child: Text(cat.name),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (val) {
+                                  setModalState(() {
+                                    selectedCategoryId = val;
+                                  });
+                                },
+                              );
+                            },
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: _accentGreen.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(color: _accentGreen),
+                        const SizedBox(width: 10),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _accentGreen.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(15),
+                            border: Border.all(color: _accentGreen),
+                          ),
+                          child: IconButton(
+                            icon: const Icon(Icons.add, color: _accentGreen),
+                            onPressed: () {
+                              _showAddNewCategoryDialog(context, setModalState);
+                            },
+                          ),
                         ),
-                        child: IconButton(
-                          icon: const Icon(Icons.add, color: _accentGreen),
-                          onPressed: () {
-                            _showAddNewCategoryDialog(context, setModalState);
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+                  ],
 
-                  const SizedBox(height: 15),
                   TextField(
                     controller: descController,
                     style: const TextStyle(color: Colors.white),
@@ -670,62 +692,87 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   ),
                   const SizedBox(height: 25),
 
-                  // Logical Validation and Save Logic
                   ElevatedButton(
                     onPressed: () async {
                       double parsedAmount =
                           double.tryParse(amountController.text) ?? 0.0;
 
-                      // 1. Basic validation: empty fields or zero amount
-                      if (parsedAmount <= 0 ||
-                          selectedWalletId == null ||
-                          selectedCategoryId == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              "Please fill all fields with valid amounts.",
-                            ),
-                            backgroundColor: Colors.orange,
-                          ),
+                      if (parsedAmount <= 0 || selectedWalletId == null) {
+                        _showError(
+                          context,
+                          "Please fill required fields with valid amounts.",
                         );
                         return;
                       }
 
-                      // 2. Logical validation: Ensure sufficient balance for expenses
-                      if (selectedType == 'Expense') {
+                      if (selectedType == 'Transfer') {
+                        if (targetWalletId == null ||
+                            selectedWalletId == targetWalletId) {
+                          _showError(
+                            context,
+                            "Please select two different accounts for the transfer.",
+                          );
+                          return;
+                        }
+                      } else if (selectedCategoryId == null) {
+                        _showError(context, "Please select a category.");
+                        return;
+                      }
+
+                      if (selectedType == 'Expense' ||
+                          selectedType == 'Transfer') {
                         final wallets = await _supabaseService.getWallets();
-                        final targetWallet = wallets.firstWhere(
+                        final sourceWallet = wallets.firstWhere(
                           (w) => w.id == selectedWalletId,
                         );
 
-                        if (parsedAmount > targetWallet.balance) {
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                "Insufficient balance in the selected account.",
-                              ),
-                              backgroundColor: Colors.redAccent,
-                            ),
+                        if (parsedAmount > sourceWallet.balance) {
+                          _showError(
+                            context,
+                            "Insufficient balance in the source account.",
                           );
-                          return; // Stop execution
+                          return;
                         }
                       }
 
-                      // 3. Execution if all validations pass
-                      await _supabaseService.createTransaction(
-                        walletId: selectedWalletId!,
-                        categoryId: selectedCategoryId!,
-                        amount: parsedAmount,
-                        type: selectedType,
-                        description: descController.text.isEmpty
-                            ? selectedType
-                            : descController.text,
-                      );
+                      try {
+                        if (selectedType == 'Transfer') {
+                          final cats = await _supabaseService.getCategories();
+                          final transferCategory = cats.firstWhere(
+                            (c) => c.name.toLowerCase() == 'transfer',
+                            orElse: () => cats.first,
+                          );
 
-                      if (!mounted) return;
-                      Navigator.pop(context);
-                      refreshDashboard();
+                          await _supabaseService.transferFunds(
+                            fromWalletId: selectedWalletId!,
+                            toWalletId: targetWalletId!,
+                            amount: parsedAmount,
+                            description: descController.text.isEmpty
+                                ? 'Transfer'
+                                : descController.text,
+                            categoryId: transferCategory.id,
+                          );
+                        } else {
+                          await _supabaseService.createTransaction(
+                            walletId: selectedWalletId!,
+                            categoryId: selectedCategoryId!,
+                            amount: parsedAmount,
+                            type: selectedType,
+                            description: descController.text.isEmpty
+                                ? selectedType
+                                : descController.text,
+                          );
+                        }
+
+                        if (!mounted) return;
+                        Navigator.pop(context);
+                        refreshDashboard();
+                      } catch (e) {
+                        _showError(
+                          context,
+                          "An error occurred while saving the transaction.",
+                        );
+                      }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _accentGreen,
@@ -752,7 +799,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// Displays a dialog to allow the user to add a new custom category
+  void _showError(BuildContext context, String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, textAlign: TextAlign.left),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+  }
+
   void _showAddNewCategoryDialog(
     BuildContext context,
     StateSetter setModalState,
@@ -789,7 +845,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
 
                   if (dialogContext.mounted) {
                     Navigator.pop(dialogContext);
-                    // Refresh the Modal to show the new category in the dropdown
                     setModalState(() {});
                   }
                 }

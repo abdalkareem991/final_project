@@ -115,8 +115,6 @@ class SupabaseService {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // NOTE: Ensure the 'currency' column exists in your Supabase 'wallets' table,
-      // otherwise remove the 'currency' key from this map.
       await client.from('wallets').insert({
         'user_id': user.id,
         'name': wallet.name,
@@ -141,6 +139,31 @@ class SupabaseService {
     } catch (e) {
       debugPrint('Calculate Net Worth Error: $e');
       return 0.0;
+    }
+  }
+
+  /// Separates Bank balances from Cash balances
+  Future<Map<String, double>> getBalancesByType() async {
+    try {
+      final wallets = await getWallets();
+      double bankBalance = 0.0;
+      double cashBalance = 0.0;
+
+      for (var w in wallets) {
+        if (w.type.toLowerCase() == 'cash') {
+          cashBalance += w.balance;
+        } else {
+          bankBalance += w.balance;
+        }
+      }
+      return {
+        'Total': bankBalance + cashBalance,
+        'Bank': bankBalance,
+        'Cash': cashBalance,
+      };
+    } catch (e) {
+      debugPrint('Calculate Balances Error: $e');
+      return {'Total': 0.0, 'Bank': 0.0, 'Cash': 0.0};
     }
   }
 
@@ -229,8 +252,8 @@ class SupabaseService {
             'user_id': user.id,
             'name': name,
             'type': type,
-            'icon': 'category', // Default icon
-            'color': '#34EAB9', // Default color (Accent Green)
+            'icon': 'category',
+            'color': '#34EAB9',
           })
           .select()
           .single();
@@ -253,6 +276,7 @@ class SupabaseService {
       final user = client.auth.currentUser;
       if (user == null) return [];
 
+      // Join with wallets to get the bank name
       final response = await client
           .from('transactions')
           .select('*, wallets(name)')
@@ -263,30 +287,6 @@ class SupabaseService {
     } catch (error) {
       debugPrint('Fetch Transactions Error: $error');
       return [];
-    }
-  }
-
-  Future<Map<String, double>> getBalancesByType() async {
-    try {
-      final wallets = await getWallets();
-      double bankBalance = 0.0;
-      double cashBalance = 0.0;
-
-      for (var w in wallets) {
-        if (w.type.toLowerCase() == 'cash') {
-          cashBalance += w.balance;
-        } else {
-          bankBalance += w.balance;
-        }
-      }
-      return {
-        'Total': bankBalance + cashBalance,
-        'Bank': bankBalance,
-        'Cash': cashBalance,
-      };
-    } catch (e) {
-      debugPrint('Calculate Balances Error: $e');
-      return {'Total': 0.0, 'Bank': 0.0, 'Cash': 0.0};
     }
   }
 
@@ -339,6 +339,71 @@ class SupabaseService {
     }
   }
 
+  /// Executes a secure transfer between two wallets and logs the transactions
+  Future<void> transferFunds({
+    required String fromWalletId,
+    required String toWalletId,
+    required double amount,
+    required String description,
+    required int categoryId,
+  }) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) throw Exception("User not logged in");
+
+      // 1. Fetch current balances
+      final fromWalletData = await client
+          .from('wallets')
+          .select('balance')
+          .eq('id', fromWalletId)
+          .single();
+      final toWalletData = await client
+          .from('wallets')
+          .select('balance')
+          .eq('id', toWalletId)
+          .single();
+
+      double fromBalance = (fromWalletData['balance'] as num).toDouble();
+      double toBalance = (toWalletData['balance'] as num).toDouble();
+
+      // 2. Logical Validation
+      if (fromBalance < amount) throw Exception("Insufficient funds.");
+
+      // 3. Update balances
+      await client
+          .from('wallets')
+          .update({'balance': fromBalance - amount})
+          .eq('id', fromWalletId);
+      await client
+          .from('wallets')
+          .update({'balance': toBalance + amount})
+          .eq('id', toWalletId);
+
+      // 4. Log transactions
+      await client.from('transactions').insert([
+        {
+          'user_id': user.id,
+          'wallet_id': fromWalletId,
+          'amount': amount,
+          'type': 'Expense',
+          'description': 'Transfer Out: $description',
+          'category_id': categoryId,
+        },
+        {
+          'user_id': user.id,
+          'wallet_id': toWalletId,
+          'amount': amount,
+          'type': 'Income',
+          'description': 'Transfer In: $description',
+          'category_id': categoryId,
+        },
+      ]);
+    } catch (error) {
+      debugPrint('Transfer Error: $error');
+      rethrow;
+    }
+  }
+
   /// Deletes a transaction and REVERSES the balance impact on the wallet
   Future<void> deleteTransaction(Map<String, dynamic> transaction) async {
     try {
@@ -346,10 +411,8 @@ class SupabaseService {
       final double amount = (transaction['amount'] as num).toDouble();
       final String type = transaction['type'];
 
-      // 1. Delete from transactions table
       await client.from('transactions').delete().eq('id', transaction['id']);
 
-      // 2. Reverse the balance math
       final walletData = await client
           .from('wallets')
           .select('balance')
@@ -365,8 +428,6 @@ class SupabaseService {
           .from('wallets')
           .update({'balance': correctedBalance})
           .eq('id', walletId);
-
-      debugPrint('Transaction deleted and balance reversed.');
     } catch (error) {
       debugPrint('Delete Transaction Error: $error');
       rethrow;
@@ -377,7 +438,6 @@ class SupabaseService {
   // 6. TASK OPERATIONS (TODO LIST)
   // ===========================================================================
 
-  /// Fetches tasks for a specific day
   Future<List<TaskModel>> getTasks(DateTime date) async {
     try {
       final user = client.auth.currentUser;
@@ -400,7 +460,6 @@ class SupabaseService {
     }
   }
 
-  /// Adds a new task and returns the created model with the DB-generated ID
   Future<TaskModel> addTask(TaskModel task) async {
     try {
       final response = await client
@@ -408,15 +467,12 @@ class SupabaseService {
           .insert(task.toJson())
           .select()
           .single();
-      debugPrint('Task saved successfully to cloud database.');
       return TaskModel.fromJson(response);
     } catch (error) {
-      debugPrint('Unexpected Error in addTask: $error');
       rethrow;
     }
   }
 
-  /// Updates an existing task, cleans up old notifications, and reschedules if needed
   Future<void> updateTask(
     TaskModel task, {
     bool rescheduleAlert = false,
@@ -424,8 +480,6 @@ class SupabaseService {
   }) async {
     try {
       await client.from('tasks').update(task.toJson()).eq('id', task.id);
-      debugPrint('Task updated successfully in cloud.');
-
       await NotificationService().cancelNotification(task.id.hashCode);
 
       if (rescheduleAlert &&
@@ -437,27 +491,21 @@ class SupabaseService {
           task.title,
           newAlertTime,
         );
-        debugPrint('New notification scheduled for updated task.');
       }
     } catch (error) {
-      debugPrint('Update Task Error: $error');
       rethrow;
     }
   }
 
-  /// Toggles task status in the database
   Future<void> toggleTaskStatus(String taskId, bool currentStatus) async {
     try {
       await client
           .from('tasks')
           .update({'is_completed': !currentStatus})
           .eq('id', taskId);
-    } catch (error) {
-      debugPrint('Toggle Task Error: $error');
-    }
+    } catch (error) {}
   }
 
-  /// Updates task notification status indicator
   Future<void> updateTaskNotificationStatus(
     String taskId,
     bool hasNotification,
@@ -467,22 +515,16 @@ class SupabaseService {
           .from('tasks')
           .update({'has_notification': hasNotification})
           .eq('id', taskId);
-    } catch (error) {
-      debugPrint('Update Notification Status Error: $error');
-    }
+    } catch (error) {}
   }
 
-  /// Deletes a specific task and cancels its associated local notification
   Future<void> deleteTask(String taskId) async {
     try {
       await client.from('tasks').delete().eq('id', taskId);
       await NotificationService().cancelNotification(taskId.hashCode);
-    } catch (error) {
-      debugPrint('Delete Task Error: $error');
-    }
+    } catch (error) {}
   }
 
-  /// Executes a wallet transaction linked to a specific task completion
   Future<void> executeTaskTransaction(TaskModel task) async {
     try {
       if (task.linkedWalletId == null || task.amount <= 0) return;
@@ -492,7 +534,6 @@ class SupabaseService {
           .select('balance')
           .eq('id', task.linkedWalletId!)
           .single();
-
       double currentBalance = (walletData['balance'] as num).toDouble();
       double newBalance = currentBalance - task.amount;
 
@@ -508,10 +549,7 @@ class SupabaseService {
         'type': 'Expense',
         'description': 'Linked Task Payment: ${task.title}',
       });
-
-      debugPrint('Financial deduction successful for task: ${task.title}');
     } catch (e) {
-      debugPrint('Task Transaction Action Error: $e');
       rethrow;
     }
   }
@@ -520,7 +558,6 @@ class SupabaseService {
   // 7. ANALYTICS LOGIC
   // ===========================================================================
 
-  /// Fetches summary data for analytics
   Future<Map<String, double>> getFilteredSummary(String filter) async {
     try {
       final user = client.auth.currentUser;
@@ -562,19 +599,16 @@ class SupabaseService {
       }
       return summary;
     } catch (error) {
-      debugPrint('Analytics Filter Error: $error');
       return {'Income': 0.0, 'Expense': 0.0};
     }
   }
 
-  /// Get task statistics for a SPECIFIC DAY
   Future<Map<String, int>> getDailyTaskStats(DateTime date) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) return {'total': 0, 'completed': 0, 'pending': 0};
 
       final dateStr = date.toIso8601String().split('T')[0];
-
       final response = await client
           .from('tasks')
           .select('is_completed')
@@ -585,16 +619,16 @@ class SupabaseService {
       final List tasks = response as List;
       int total = tasks.length;
       int completed = tasks.where((t) => t['is_completed'] == true).length;
-      int pending = total - completed;
-
-      return {'total': total, 'completed': completed, 'pending': pending};
+      return {
+        'total': total,
+        'completed': completed,
+        'pending': total - completed,
+      };
     } catch (e) {
-      debugPrint('Error fetching daily stats: $e');
       return {'total': 0, 'completed': 0, 'pending': 0};
     }
   }
 
-  /// Get task statistics for a SPECIFIC MONTH
   Future<Map<String, int>> getMonthlyTaskStats(DateTime month) async {
     try {
       final user = client.auth.currentUser;
@@ -602,7 +636,6 @@ class SupabaseService {
 
       final firstDay = DateTime(month.year, month.month, 1);
       final lastDay = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
-
       final response = await client
           .from('tasks')
           .select('is_completed')
@@ -613,16 +646,16 @@ class SupabaseService {
       final List tasks = response as List;
       int total = tasks.length;
       int completed = tasks.where((t) => t['is_completed'] == true).length;
-      int pending = total - completed;
-
-      return {'total': total, 'completed': completed, 'pending': pending};
+      return {
+        'total': total,
+        'completed': completed,
+        'pending': total - completed,
+      };
     } catch (e) {
-      debugPrint('Error fetching monthly stats: $e');
       return {'total': 0, 'completed': 0, 'pending': 0};
     }
   }
 
-  /// Get task counts per day for the Calendar
   Future<Map<DateTime, int>> getTasksCountForMonth(DateTime month) async {
     try {
       final user = client.auth.currentUser;
@@ -630,7 +663,6 @@ class SupabaseService {
 
       final firstDay = DateTime(month.year, month.month, 1);
       final lastDay = DateTime(month.year, month.month + 1, 0);
-
       final response = await client
           .from('tasks')
           .select('due_date')
@@ -646,12 +678,10 @@ class SupabaseService {
       }
       return counts;
     } catch (e) {
-      debugPrint('Error fetching calendar counts: $e');
       return {};
     }
   }
 
-  /// Legacy compatibility
   Future<Map<String, double>> getCategorySummary() async {
     return await getFilteredSummary('Month');
   }
