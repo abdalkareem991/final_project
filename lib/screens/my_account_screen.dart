@@ -1,6 +1,7 @@
 // lib/screens/my_account_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
@@ -196,7 +197,7 @@ class _MyAccountScreenState extends State<MyAccountScreen>
       builder: (context, snapshot) {
         // Updated label name
         const String labelText = "CREDIT TOTAL";
-        
+
         String netWorth = snapshot.hasData
             ? "JD ${snapshot.data!.toStringAsFixed(2)}"
             : "JD 0.00";
@@ -458,6 +459,9 @@ class _MyAccountScreenState extends State<MyAccountScreen>
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d*')),
+                ],
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,

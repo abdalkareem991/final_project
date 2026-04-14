@@ -4,7 +4,9 @@ import 'package:final_project/screens/ai_assistant_screen.dart';
 import 'package:final_project/screens/analytics_screen.dart';
 import 'package:final_project/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/category_model.dart';
 import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
@@ -27,13 +29,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // Global key to access the state of the main content for refreshing
   final GlobalKey<_DashboardMainContentState> _mainContentKey = GlobalKey();
 
-  List<Widget> get _screens => [
-    _DashboardMainContent(key: _mainContentKey),
-    const MyAccountScreen(),
-    const AnalyticsScreen(),
-    const TodoListScreen(),
-    const SettingsScreen(),
-  ];
+  late final List<Widget> _screens;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize screens once to prevent state loss when navigating tabs
+    _screens = [
+      _DashboardMainContent(key: _mainContentKey),
+      const MyAccountScreen(),
+      const AnalyticsScreen(),
+      const TodoListScreen(),
+      const SettingsScreen(),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,8 +99,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
 
   // Dynamic Data Futures
-  late Future<double> _totalBalanceFuture = _supabaseService
-      .calculateTotalNetWorth();
+  late Future<Map<String, double>> _balancesFuture = _supabaseService
+      .getBalancesByType();
   late Future<List<Map<String, dynamic>>> _transactionsFuture = _supabaseService
       .getTransactions();
   late Future<Map<String, double>> _monthlySummaryFuture = _supabaseService
@@ -109,18 +118,18 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   @override
   void initState() {
     super.initState();
-    // SOLUTION: Initialize futures synchronously before build() executes
-    _totalBalanceFuture = _supabaseService.calculateTotalNetWorth();
+    // Initialize futures synchronously before build() executes
+    _balancesFuture = _supabaseService.getBalancesByType();
     _transactionsFuture = _supabaseService.getTransactions();
     _monthlySummaryFuture = _supabaseService.getFilteredSummary('Month');
     loadCurrencyPreference();
   }
 
-  /// Logic: Refreshes all dashboard components
+  /// Refreshes all dashboard components
   void refreshDashboard() {
     loadCurrencyPreference();
     setState(() {
-      _totalBalanceFuture = _supabaseService.calculateTotalNetWorth();
+      _balancesFuture = _supabaseService.getBalancesByType();
       _transactionsFuture = _supabaseService.getTransactions();
       _monthlySummaryFuture = _supabaseService.getFilteredSummary('Month');
     });
@@ -190,14 +199,13 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// UI: Centralized Total Balance Card dynamically linked to Wallets
+  /// UI: Centralized Total Balance Card dynamically linked to Wallets and Cash
   Widget _buildTotalBalanceCard() {
-    return FutureBuilder<double>(
-      future: _totalBalanceFuture,
+    return FutureBuilder<Map<String, double>>(
+      future: _balancesFuture,
       builder: (context, snapshot) {
-        String balance = snapshot.hasData
-            ? _formatAmount(snapshot.data!)
-            : _formatAmount(0.0);
+        double total = snapshot.data?['Total'] ?? 0.0;
+        double cash = snapshot.data?['Cash'] ?? 0.0;
 
         return Container(
           width: double.infinity,
@@ -220,13 +228,42 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
               ),
               const SizedBox(height: 8),
               Text(
-                balance,
+                _formatAmount(total),
                 style: const TextStyle(
                   color: Colors.black,
                   fontSize: 36,
                   fontWeight: FontWeight.bold,
                 ),
               ),
+              // Conditionally display Cash balance if greater than 0
+              if (cash > 0) ...[
+                const SizedBox(height: 15),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.money, color: Colors.black54, size: 16),
+                      const SizedBox(width: 5),
+                      Text(
+                        "Cash: ${_formatAmount(cash)}",
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         );
@@ -243,7 +280,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         double expense = snapshot.data?['Expense'] ?? 0.0;
 
         // Target caps (Can be made dynamic in future updates)
-
         double incomeProgress = (income).clamp(0.0, 1.0);
         double expenseProgress = (expense).clamp(0.0, 1.0);
 
@@ -268,7 +304,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  /// UI: Displays the recent transactions dynamically
+  /// UI: Displays the recent transactions dynamically with linked wallet names
   Widget _buildTransactionsList() {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _transactionsFuture,
@@ -297,9 +333,13 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         return Column(
           children: recentTransactions.map((tx) {
             final bool isExpense = tx['type'] == 'Expense';
+            // Extract wallet name from the joined query
+            final String walletName = tx['wallets']?['name'] ?? 'Account';
+
             return _buildTransactionItem(
               tx['description'] ?? "Transaction",
-              tx['created_at'].toString().split('T')[0],
+              // Combine date with the wallet name
+              "${tx['created_at'].toString().split('T')[0]} • $walletName",
               "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}",
               isExpense ? _expenseRed : _accentGreen,
               isExpense: isExpense,
@@ -471,12 +511,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
- void _showAddTransactionModal() {
-  final amountController = TextEditingController();
-  final descController = TextEditingController();
-  String selectedType = 'Expense';
-  String? selectedWalletId;
-  int? selectedCategoryId; // <--- Change this from String? to int?
+  void _showAddTransactionModal() {
+    final amountController = TextEditingController();
+    final descController = TextEditingController();
+    String selectedType = 'Expense';
+    String? selectedWalletId;
+    int? selectedCategoryId;
 
     showModalBottomSheet(
       context: context,
@@ -533,11 +573,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ],
                   ),
                   const SizedBox(height: 20),
+                  // Restricted Input field (Numbers only)
                   TextField(
                     controller: amountController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
+                    inputFormatters: [
+                      // Allows only digits and a single decimal point
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d*')),
+                    ],
                     style: const TextStyle(color: Colors.white, fontSize: 22),
                     decoration: _inputStyle(
                       "Amount (In JD)",
@@ -568,80 +613,196 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     },
                   ),
                   const SizedBox(height: 15),
-                  FutureBuilder<List<CategoryModel>>(
-  future: _supabaseService.getCategories(),
-  builder: (context, snapshot) {
-    return DropdownButtonFormField<int>( // <--- Change <String> to <int>
-      dropdownColor: _cardColor,
-      style: const TextStyle(color: Colors.white),
-      decoration: _inputStyle("Select Category", Icons.category),
-      items: snapshot.data?.map((cat) => DropdownMenuItem<int>(
-        value: cat.id, // Ensure your CategoryModel.id is an int
-        child: Text(cat.name),
-      )).toList(),
-      onChanged: (val) {
-        setModalState(() {
-          selectedCategoryId = val; // No .toString() needed here
-        });
-      },
-    );
-  },
-),
 
-const SizedBox(height: 15),
+                  // Category Dropdown + Add Custom Category Button
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FutureBuilder<List<CategoryModel>>(
+                          future: _supabaseService.getCategories(),
+                          builder: (context, snapshot) {
+                            return DropdownButtonFormField<int>(
+                              dropdownColor: _cardColor,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputStyle(
+                                "Select Category",
+                                Icons.category,
+                              ),
+                              items: snapshot.data
+                                  ?.map(
+                                    (cat) => DropdownMenuItem<int>(
+                                      value: cat.id,
+                                      child: Text(cat.name),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (val) {
+                                setModalState(() {
+                                  selectedCategoryId = val;
+                                });
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: _accentGreen.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(color: _accentGreen),
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.add, color: _accentGreen),
+                          onPressed: () {
+                            _showAddNewCategoryDialog(context, setModalState);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 15),
                   TextField(
                     controller: descController,
                     style: const TextStyle(color: Colors.white),
                     decoration: _inputStyle("Description", Icons.edit),
                   ),
                   const SizedBox(height: 25),
-                 ElevatedButton(
-  onPressed: () async {
-    // 1. Added selectedCategoryId != null to the check
-    if (amountController.text.isNotEmpty &&
-        selectedWalletId != null &&
-        selectedCategoryId != null) { 
-      
-      await _supabaseService.createTransaction(
-  walletId: selectedWalletId!,
-  categoryId: selectedCategoryId!, // This is now an int, matching your service
-  amount: double.tryParse(amountController.text) ?? 0.0,
-  type: selectedType,
-  description: descController.text.isEmpty
-      ? selectedType
-      : descController.text,
-);
 
-      if (!mounted) return;
-      Navigator.pop(context);
-      refreshDashboard(); 
-    } else {
-      // Optional: Show a message if they forgot to pick something
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select an account and category")),
-      );
-    }
-  },
-  style: ElevatedButton.styleFrom(
-    backgroundColor: _accentGreen,
-    minimumSize: const Size(double.infinity, 55),
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(15),
-    ),
-  ),
-  child: const Text(
-    "SAVE TRANSACTION",
-    style: TextStyle(
-      color: Colors.black,
-      fontWeight: FontWeight.bold,
-    ),
-  ),
-),
+                  // Logical Validation and Save Logic
+                  ElevatedButton(
+                    onPressed: () async {
+                      double parsedAmount =
+                          double.tryParse(amountController.text) ?? 0.0;
+
+                      // 1. Basic validation: empty fields or zero amount
+                      if (parsedAmount <= 0 ||
+                          selectedWalletId == null ||
+                          selectedCategoryId == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              "Please fill all fields with valid amounts.",
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+
+                      // 2. Logical validation: Ensure sufficient balance for expenses
+                      if (selectedType == 'Expense') {
+                        final wallets = await _supabaseService.getWallets();
+                        final targetWallet = wallets.firstWhere(
+                          (w) => w.id == selectedWalletId,
+                        );
+
+                        if (parsedAmount > targetWallet.balance) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                "Insufficient balance in the selected account.",
+                              ),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                          return; // Stop execution
+                        }
+                      }
+
+                      // 3. Execution if all validations pass
+                      await _supabaseService.createTransaction(
+                        walletId: selectedWalletId!,
+                        categoryId: selectedCategoryId!,
+                        amount: parsedAmount,
+                        type: selectedType,
+                        description: descController.text.isEmpty
+                            ? selectedType
+                            : descController.text,
+                      );
+
+                      if (!mounted) return;
+                      Navigator.pop(context);
+                      refreshDashboard();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _accentGreen,
+                      minimumSize: const Size(double.infinity, 55),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                    ),
+                    child: const Text(
+                      "SAVE TRANSACTION",
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 30),
                 ],
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  /// Displays a dialog to allow the user to add a new custom category
+  void _showAddNewCategoryDialog(
+    BuildContext context,
+    StateSetter setModalState,
+  ) {
+    final categoryNameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: _cardColor,
+          title: const Text(
+            "Add New Category",
+            style: TextStyle(color: Colors.white),
+          ),
+          content: TextField(
+            controller: categoryNameController,
+            style: const TextStyle(color: Colors.white),
+            decoration: _inputStyle("Category Name", Icons.edit),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: _accentGreen),
+              onPressed: () async {
+                if (categoryNameController.text.isNotEmpty) {
+                  await _supabaseService.addCustomCategory(
+                    categoryNameController.text.trim(),
+                    'Expense',
+                  );
+
+                  if (dialogContext.mounted) {
+                    Navigator.pop(dialogContext);
+                    // Refresh the Modal to show the new category in the dropdown
+                    setModalState(() {});
+                  }
+                }
+              },
+              child: const Text(
+                "Save",
+                style: TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

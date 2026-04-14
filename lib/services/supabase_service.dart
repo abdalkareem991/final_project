@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../models/category_model.dart';
 import '../models/profile_model.dart';
 import '../models/task_model.dart';
@@ -77,7 +78,7 @@ class SupabaseService {
         'id': id,
         'full_name': userName,
         'phone': phone,
-        'total_net_worth': 0,
+        'total_net_worth': 0.0,
       });
     } catch (error) {
       debugPrint('Profile Creation Error: $error');
@@ -108,13 +109,14 @@ class SupabaseService {
   // 3. WALLET / ACCOUNT OPERATIONS
   // ===========================================================================
 
-  /// Logic: Adds a new wallet using the WalletModel structure
+  /// Adds a new wallet using the WalletModel structure
   Future<void> addWallet(WalletModel wallet) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // Exclude 'id' because Supabase generates it automatically
+      // NOTE: Ensure the 'currency' column exists in your Supabase 'wallets' table,
+      // otherwise remove the 'currency' key from this map.
       await client.from('wallets').insert({
         'user_id': user.id,
         'name': wallet.name,
@@ -129,14 +131,12 @@ class SupabaseService {
     }
   }
 
-  /// Logic: Dynamically calculates the total balance from all active wallets
+  /// Dynamically calculates the total balance from all active wallets
   Future<double> calculateTotalNetWorth() async {
     try {
-      // We call getWallets() first to make sure we have the latest data from the DB
-      final wallets = await getWallets(); 
+      final wallets = await getWallets();
       if (wallets.isEmpty) return 0.0;
 
-      // This sums up every wallet's balance into one total number
       return wallets.fold<double>(0.0, (sum, wallet) => sum + wallet.balance);
     } catch (e) {
       debugPrint('Calculate Net Worth Error: $e');
@@ -154,6 +154,7 @@ class SupabaseService {
           .from('wallets')
           .select()
           .eq('user_id', user.id);
+
       return (response as List)
           .map((json) => WalletModel.fromJson(json))
           .toList();
@@ -174,7 +175,7 @@ class SupabaseService {
     }
   }
 
-  /// Logic: Updates an existing wallet using the WalletModel structure
+  /// Updates an existing wallet using the WalletModel structure
   Future<void> updateWallet(WalletModel wallet) async {
     try {
       final Map<String, dynamic> updateData = {
@@ -193,27 +194,9 @@ class SupabaseService {
   }
 
   // ===========================================================================
-  // 4. TRANSACTION LOGIC & ANALYTICS
+  // 4. CATEGORY OPERATIONS
   // ===========================================================================
 
-  /// Fetches transactions for account statement
-  Future<List<Map<String, dynamic>>> getTransactions() async {
-    try {
-      final user = client.auth.currentUser;
-      if (user == null) return [];
-
-      final response = await client
-          .from('transactions')
-          .select()
-          .eq('user_id', user.id)
-          .order('created_at', ascending: false);
-
-      return List<Map<String, dynamic>>.from(response);
-    } catch (error) {
-      debugPrint('Fetch Transactions Error: $error');
-      return [];
-    }
-  }
   /// Fetches all categories (Income & Expense) for the user
   Future<List<CategoryModel>> getCategories() async {
     try {
@@ -234,27 +217,99 @@ class SupabaseService {
     }
   }
 
-  /// Records a manual transaction and updates wallet balance
+  /// Adds a new custom category for the current user
+  Future<CategoryModel> addCustomCategory(String name, String type) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) throw Exception("User not logged in");
+
+      final response = await client
+          .from('categories')
+          .insert({
+            'user_id': user.id,
+            'name': name,
+            'type': type,
+            'icon': 'category', // Default icon
+            'color': '#34EAB9', // Default color (Accent Green)
+          })
+          .select()
+          .single();
+
+      debugPrint('Custom category added successfully');
+      return CategoryModel.fromJson(response);
+    } catch (error) {
+      debugPrint('Add Category Error: $error');
+      rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 5. TRANSACTION LOGIC & ANALYTICS
+  // ===========================================================================
+
+  /// Fetches transactions for account statement
+  Future<List<Map<String, dynamic>>> getTransactions() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return [];
+
+      final response = await client
+          .from('transactions')
+          .select('*, wallets(name)')
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      debugPrint('Fetch Transactions Error: $error');
+      return [];
+    }
+  }
+
+  Future<Map<String, double>> getBalancesByType() async {
+    try {
+      final wallets = await getWallets();
+      double bankBalance = 0.0;
+      double cashBalance = 0.0;
+
+      for (var w in wallets) {
+        if (w.type.toLowerCase() == 'cash') {
+          cashBalance += w.balance;
+        } else {
+          bankBalance += w.balance;
+        }
+      }
+      return {
+        'Total': bankBalance + cashBalance,
+        'Bank': bankBalance,
+        'Cash': cashBalance,
+      };
+    } catch (e) {
+      debugPrint('Calculate Balances Error: $e');
+      return {'Total': 0.0, 'Bank': 0.0, 'Cash': 0.0};
+    }
+  }
+
   /// Records a manual transaction and updates wallet balance
   Future<void> createTransaction({
     required String walletId,
     required double amount,
     required String type,
     required String description,
-    required int categoryId, // Added Category Support
+    required int categoryId,
   }) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      // 1. Insert transaction record with Category ID
+      // 1. Insert transaction record
       await client.from('transactions').insert({
         'user_id': user.id,
         'wallet_id': walletId,
         'amount': amount,
         'type': type,
         'description': description,
-        'category_id': categoryId, // Links to your CategoryModel
+        'category_id': categoryId,
       });
 
       // 2. Fetch current wallet balance
@@ -263,11 +318,10 @@ class SupabaseService {
           .select('balance')
           .eq('id', walletId)
           .single();
-          
+
       double currentBalance = (walletData['balance'] as num).toDouble();
-      
+
       // 3. Calculate new balance
-      // Logic: If Income -> Add, If Expense -> Subtract
       double newBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
@@ -277,13 +331,14 @@ class SupabaseService {
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', walletId);
-          
+
       debugPrint('Transaction and Balance Update Successful');
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
       rethrow;
     }
   }
+
   /// Deletes a transaction and REVERSES the balance impact on the wallet
   Future<void> deleteTransaction(Map<String, dynamic> transaction) async {
     try {
@@ -295,17 +350,22 @@ class SupabaseService {
       await client.from('transactions').delete().eq('id', transaction['id']);
 
       // 2. Reverse the balance math
-      // If we delete an Expense, we must ADD the money back.
-      // If we delete Income, we must SUBTRACT the money.
-      final walletData = await client.from('wallets').select('balance').eq('id', walletId).single();
+      final walletData = await client
+          .from('wallets')
+          .select('balance')
+          .eq('id', walletId)
+          .single();
       double currentBalance = (walletData['balance'] as num).toDouble();
-      
-      double correctedBalance = type.toLowerCase() == 'expense' 
-          ? currentBalance + amount 
+
+      double correctedBalance = type.toLowerCase() == 'expense'
+          ? currentBalance + amount
           : currentBalance - amount;
 
-      await client.from('wallets').update({'balance': correctedBalance}).eq('id', walletId);
-      
+      await client
+          .from('wallets')
+          .update({'balance': correctedBalance})
+          .eq('id', walletId);
+
       debugPrint('Transaction deleted and balance reversed.');
     } catch (error) {
       debugPrint('Delete Transaction Error: $error');
@@ -314,7 +374,7 @@ class SupabaseService {
   }
 
   // ===========================================================================
-  // 5. TASK OPERATIONS (TODO LIST)
+  // 6. TASK OPERATIONS (TODO LIST)
   // ===========================================================================
 
   /// Fetches tasks for a specific day
@@ -350,9 +410,6 @@ class SupabaseService {
           .single();
       debugPrint('Task saved successfully to cloud database.');
       return TaskModel.fromJson(response);
-    } on PostgrestException catch (error) {
-      debugPrint('Postgrest Error (Code: ${error.code}): ${error.message}');
-      rethrow;
     } catch (error) {
       debugPrint('Unexpected Error in addTask: $error');
       rethrow;
@@ -366,19 +423,16 @@ class SupabaseService {
     DateTime? newAlertTime,
   }) async {
     try {
-      // 1. Update the record in the Supabase database
       await client.from('tasks').update(task.toJson()).eq('id', task.id);
       debugPrint('Task updated successfully in cloud.');
 
-      // 2. Clean up: Always cancel the existing notification using the unique task ID hash
       await NotificationService().cancelNotification(task.id.hashCode);
 
-      // 3. Reschedule: Set a new notification if requested and the time is valid
       if (rescheduleAlert &&
           newAlertTime != null &&
           newAlertTime.isAfter(DateTime.now())) {
         await NotificationService().scheduleNotification(
-          task.id.hashCode, // Maintain the same unique ID hash
+          task.id.hashCode,
           "Task Reminder",
           task.title,
           newAlertTime,
@@ -433,22 +487,20 @@ class SupabaseService {
     try {
       if (task.linkedWalletId == null || task.amount <= 0) return;
 
-      // 1. Fetch linked wallet balance
       final walletData = await client
           .from('wallets')
           .select('balance')
           .eq('id', task.linkedWalletId!)
           .single();
+
       double currentBalance = (walletData['balance'] as num).toDouble();
       double newBalance = currentBalance - task.amount;
 
-      // 2. Update wallet balance
       await client
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', task.linkedWalletId!);
 
-      // 3. Log into transactions history
       await client.from('transactions').insert({
         'user_id': task.userId,
         'wallet_id': task.linkedWalletId,
@@ -465,7 +517,7 @@ class SupabaseService {
   }
 
   // ===========================================================================
-  // 6. ANALYTICS LOGIC
+  // 7. ANALYTICS LOGIC
   // ===========================================================================
 
   /// Fetches summary data for analytics
@@ -515,7 +567,7 @@ class SupabaseService {
     }
   }
 
-  /// Logic: Get task statistics for a SPECIFIC DAY (Total, Completed, Pending)
+  /// Get task statistics for a SPECIFIC DAY
   Future<Map<String, int>> getDailyTaskStats(DateTime date) async {
     try {
       final user = client.auth.currentUser;
@@ -542,7 +594,7 @@ class SupabaseService {
     }
   }
 
-  /// Logic: Get task statistics for a SPECIFIC MONTH (Used for Progress Bar)
+  /// Get task statistics for a SPECIFIC MONTH
   Future<Map<String, int>> getMonthlyTaskStats(DateTime month) async {
     try {
       final user = client.auth.currentUser;
@@ -570,7 +622,7 @@ class SupabaseService {
     }
   }
 
-  // 2. Get task counts per day for the Calendar
+  /// Get task counts per day for the Calendar
   Future<Map<DateTime, int>> getTasksCountForMonth(DateTime month) async {
     try {
       final user = client.auth.currentUser;
