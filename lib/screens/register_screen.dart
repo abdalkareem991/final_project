@@ -2,7 +2,6 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/supabase_service.dart';
 
@@ -54,49 +53,52 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// Logic: Validates inputs and handles user registration
   Future<void> _handleRegister() async {
-  setState(() => _isLoading = true);
-  try {
-    final response = await _supabaseService.signUp(
-      _emailController.text.trim(),
-      _passwordController.text.trim(),
-    );
-
-    if (response.user != null) {
-      // 1. Save credentials to Secure Storage
-      await _storage.write(key: 'email', value: _emailController.text.trim());
-      await _storage.write(key: 'password', value: _passwordController.text.trim());
-      
-      if (_enableBiometrics) {
-        await _storage.write(key: 'use_biometrics', value: 'true');
-      }
-
-      // 2. THE FIX: Wait 1 second for the Supabase Auth session to stabilize
-      await Future.delayed(const Duration(seconds: 1));
-
-      // 3. Now create the user profile
-      await _supabaseService.createUserProfile(
-        response.user!.id,
-        _userNameController.text.trim(),
-        _phoneController.text.trim(),
+    setState(() => _isLoading = true);
+    try {
+      final response = await _supabaseService.signUp(
+        _emailController.text.trim(),
+        _passwordController.text.trim(),
       );
 
+      if (response.user != null) {
+        // 1. Save credentials to Secure Storage
+        await _storage.write(key: 'email', value: _emailController.text.trim());
+        await _storage.write(
+          key: 'password',
+          value: _passwordController.text.trim(),
+        );
+
+        if (_enableBiometrics) {
+          await _storage.write(key: 'use_biometrics', value: 'true');
+        }
+
+        // 2. THE FIX: Wait 1 second for the Supabase Auth session to stabilize
+        await Future.delayed(const Duration(seconds: 1));
+
+        // 3. Now create the user profile
+        await _supabaseService.createUserProfile(
+          response.user!.id,
+          _userNameController.text.trim(),
+          _phoneController.text.trim(),
+        );
+
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/dashboard');
+        }
+      }
+    } catch (e) {
+      debugPrint("Registration Error: $e");
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/dashboard');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('An unexpected error occurred. Please try again.'),
+          ),
+        );
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-  } catch (e) {
-    debugPrint("Registration Error: $e");
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('An unexpected error occurred. Please try again.')),
-      );
-    }
-  } finally {
-    if (mounted) setState(() => _isLoading = false);
   }
-}
-
-  
 
   @override
   Widget build(BuildContext context) {

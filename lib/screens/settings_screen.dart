@@ -4,8 +4,10 @@ import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:telephony/telephony.dart'; //new
 
 import '../models/profile_model.dart';
+import '../services/sms_listener_service.dart'; //new
 import '../services/supabase_service.dart';
 import 'bank_selection_screen.dart'; // Your new Privacy feature screen
 import 'login_screen.dart';
@@ -184,6 +186,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(
                     builder: (context) => const BankSelectionScreen(),
                   ),
+                ),
+              ),
+              _buildSettingItem(
+                icon: Icons.message_outlined,
+                title: "Enable SMS Automation",
+                subtitle: "Automatically log bank transactions",
+                trailing: IconButton(
+                  icon: const Icon(Icons.security, color: _accentGreen),
+                  onPressed: () async {
+                    // Logic: Request system permissions for SMS and Phone state
+                    bool? permissionsGranted =
+                        await Telephony.instance.requestPhoneAndSmsPermissions;
+
+                    if (!mounted) return;
+
+                    if (permissionsGranted == true) {
+                      // Activate the listener service immediately
+                      SMSListenerService().startListening();
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("SMS Automation Enabled Successfully!"),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Permissions denied. Cannot enable automation.",
+                          ),
+                          backgroundColor: Colors.redAccent,
+                        ),
+                      );
+                    }
+                  },
                 ),
               ),
               _buildSettingItem(

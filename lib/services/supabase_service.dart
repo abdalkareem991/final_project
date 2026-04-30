@@ -10,6 +10,11 @@ import '../models/wallet_model.dart';
 import 'notification_service.dart';
 
 class SupabaseService {
+  // Singleton pattern to ensure only one instance of the service exists
+  static final SupabaseService _instance = SupabaseService._internal();
+  factory SupabaseService() => _instance;
+  SupabaseService._internal();
+
   // Initialize Supabase Client
   final SupabaseClient client = Supabase.instance.client;
 
@@ -247,13 +252,11 @@ class SupabaseService {
   // 5. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
 
-  /// Fetches transactions with both wallet name and category name included
   Future<List<Map<String, dynamic>>> getTransactions() async {
     try {
       final user = client.auth.currentUser;
       if (user == null) return [];
 
-      // Join wallets and categories to get their names for the details view
       final response = await client
           .from('transactions')
           .select('*, wallets(name), categories(name)')
@@ -308,7 +311,6 @@ class SupabaseService {
     }
   }
 
-  /// Complex Logic: Safely updates a transaction by reversing old balances and applying new ones
   Future<void> updateTransaction({
     required Map<String, dynamic> oldTx,
     required Map<String, dynamic> newTx,
@@ -318,7 +320,6 @@ class SupabaseService {
       final oldAmount = (oldTx['amount'] as num).toDouble();
       final oldType = oldTx['type'];
 
-      // 1. Reverse the old transaction impact
       final oldWalletData = await client
           .from('wallets')
           .select('balance')
@@ -335,7 +336,6 @@ class SupabaseService {
           .update({'balance': restoredBalance})
           .eq('id', oldWalletId);
 
-      // 2. Apply the new transaction impact
       final newWalletId = newTx['wallet_id'];
       final newAmount = (newTx['amount'] as num).toDouble();
       final newType = newTx['type'];
@@ -357,7 +357,6 @@ class SupabaseService {
           .update({'balance': finalBalance})
           .eq('id', newWalletId);
 
-      // 3. Update the transaction record in DB
       await client
           .from('transactions')
           .update({
@@ -714,5 +713,104 @@ class SupabaseService {
 
   Future<Map<String, double>> getCategorySummary() async {
     return await getFilteredSummary('Month');
+  }
+
+  // ===========================================================================
+  // 8. AUTOMATION & AI LOGIC (NEW SECTION)
+  // ===========================================================================
+
+  Future<String?> findWalletByBankName(String bankName) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return null;
+
+      final response = await client
+          .from('wallets')
+          .select('id')
+          .eq('user_id', user.id)
+          .ilike('name', '%$bankName%')
+          .limit(1)
+          .maybeSingle();
+
+      return response != null ? response['id'] as String : null;
+    } catch (e) {
+      debugPrint("Error finding wallet: $e");
+      return null;
+    }
+  }
+
+  Future<void> processAutomatedTransaction(Map<String, dynamic> aiData) async {
+    try {
+      final String bankName = aiData['bank'] ?? "Unknown Bank";
+      final String? walletId = await findWalletByBankName(bankName);
+
+      if (walletId == null) {
+        debugPrint("Automation: No matching wallet found for $bankName.");
+        return;
+      }
+
+      final categories = await getCategories();
+      final int categoryId = categories.isNotEmpty ? categories.first.id : 1;
+
+      await createTransaction(
+        walletId: walletId,
+        amount: aiData['amount'],
+        type: aiData['type'],
+        description: "🤖 AI Auto-Log: ${aiData['bank']}",
+        categoryId: categoryId,
+      );
+
+      await NotificationService().showInstantNotification(
+        "FinMind AI Activity Detected",
+        "Logged ${aiData['amount']} JOD from ${aiData['bank']} successfully.",
+      );
+    } catch (e) {
+      debugPrint("Critical Automation Error: $e");
+    }
+  }
+
+  // ===========================================================================
+  // 9. REAL-TIME STREAMS (OPTIONAL ADDITIONS FOR UI UPDATES)
+  // ===========================================================================
+
+  /// Real-time stream for account balances
+  Stream<Map<String, double>> getBalancesStream() {
+    final userId = client.auth.currentUser?.id;
+    if (userId == null)
+      return Stream.value({'Total': 0.0, 'Bank': 0.0, 'Cash': 0.0});
+
+    return client
+        .from('wallets')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((data) {
+          double bankBalance = 0.0;
+          double cashBalance = 0.0;
+          for (var row in data) {
+            final double bal = (row['balance'] as num).toDouble();
+            if (row['type'].toString().toLowerCase() == 'cash') {
+              cashBalance += bal;
+            } else {
+              bankBalance += bal;
+            }
+          }
+          return {
+            'Total': bankBalance + cashBalance,
+            'Bank': bankBalance,
+            'Cash': cashBalance,
+          };
+        });
+  }
+
+  /// Real-time stream for transactions
+  Stream<List<Map<String, dynamic>>> getTransactionsStream() {
+    final userId = client.auth.currentUser?.id;
+    if (userId == null) return Stream.value([]);
+
+    return client
+        .from('transactions')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .order('created_at', ascending: false);
   }
 }
