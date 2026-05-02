@@ -1,5 +1,7 @@
 // lib/services/sms_listener_service.dart
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:telephony/telephony.dart';
 
@@ -10,38 +12,43 @@ import 'supabase_service.dart';
 // BACKGROUND ENTRY POINT
 // ===========================================================================
 
-/// This function MUST be at the top level (outside any class).
-/// It handles SMS messages when the app is terminated or in the background.
-@pragma('vm:entry-point')
+/// This function handles SMS messages when the app is terminated or in the background.
+/// It must remain at the top level and be annotated with @pragma('vm:entry-point').
+/*@pragma('vm:entry-point')
 void backGroundMessageHandler(SmsMessage message) async {
-  // Re-initialize services for the separate background isolate
   final AIService aiService = AIService();
   final SupabaseService supabaseService = SupabaseService();
 
   if (message.body == null || message.address == null) return;
 
-  // Convert sender address to lowercase for flexible matching
-  final String sender = message.address!.toLowerCase();
-
+  final String sender = message.address!;
   debugPrint("🚨 Background SMS received from: $sender");
 
-  // Check if the sender is an authorized bank (JIB or Arab Bank)
-  if (sender.contains("jib") || sender.contains("arabbank")) {
-    try {
-      // 1. Analyze SMS body using Gemini AI
+  try {
+    // 1. Identify the linked automated wallet for this specific sender
+    final String? walletId = await supabaseService.findWalletBySmsSender(
+      sender,
+    );
+
+    if (walletId != null) {
+      // 2. Analyze the SMS body using Gemini AI to extract transaction details[cite: 6]
       final data = await aiService.parseBankSMS(message.body!);
 
-      // 2. Log to database if AI successfully extracted the transaction data
       if (data != null) {
-        await supabaseService.processAutomatedTransaction(data);
-        debugPrint("✅ Background: Transaction logged for $sender");
+        // 3. Log the transaction and update the cloud database balance
+        await supabaseService.processAutomatedTransaction(data, sender);
+        debugPrint("✅ Background: Automated transaction logged for $sender");
       }
-    } catch (e) {
-      debugPrint("Background Process Error: $e");
+    } else {
+      debugPrint(
+        "⚠️ Background: No automated wallet linked for sender '$sender'.",
+      );
     }
+  } catch (e) {
+    debugPrint("❌ Background Process Error: $e");
   }
 }
-
+*/
 // ===========================================================================
 // SERVICE CLASS
 // ===========================================================================
@@ -50,50 +57,103 @@ class SMSListenerService {
   final Telephony telephony = Telephony.instance;
   final AIService _aiService = AIService();
   final SupabaseService _supabaseService = SupabaseService();
+  Timer? _smsSyncTimer;
+  final Set<String> _processedInMemory = {};
 
-  /// Initializes the SMS listener for both foreground and background states
-  void startListening() {
-    telephony.listenIncomingSms(
-      onNewMessage: (SmsMessage message) async {
-        // Log the raw SMS data for debugging purposes
-        debugPrint(
-          "📩 Foreground SMS | From: ${message.address} | Body: ${message.body}",
-        );
+  /// Starts the SMS listener for both foreground and background states[cite: 8]
+  Future<void> startListening() async {
+    debugPrint("SMS Auto Sync STARTED");
 
-        if (message.body == null || message.address == null) return;
+    final bool? permission = await telephony.requestPhoneAndSmsPermissions;
+    debugPrint("SMS permission: $permission");
 
-        final String sender = message.address!.toLowerCase();
+    if (permission != true) {
+      debugPrint("SMS sync stopped: permission denied");
+      return;
+    }
 
-        // Validate if the sender matches JIB or Arab Bank identifiers
-        if (sender.contains("jib") || sender.contains("arabbank")) {
-          debugPrint("🎯 Authorized Bank Match Detected: $sender");
-          try {
-            // Process the message through the AI service
-            final data = await _aiService.parseBankSMS(message.body!);
+    _smsSyncTimer?.cancel();
 
-            if (data != null) {
-              // Execute the automated transaction logic in Supabase
-              await _supabaseService.processAutomatedTransaction(data);
-              debugPrint(
-                "✅ Foreground: Transaction logged successfully for $sender",
-              );
-            }
-          } catch (e) {
-            debugPrint("Foreground AI Processing Error: $e");
-          }
-        } else {
-          // Log a warning if the bank is not in the authorized list
-          debugPrint("⚠️ SMS Filtered: Sender '$sender' is not authorized.");
-        }
-      },
-      // Essential for background automation:
-      listenInBackground: true,
-      onBackgroundMessage: backGroundMessageHandler,
-    );
+    _smsSyncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      await _syncLatestBankSms();
+    });
+
+    await _syncLatestBankSms();
   }
 
-  /// Optional: Method to stop the SMS listener manually
+  Future<void> _syncLatestBankSms() async {
+    try {
+      final wallets = await _supabaseService.getWallets();
+
+      final automatedWallets = wallets.where((wallet) {
+        return wallet.accountMode == 'AUTOMATED' &&
+            wallet.isActiveMonitoring == true &&
+            wallet.smsSenderId != null &&
+            wallet.smsSenderId!.trim().isNotEmpty;
+      }).toList();
+
+      for (final wallet in automatedWallets) {
+        final sender = wallet.smsSenderId!.trim();
+
+        final messages = await telephony.getInboxSms(
+          columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+          filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
+          sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+        );
+
+        if (messages.isEmpty) continue;
+
+        final latest = messages.first;
+        final body = latest.body?.trim();
+        final date = latest.date?.toString() ?? '';
+
+        if (body == null || body.isEmpty) continue;
+
+        final smsHash = "$sender-$date-$body";
+
+        if (_processedInMemory.contains(smsHash)) {
+          continue;
+        }
+
+        final alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
+          smsHash,
+        );
+
+        if (alreadyProcessed) {
+          _processedInMemory.add(smsHash);
+          continue;
+        }
+
+        debugPrint("New bank SMS detected from $sender");
+        debugPrint("SMS body: $body");
+
+        final data = await _aiService.parseBankSMS(body);
+
+        if (data == null) {
+          debugPrint("AI could not parse SMS from $sender");
+          continue;
+        }
+
+        await _supabaseService.processAutomatedTransaction(
+          data,
+          sender,
+          smsHash: smsHash,
+        );
+
+        _processedInMemory.add(smsHash);
+
+        debugPrint("SMS synced into dashboard.");
+      }
+    } catch (e, stackTrace) {
+      debugPrint("SMS auto sync error: $e");
+      debugPrint("StackTrace: $stackTrace");
+    }
+  }
+
+  /// Stops the SMS listener service manually
   void stopListening() {
-    debugPrint("SMS Listener Service Stopped.");
+    _smsSyncTimer?.cancel();
+    _smsSyncTimer = null;
+    debugPrint("SMS Auto Sync stopped.");
   }
 }

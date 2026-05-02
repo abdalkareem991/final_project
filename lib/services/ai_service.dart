@@ -6,31 +6,33 @@ import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
 class AIService {
-  // IMPORTANT: API Key should ideally be moved to an .env file for security
+  // IMPORTANT: Ensure this API Key is active in Google AI Studio
   final String _apiKey = "AIzaSyB3o37ExwfLr8dcI-KeJzU007-3h1IkBOE";
   late GenerativeModel _model;
 
   AIService() {
-    // Initializing the Gemini 1.5 Flash model for fast and efficient processing
-    _model = GenerativeModel(model: 'gemini-1.5-flash', apiKey: _apiKey);
+    // FIXED: Using 'gemini-1.5-flash' without the 'models/' prefix
+    // to match standard API implementation for generateContent
+    _model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: _apiKey);
   }
 
-  /// Extracts financial transaction data from a bank SMS string
-  Future<Map<String, dynamic>?> parseBankSMS(String smsBody) async {
+  /// Extracts the current available balance from a raw bank SMS string
+  Future<double?> extractBalanceFromSMS(String smsBody) async {
     try {
       final prompt = [
         Content.text("""
-          Analyze this bank SMS: "$smsBody"
+          You are a financial data extractor. Analyze this SMS: "$smsBody"
           
-          CRITICAL: Return ONLY a raw JSON object. No markdown, no explanations.
+          TASK: Find the "Available Balance" or "New Balance" after the transaction.
           
-          Required JSON Format:
+          CRITICAL: 
+          1. Do NOT return the transaction amount (the money spent/received).
+          2. Return ONLY the final current balance available in the account.
+          3. Return ONLY a raw JSON object.
+          
+          Format:
           {
-            "amount": double,
-            "type": "Income" or "Expense",
-            "bank": "Bank Name",
-            "currency": "JOD",
-            "isAutomated": true
+            "balance": double or null
           }
         """),
       ];
@@ -39,7 +41,43 @@ class AIService {
       final text = response.text;
 
       if (text != null) {
-        debugPrint("🤖 AI Raw SMS Response: $text");
+        debugPrint("🤖 AI Balance Extraction Response: $text");
+        final jsonResult = _cleanAndParseJson(text);
+        if (jsonResult != null && jsonResult.containsKey('balance')) {
+          return (jsonResult['balance'] as num?)?.toDouble();
+        }
+      }
+    } catch (e) {
+      // Logic: Log error details for debugging API version issues
+      debugPrint("❌ AI Balance Extraction Error: $e");
+    }
+    return null;
+  }
+
+  /// Parses bank SMS to extract transaction details for automated logging
+  Future<Map<String, dynamic>?> parseBankSMS(String smsBody) async {
+    try {
+      final prompt = [
+        Content.text("""
+          Extract financial transaction data from this SMS: "$smsBody"
+          
+          CRITICAL: Return ONLY a raw JSON object. Do not include markdown code blocks.
+          
+          Required Format:
+          {
+            "amount": double,
+            "type": "Income" or "Expense",
+            "bank": "Bank Name",
+            "status": "Final"
+          }
+        """),
+      ];
+
+      final response = await _model.generateContent(prompt);
+      final text = response.text;
+
+      if (text != null) {
+        debugPrint("🤖 AI Transaction Parsing Response: $text");
         return _cleanAndParseJson(text);
       }
     } catch (e) {
@@ -48,21 +86,15 @@ class AIService {
     return null;
   }
 
-  /// Cleans the AI response and ensures it is a valid JSON map
+  /// Utility to clean AI response and parse JSON safely
   Map<String, dynamic>? _cleanAndParseJson(String text) {
     try {
-      // Find the JSON block using Regex to avoid issues with extra AI text
       final jsonRegex = RegExp(r'\{[\s\S]*\}');
       final match = jsonRegex.firstMatch(text);
 
       if (match != null) {
         final jsonString = match.group(0)!;
-        final decoded = json.decode(jsonString) as Map<String, dynamic>;
-
-        // Minimal validation to ensure essential fields exist
-        if (decoded.containsKey('amount')) {
-          return decoded;
-        }
+        return json.decode(jsonString) as Map<String, dynamic>;
       }
     } catch (e) {
       debugPrint("❌ AI JSON Parsing Error: $e");
@@ -70,7 +102,7 @@ class AIService {
     return null;
   }
 
-  /// Provides financial advice based on the user message and their real-time financial context
+  /// Generates professional financial advice based on user context
   Future<String> getFinancialAdvice(
     String userMessage,
     String financialContext,
@@ -78,43 +110,19 @@ class AIService {
     try {
       final prompt = [
         Content.text("""
-          You are 'FinMind AI', the professional financial strategist for Abdulkareem.
-          
-          Your Knowledge Base (User Context):
-          $financialContext
-          
-          User Request: "$userMessage"
-          
-          Instructions:
-          1. Be concise, professional, and supportive.
-          2. Use the provided financial context (balances, expenses) to give specific advice.
-          3. If the user asks to do something (like checking a budget), explain how you can help.
-          4. Always respond in the language used by the user.
+          You are 'FinMind AI', a professional financial assistant for Abdulkareem.
+          Context: $financialContext
+          Question: $userMessage
+          Provide professional, concise, and actionable advice.
         """),
       ];
 
       final response = await _model.generateContent(prompt);
       return response.text ??
-          "I'm sorry, I couldn't process that financial request.";
+          "I'm having trouble analyzing your request right now.";
     } catch (e) {
       debugPrint("❌ FinMind AI Advice Error: $e");
-      return "I'm currently having trouble connecting to my financial brain. Please check your internet.";
-    }
-  }
-
-  /// Experimental: Detects if the user wants to perform an action (e.g., Add transaction)
-  Future<Map<String, dynamic>?> detectUserIntent(String userMessage) async {
-    try {
-      final prompt = [
-        Content.text("""
-          Determine the user intent from this message: "$userMessage"
-          Return a JSON: {"intent": "advice" | "transaction" | "report", "detected_amount": double?}
-        """),
-      ];
-      final response = await _model.generateContent(prompt);
-      return _cleanAndParseJson(response.text ?? "{}");
-    } catch (e) {
-      return null;
+      return "Connection error. Please check your internet or API key.";
     }
   }
 }

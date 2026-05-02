@@ -118,7 +118,15 @@ class SupabaseService {
         'balance': wallet.balance,
         'type': wallet.type,
         'currency': wallet.currency,
+        'account_mode': wallet.accountMode,
+        'sms_sender_id': wallet.smsSenderId,
+        'is_active_monitoring': wallet.isActiveMonitoring,
       });
+
+      debugPrint("Wallet added: ${wallet.name}");
+      debugPrint("Mode: ${wallet.accountMode}");
+      debugPrint("SMS Sender: ${wallet.smsSenderId}");
+      debugPrint("Monitoring: ${wallet.isActiveMonitoring}");
     } catch (error) {
       debugPrint('Add Wallet Error: $error');
       rethrow;
@@ -194,8 +202,17 @@ class SupabaseService {
         'balance': wallet.balance,
         'type': wallet.type,
         'currency': wallet.currency,
+        'account_mode': wallet.accountMode,
+        'sms_sender_id': wallet.smsSenderId,
+        'is_active_monitoring': wallet.isActiveMonitoring,
       };
+
       await client.from('wallets').update(updateData).eq('id', wallet.id);
+
+      debugPrint("Wallet updated: ${wallet.name}");
+      debugPrint("Mode: ${wallet.accountMode}");
+      debugPrint("SMS Sender: ${wallet.smsSenderId}");
+      debugPrint("Monitoring: ${wallet.isActiveMonitoring}");
     } catch (error) {
       debugPrint('Update Wallet Error: $error');
       rethrow;
@@ -276,6 +293,7 @@ class SupabaseService {
     required String type,
     required String description,
     required int categoryId,
+    String? smsHash,
   }) async {
     try {
       final user = client.auth.currentUser;
@@ -288,6 +306,7 @@ class SupabaseService {
         'type': type,
         'description': description,
         'category_id': categoryId,
+        'sms_hash': smsHash,
       });
 
       final walletData = await client
@@ -719,56 +738,89 @@ class SupabaseService {
   // 8. AUTOMATION & AI LOGIC (NEW SECTION)
   // ===========================================================================
 
-  Future<String?> findWalletByBankName(String bankName) async {
+  Future<String?> findWalletBySmsSender(String senderId) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) return null;
 
       final response = await client
           .from('wallets')
-          .select('id')
+          .select('id, name, sms_sender_id, account_mode, is_active_monitoring')
           .eq('user_id', user.id)
-          .ilike('name', '%$bankName%')
-          .limit(1)
+          .eq('sms_sender_id', senderId)
+          .eq('account_mode', 'AUTOMATED')
+          .eq('is_active_monitoring', true)
           .maybeSingle();
+
+      debugPrint("Matching sender: $senderId");
+      debugPrint("Matched wallet: $response");
 
       return response != null ? response['id'] as String : null;
     } catch (e) {
-      debugPrint("Error finding wallet: $e");
+      debugPrint("Error finding wallet by sender: $e");
       return null;
     }
   }
 
-  Future<void> processAutomatedTransaction(Map<String, dynamic> aiData) async {
+  Future<void> processAutomatedTransaction(
+    Map<String, dynamic> aiData,
+    String senderId, {
+    String? smsHash,
+  }) async {
     try {
-      final String bankName = aiData['bank'] ?? "Unknown Bank";
-      final String? walletId = await findWalletByBankName(bankName);
+      final String? walletId = await findWalletBySmsSender(senderId);
 
       if (walletId == null) {
-        debugPrint("Automation: No matching wallet found for $bankName.");
+        debugPrint("No linked wallet found for sender: $senderId");
         return;
+      }
+      if (smsHash != null) {
+        final alreadyProcessed = await isSmsAlreadyProcessed(smsHash);
+        if (alreadyProcessed) {
+          debugPrint("SMS already processed. Skipping.");
+          return;
+        }
       }
 
       final categories = await getCategories();
       final int categoryId = categories.isNotEmpty ? categories.first.id : 1;
 
+      final double amount = (aiData['amount'] as num).toDouble();
+      final String type = aiData['type'] ?? 'Expense';
+      final String bank = aiData['bank'] ?? senderId;
+
       await createTransaction(
         walletId: walletId,
-        amount: aiData['amount'],
-        type: aiData['type'],
-        description: "🤖 AI Auto-Log: ${aiData['bank']}",
+        amount: amount,
+        type: type,
+        description: "SMS Auto Transaction - $bank",
         categoryId: categoryId,
+        smsHash: smsHash,
       );
-
-      await NotificationService().showInstantNotification(
-        "FinMind AI Activity Detected",
-        "Logged ${aiData['amount']} JOD from ${aiData['bank']} successfully.",
-      );
+      debugPrint("SMS transaction added to dashboard successfully.");
     } catch (e) {
-      debugPrint("Critical Automation Error: $e");
+      debugPrint("SMS automation error: $e");
     }
   }
 
+  Future<bool> isSmsAlreadyProcessed(String smsHash) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return true;
+
+      final response = await client
+          .from('transactions')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('sms_hash', smsHash)
+          .maybeSingle();
+
+      return response != null;
+    } catch (e) {
+      debugPrint("SMS duplicate check error: $e");
+      return true;
+    }
+  }
   // ===========================================================================
   // 9. REAL-TIME STREAMS (OPTIONAL ADDITIONS FOR UI UPDATES)
   // ===========================================================================
@@ -776,8 +828,9 @@ class SupabaseService {
   /// Real-time stream for account balances
   Stream<Map<String, double>> getBalancesStream() {
     final userId = client.auth.currentUser?.id;
-    if (userId == null)
+    if (userId == null) {
       return Stream.value({'Total': 0.0, 'Bank': 0.0, 'Cash': 0.0});
+    }
 
     return client
         .from('wallets')

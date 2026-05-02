@@ -1,4 +1,7 @@
+// lib/main.dart
+
 import 'package:final_project/services/notification_service.dart';
+import 'package:final_project/services/sms_listener_service.dart'; // NEW: Imported for automation
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -22,6 +25,10 @@ void main() async {
     url: 'https://nkzcmxuthxwpgmhvnxcb.supabase.co',
     anonKey: 'sb_publishable_GaooL_VcN7UWg2HgPC2z9g_7v3Zb_en',
   );
+
+  // 4. NEW: Start the SMS Monitoring engine
+  // This activates the background listener to track automated bank accounts
+  await SMSListenerService().startListening();
 
   runApp(const FinancialMindApp());
 }

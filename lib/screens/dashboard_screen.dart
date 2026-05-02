@@ -37,7 +37,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _screens = [
       _DashboardMainContent(
         key: _mainContentKey,
-        // SAFE SYNC: Using block syntax prevents 'Null' subtype errors
         onTransactionChanged: () {
           if (_accountsKey.currentState != null) {
             _accountsKey.currentState!.refreshAccounts();
@@ -96,7 +95,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 }
 
 class _DashboardMainContent extends StatefulWidget {
-  // Made optional to prevent strict requirement errors
   final VoidCallback? onTransactionChanged;
 
   const _DashboardMainContent({super.key, this.onTransactionChanged});
@@ -108,9 +106,9 @@ class _DashboardMainContent extends StatefulWidget {
 class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
 
-  late Future<Map<String, double>> _balancesFuture;
-  late Future<List<Map<String, dynamic>>> _transactionsFuture;
-  late Future<Map<String, double>> _monthlySummaryFuture;
+  // STREAMS INTEGRATION: Replaced Futures with Streams for real-time reactivity
+  late Stream<Map<String, double>> _balancesStream;
+  late Stream<List<Map<String, dynamic>>> _transactionsStream;
 
   final Set<String> _hiddenTransactions = {};
   bool _showHidden = false;
@@ -127,18 +125,17 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   @override
   void initState() {
     super.initState();
-    _balancesFuture = _supabaseService.getBalancesByType();
-    _transactionsFuture = _supabaseService.getTransactions();
-    _monthlySummaryFuture = _supabaseService.getFilteredSummary('Month');
+    // Logic: Initialize Real-time Data Streams from Supabase[cite: 9]
+    _balancesStream = _supabaseService.getBalancesStream();
+    _transactionsStream = _supabaseService.getTransactionsStream();
     loadCurrencyPreference();
   }
 
   void refreshDashboard() {
     loadCurrencyPreference();
     setState(() {
-      _balancesFuture = _supabaseService.getBalancesByType();
-      _transactionsFuture = _supabaseService.getTransactions();
-      _monthlySummaryFuture = _supabaseService.getFilteredSummary('Month');
+      _balancesStream = _supabaseService.getBalancesStream();
+      _transactionsStream = _supabaseService.getTransactionsStream();
     });
   }
 
@@ -186,19 +183,18 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              _buildTotalBalanceCard(),
+              _buildLiveTotalBalanceCard(),
               const SizedBox(height: 20),
               _buildAnalyticsSection(),
               const SizedBox(height: 25),
               _buildRecentTransactionsHeader(),
-              _buildTransactionsList(),
+              _buildLiveTransactionsList(),
             ],
           ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        heroTag:
-            'dashboard_add_btn', // Fixed the "multiple heroes" animation bug
+        heroTag: 'dashboard_add_btn',
         onPressed: () => _showTransactionModal(),
         backgroundColor: _accentGreen,
         child: const Icon(Icons.add, color: Colors.black, size: 30),
@@ -206,9 +202,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  Widget _buildTotalBalanceCard() {
-    return FutureBuilder<Map<String, double>>(
-      future: _balancesFuture,
+  // UPDATED: Now uses StreamBuilder for live balance updates[cite: 14]
+  Widget _buildLiveTotalBalanceCard() {
+    return StreamBuilder<Map<String, double>>(
+      stream: _balancesStream,
       builder: (context, snapshot) {
         double total = snapshot.data?['Total'] ?? 0.0;
         double cash = snapshot.data?['Cash'] ?? 0.0;
@@ -275,14 +272,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   }
 
   Widget _buildAnalyticsSection() {
+    // Note: Monthly summary still fetches using Future to save bandwidth on every update,
+    // but you can refresh it via the pull-to-refresh.
     return FutureBuilder<Map<String, double>>(
-      future: _monthlySummaryFuture,
+      future: _supabaseService.getFilteredSummary('Month'),
       builder: (context, snapshot) {
         double income = snapshot.data?['Income'] ?? 0.0;
         double expense = snapshot.data?['Expense'] ?? 0.0;
 
-        double incomeProgress = (income).clamp(0.0, 1.0);
-        double expenseProgress = (expense).clamp(0.0, 1.0);
+        double incomeProgress = (income > 0) ? 1.0 : 0.0;
+        double expenseProgress = (expense > 0) ? 1.0 : 0.0;
 
         return Column(
           children: [
@@ -305,9 +304,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     );
   }
 
-  Widget _buildTransactionsList() {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _transactionsFuture,
+  // UPDATED: StreamBuilder for automatic transaction logging display[cite: 14]
+  Widget _buildLiveTransactionsList() {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _transactionsStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -369,9 +369,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: _accentGreen.withValues(alpha: 0.1),
+        color: _accentGreen.withOpacity(0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _accentGreen.withValues(alpha: 0.3)),
+        border: Border.all(color: _accentGreen.withOpacity(0.3)),
       ),
       child: const Row(
         mainAxisSize: MainAxisSize.min,
@@ -472,10 +472,13 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   }) {
     final bool isExpense = tx['type'] == 'Expense';
     final Color iconColor = isExpense ? _expenseRed : _accentGreen;
-    final String walletName = tx['wallets']?['name'] ?? 'Account';
+
+    // Safety check for joined tables in Real-time streams[cite: 14]
+    final String walletName = tx['wallets'] is Map
+        ? tx['wallets']['name']
+        : 'Account';
     final String title = tx['description'] ?? "Transaction";
-    final String date =
-        "${tx['created_at'].toString().split('T')[0]} • $walletName";
+    final String date = tx['created_at'].toString().split('T')[0];
     final String amount =
         "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}";
 
@@ -504,7 +507,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: iconColor.withValues(alpha: 0.2),
+                      color: iconColor.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
@@ -526,7 +529,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                           ),
                         ),
                         Text(
-                          date,
+                          "$date • $walletName",
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 12,
@@ -654,8 +657,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   }
 
   void _showTransactionDetailsDialog(Map<String, dynamic> tx) {
-    final String walletName = tx['wallets']?['name'] ?? 'Unknown Account';
-    final String catName = tx['categories']?['name'] ?? 'No Category';
+    final String walletName = tx['wallets'] is Map
+        ? tx['wallets']['name']
+        : 'Account';
+    final String catName = tx['categories'] is Map
+        ? tx['categories']['name']
+        : 'General';
     final bool isExpense = tx['type'] == 'Expense';
 
     showDialog(
@@ -743,18 +750,18 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           style: TextStyle(color: Colors.white),
         ),
         content: const Text(
-          "Are you sure? This will reverse the balance in your account.",
+          "Are you sure? This will reverse the account balance.",
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            child: const Text("Cancel"),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Delete", style: TextStyle(color: Colors.white)),
+            child: const Text("Delete"),
           ),
         ],
       ),
@@ -764,7 +771,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
       try {
         await _supabaseService.deleteTransaction(tx);
         refreshDashboard();
-        widget.onTransactionChanged?.call(); // SAFE SYNC
+        widget.onTransactionChanged?.call();
       } catch (e) {
         _showError(context, "Error deleting: $e");
       }
@@ -773,7 +780,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
 
   void _showTransactionModal({Map<String, dynamic>? existingTx}) {
     final isEditing = existingTx != null;
-
     final amountController = TextEditingController(
       text: isEditing ? existingTx['amount'].toString() : '',
     );
@@ -823,7 +829,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ),
                   ),
                   const SizedBox(height: 20),
-
                   Row(
                     children: [
                       _buildModalToggle(
@@ -851,7 +856,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ],
                   ),
                   const SizedBox(height: 20),
-
                   TextField(
                     controller: amountController,
                     keyboardType: const TextInputType.numberWithOptions(
@@ -867,7 +871,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     ),
                   ),
                   const SizedBox(height: 15),
-
                   FutureBuilder<List<WalletModel>>(
                     future: _supabaseService.getWallets(),
                     builder: (context, snapshot) {
@@ -893,7 +896,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                                 .toList(),
                             onChanged: (val) => selectedWalletId = val,
                           ),
-
                           if (selectedType == 'Transfer' && !isEditing) ...[
                             const SizedBox(height: 15),
                             DropdownButtonFormField<String>(
@@ -919,7 +921,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     },
                   ),
                   const SizedBox(height: 15),
-
                   if (selectedType != 'Transfer') ...[
                     Row(
                       children: [
@@ -943,11 +944,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                                       ),
                                     )
                                     .toList(),
-                                onChanged: (val) {
-                                  setModalState(() {
-                                    selectedCategoryId = val;
-                                  });
-                                },
+                                onChanged: (val) => setModalState(
+                                  () => selectedCategoryId = val,
+                                ),
                               );
                             },
                           ),
@@ -955,48 +954,45 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         const SizedBox(width: 10),
                         Container(
                           decoration: BoxDecoration(
-                            color: _accentGreen.withValues(alpha: 0.2),
+                            color: _accentGreen.withOpacity(0.2),
                             borderRadius: BorderRadius.circular(15),
                             border: Border.all(color: _accentGreen),
                           ),
                           child: IconButton(
                             icon: const Icon(Icons.add, color: _accentGreen),
-                            onPressed: () {
-                              _showAddNewCategoryDialog(context, setModalState);
-                            },
+                            onPressed: () => _showAddNewCategoryDialog(
+                              context,
+                              setModalState,
+                            ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 15),
                   ],
-
                   TextField(
                     controller: descController,
                     style: const TextStyle(color: Colors.white),
                     decoration: _inputStyle("Description", Icons.edit),
                   ),
                   const SizedBox(height: 25),
-
                   ElevatedButton(
                     onPressed: () async {
                       double parsedAmount =
                           double.tryParse(amountController.text) ?? 0.0;
-
                       if (parsedAmount <= 0 || selectedWalletId == null) {
                         _showError(
                           context,
-                          "Please fill required fields with valid amounts.",
+                          "Fill required fields with valid amounts.",
                         );
                         return;
                       }
-
                       if (selectedType == 'Transfer' && !isEditing) {
                         if (targetWalletId == null ||
                             selectedWalletId == targetWalletId) {
                           _showError(
                             context,
-                            "Please select two different accounts for the transfer.",
+                            "Select two different accounts for transfer.",
                           );
                           return;
                         }
@@ -1022,19 +1018,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         } else {
                           if (selectedType == 'Transfer') {
                             final cats = await _supabaseService.getCategories();
-                            final transferCategory = cats.firstWhere(
+                            final transferCat = cats.firstWhere(
                               (c) => c.name.toLowerCase() == 'transfer',
                               orElse: () => cats.first,
                             );
-
                             await _supabaseService.transferFunds(
                               fromWalletId: selectedWalletId!,
                               toWalletId: targetWalletId!,
                               amount: parsedAmount,
-                              description: descController.text.isEmpty
-                                  ? 'Transfer'
-                                  : descController.text,
-                              categoryId: transferCategory.id,
+                              description: descController.text,
+                              categoryId: transferCat.id,
                             );
                           } else {
                             await _supabaseService.createTransaction(
@@ -1042,22 +1035,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                               categoryId: selectedCategoryId!,
                               amount: parsedAmount,
                               type: selectedType,
-                              description: descController.text.isEmpty
-                                  ? selectedType
-                                  : descController.text,
+                              description: descController.text,
                             );
                           }
                         }
-
-                        if (!mounted) return;
                         Navigator.pop(context);
                         refreshDashboard();
-                        widget.onTransactionChanged?.call(); // SAFE SYNC
+                        widget.onTransactionChanged?.call();
                       } catch (e) {
-                        _showError(
-                          context,
-                          e.toString().replaceAll("Exception:", "").trim(),
-                        );
+                        _showError(context, e.toString());
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -1088,10 +1074,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   void _showError(BuildContext context, String message) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, textAlign: TextAlign.left),
-        backgroundColor: Colors.redAccent,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
     );
   }
 
@@ -1099,53 +1082,40 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     BuildContext context,
     StateSetter setModalState,
   ) {
-    final categoryNameController = TextEditingController();
-
+    final nameController = TextEditingController();
     showDialog(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: _cardColor,
-          title: const Text(
-            "Add New Category",
-            style: TextStyle(color: Colors.white),
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: const Text(
+          "Add Category",
+          style: TextStyle(color: Colors.white),
+        ),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: _inputStyle("Category Name", Icons.edit),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text("Cancel"),
           ),
-          content: TextField(
-            controller: categoryNameController,
-            style: const TextStyle(color: Colors.white),
-            decoration: _inputStyle("Category Name", Icons.edit),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameController.text.isNotEmpty) {
+                await _supabaseService.addCustomCategory(
+                  nameController.text.trim(),
+                  'Expense',
+                );
+                Navigator.pop(dialogContext);
+                setModalState(() {});
+              }
+            },
+            child: const Text("Save"),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: _accentGreen),
-              onPressed: () async {
-                if (categoryNameController.text.isNotEmpty) {
-                  await _supabaseService.addCustomCategory(
-                    categoryNameController.text.trim(),
-                    'Expense',
-                  );
-
-                  if (dialogContext.mounted) {
-                    Navigator.pop(dialogContext);
-                    setModalState(() {});
-                  }
-                }
-              },
-              child: const Text(
-                "Save",
-                style: TextStyle(
-                  color: Colors.black,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -1175,9 +1145,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected
-                ? color.withValues(alpha: 0.2)
-                : Colors.transparent,
+            color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: isSelected ? color : Colors.white10),
           ),

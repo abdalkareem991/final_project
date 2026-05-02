@@ -6,6 +6,9 @@ class WalletModel {
   final double balance; // Available funds
   final String currency; // Currency symbol (e.g., $, JOD, SAR)
   final String type; // Wallet type (Bank, Cash, Mobile Wallet)
+  final String accountMode; // 'MANUAL' or 'AUTOMATED'
+  final String? smsSenderId; // e.g., 'ArabBank'
+  final bool isActiveMonitoring;
 
   // Standard Constructor with named parameters
   WalletModel({
@@ -13,7 +16,10 @@ class WalletModel {
     required this.name,
     required this.balance,
     required this.type,
-    this.currency = '\$',
+    this.currency = 'JD',
+    this.accountMode = 'MANUAL',
+    this.smsSenderId,
+    this.isActiveMonitoring = false,
   });
 
   /// Logic: CopyWith Pattern
@@ -25,6 +31,9 @@ class WalletModel {
     double? balance,
     String? currency,
     String? type,
+    String? accountMode,
+    String? smsSenderId,
+    bool? isActiveMonitoring,
   }) {
     return WalletModel(
       id: id ?? this.id,
@@ -32,17 +41,23 @@ class WalletModel {
       balance: balance ?? this.balance,
       type: type ?? this.type,
       currency: currency ?? this.currency,
+      accountMode: accountMode ?? this.accountMode,
+      smsSenderId: smsSenderId ?? this.smsSenderId,
+      isActiveMonitoring: isActiveMonitoring ?? this.isActiveMonitoring,
     );
   }
 
   /// Factory: Data Transformation (JSON to Object)
   factory WalletModel.fromJson(Map<String, dynamic> json) {
     return WalletModel(
-      id: json['id'] as String? ?? '',
-      name: json['name'] as String? ?? 'Unnamed Account',
+     id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
       balance: (json['balance'] as num? ?? 0.0).toDouble(),
       type: json['type'] as String? ?? 'Bank',
-      currency: json['currency'] as String? ?? '\$',
+      currency: json['currency'] as String? ?? 'JD',
+      accountMode: json['account_mode'] as String? ?? 'MANUAL',
+      smsSenderId: json['sms_sender_id'],
+      isActiveMonitoring: json['is_active_monitoring'] as bool? ?? false,
     );
   }
 
@@ -54,6 +69,9 @@ class WalletModel {
       'balance': balance,
       'type': type,
       'currency': currency,
+      'account_mode': accountMode,
+      'sms_sender_id': smsSenderId,
+      'is_active_monitoring': isActiveMonitoring,
     };
   }
 

@@ -1,33 +1,32 @@
 // lib/screens/my_account_screen.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:telephony/telephony.dart';
 
 import '../models/wallet_model.dart';
+import '../services/ai_service.dart';
 import '../services/supabase_service.dart';
 
 class MyAccountScreen extends StatefulWidget {
   const MyAccountScreen({super.key});
 
   @override
-  // Notice: State is public now to allow GlobalKey access
   State<MyAccountScreen> createState() => MyAccountScreenState();
 }
 
 class MyAccountScreenState extends State<MyAccountScreen>
     with SingleTickerProviderStateMixin {
   final SupabaseService _supabaseService = SupabaseService();
+  final AIService _aiService = AIService();
+  final Telephony telephony = Telephony.instance;
 
-  // Dynamic Data Futures
-  late Future<double> _totalNetWorthFuture;
-  late Future<List<WalletModel>> _walletsFuture;
+  late Stream<Map<String, double>> _balancesStream;
+  late Stream<List<WalletModel>> _walletsStream;
 
-  // --- Animation Controllers ---
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  // --- Theme Constants ---
   static const Color _bgColor = Color(0xFF061414);
   static const Color _cardColor = Color(0xFF111D1D);
   static const Color _accentGreen = Color(0xFF34EAB9);
@@ -37,15 +36,17 @@ class MyAccountScreenState extends State<MyAccountScreen>
   @override
   void initState() {
     super.initState();
-    _fetchData();
+    _initStreams();
 
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
+
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeIn),
     );
+
     _slideAnimation =
         Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero).animate(
           CurvedAnimation(
@@ -53,6 +54,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
             curve: Curves.easeOutQuad,
           ),
         );
+
     _animationController.forward();
   }
 
@@ -62,22 +64,30 @@ class MyAccountScreenState extends State<MyAccountScreen>
     super.dispose();
   }
 
-  /// Public method to force refresh data from external screens
+  void _initStreams() {
+    final user = _supabaseService.client.auth.currentUser;
+
+    _balancesStream = _supabaseService.getBalancesStream();
+
+    if (user == null) {
+      _walletsStream = Stream.value([]);
+      return;
+    }
+
+    _walletsStream = _supabaseService.client
+        .from('wallets')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', user.id)
+        .map((data) => data.map((json) => WalletModel.fromJson(json)).toList());
+  }
+
   void refreshAccounts() {
-    setState(() {
-      _fetchData();
-    });
+    if (!mounted) return;
+    setState(() => _initStreams());
   }
 
-  /// Logic: Fetches dynamically calculated net worth and the list of wallets
-  void _fetchData() {
-    _walletsFuture = _supabaseService.getWallets();
-    _totalNetWorthFuture = _supabaseService.calculateTotalNetWorth();
-  }
-
-  /// Logic: Handles wallet deletion with confirmation
   Future<void> _deleteWallet(String walletId) async {
-    bool? confirm = await showDialog(
+    final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _cardColor,
@@ -87,7 +97,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         content: const Text(
-          "Are you sure you want to delete this account? This action cannot be undone.",
+          "This action will remove the account and its history. Continue?",
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -96,12 +106,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
             child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _expenseRed,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: _expenseRed),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               "Delete",
@@ -140,18 +145,13 @@ class MyAccountScreenState extends State<MyAccountScreen>
       ),
       body: RefreshIndicator(
         color: _accentGreen,
-        onRefresh: () async {
-          refreshAccounts();
-          try {
-            await Future.wait([_totalNetWorthFuture, _walletsFuture]);
-          } catch (_) {}
-        },
+        onRefresh: () async => refreshAccounts(),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildTotalNetWorthHeader(),
+              _buildLiveTotalNetWorthHeader(),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 child: Text(
@@ -174,10 +174,6 @@ class MyAccountScreenState extends State<MyAccountScreen>
         child: FloatingActionButton.extended(
           heroTag: 'account_add_btn',
           backgroundColor: _accentGreen,
-          elevation: 5,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
           icon: const Icon(Icons.add, color: Colors.black),
           label: const Text(
             "Add New Account",
@@ -193,16 +189,11 @@ class MyAccountScreenState extends State<MyAccountScreen>
     );
   }
 
-  /// UI: Gradient card showing dynamically calculated Total Net Worth in JD
-  Widget _buildTotalNetWorthHeader() {
-    return FutureBuilder<double>(
-      future: _totalNetWorthFuture,
+  Widget _buildLiveTotalNetWorthHeader() {
+    return StreamBuilder<Map<String, double>>(
+      stream: _balancesStream,
       builder: (context, snapshot) {
-        const String labelText = "CREDIT TOTAL";
-
-        String netWorth = snapshot.hasData
-            ? "JD ${snapshot.data!.toStringAsFixed(2)}"
-            : "JD 0.00";
+        final double total = snapshot.data?['Total'] ?? 0.0;
 
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -215,19 +206,12 @@ class MyAccountScreenState extends State<MyAccountScreen>
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: _accentGreen.withOpacity(0.2),
-                blurRadius: 15,
-                offset: const Offset(0, 8),
-              ),
-            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                labelText,
+                "CREDIT TOTAL",
                 style: TextStyle(
                   color: Colors.black.withOpacity(0.5),
                   fontSize: 12,
@@ -237,7 +221,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
               ),
               const SizedBox(height: 10),
               Text(
-                netWorth,
+                "JD ${total.toStringAsFixed(2)}",
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 38,
@@ -251,36 +235,25 @@ class MyAccountScreenState extends State<MyAccountScreen>
     );
   }
 
-  /// UI: List of individual wallets with loading and animation states
   Widget _buildAccountsListWithAnimation() {
-    return FutureBuilder<List<WalletModel>>(
-      future: _walletsFuture,
+    return StreamBuilder<List<WalletModel>>(
+      stream: _walletsStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (!snapshot.hasData) {
           return const Center(
-            child: Padding(
-              padding: EdgeInsets.only(top: 40),
-              child: CircularProgressIndicator(color: _accentGreen),
-            ),
+            child: CircularProgressIndicator(color: _accentGreen),
           );
         }
-        if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 40),
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.account_balance_wallet_outlined,
-                    size: 60,
-                    color: Colors.white.withValues(alpha: 0.1),
-                  ),
-                  const SizedBox(height: 15),
-                  const Text(
-                    "No accounts found.",
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ],
+
+        final wallets = snapshot.data!;
+
+        if (wallets.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(30),
+            child: Center(
+              child: Text(
+                "No accounts yet.",
+                style: TextStyle(color: Colors.grey),
               ),
             ),
           );
@@ -293,17 +266,10 @@ class MyAccountScreenState extends State<MyAccountScreen>
             child: ListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 5,
-                bottom: 80,
-              ),
-              itemCount: snapshot.data!.length,
-              itemBuilder: (context, index) {
-                final account = snapshot.data![index];
-                return _buildAccountCard(account);
-              },
+              padding: const EdgeInsets.only(left: 20, right: 20, bottom: 90),
+              itemCount: wallets.length,
+              itemBuilder: (context, index) =>
+                  _buildAccountCard(wallets[index]),
             ),
           ),
         );
@@ -311,14 +277,10 @@ class MyAccountScreenState extends State<MyAccountScreen>
     );
   }
 
-  /// UI: Single Wallet Card
   Widget _buildAccountCard(WalletModel account) {
-    IconData walletIcon = Icons.account_balance_wallet;
-    if (account.type.toLowerCase() == 'cash') {
-      walletIcon = Icons.money;
-    } else if (account.type.toLowerCase() == 'mobile wallet') {
-      walletIcon = Icons.phone_iphone;
-    }
+    final IconData icon = account.accountMode == 'AUTOMATED'
+        ? Icons.auto_awesome
+        : Icons.account_balance_wallet;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -326,16 +288,19 @@ class MyAccountScreenState extends State<MyAccountScreen>
       decoration: BoxDecoration(
         color: _cardColor,
         borderRadius: BorderRadius.circular(15),
+        border: account.accountMode == 'AUTOMATED'
+            ? Border.all(color: _accentGreen.withOpacity(0.25))
+            : null,
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: _accentGreen.withValues(alpha: 0.1),
+              color: _accentGreen.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(walletIcon, color: _accentGreen, size: 20),
+            child: Icon(icon, color: _accentGreen, size: 20),
           ),
           const SizedBox(width: 15),
           Expanded(
@@ -350,15 +315,18 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(height: 3),
                 Text(
-                  account.type,
+                  account.accountMode == 'AUTOMATED'
+                      ? "${account.type} • ${account.smsSenderId ?? 'No sender'}"
+                      : account.type,
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
               ],
             ),
           ),
           Text(
-            account.formattedBalance,
+            "JD ${account.balance.toStringAsFixed(2)}",
             style: const TextStyle(
               color: Colors.white,
               fontSize: 16,
@@ -368,37 +336,23 @@ class MyAccountScreenState extends State<MyAccountScreen>
           const SizedBox(width: 5),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
-            color: _bgColor,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
+            color: _cardColor,
             onSelected: (value) {
               if (value == 'edit') {
                 _showWalletModal(context: context, wallet: account);
-              } else if (value == 'delete') {
+              }
+              if (value == 'delete') {
                 _deleteWallet(account.id);
               }
             },
-            itemBuilder: (BuildContext context) => [
+            itemBuilder: (context) => [
               const PopupMenuItem(
                 value: 'edit',
-                child: Row(
-                  children: [
-                    Icon(Icons.edit, color: Colors.blueAccent, size: 18),
-                    SizedBox(width: 10),
-                    Text("Edit", style: TextStyle(color: Colors.white)),
-                  ],
-                ),
+                child: Text("Edit", style: TextStyle(color: Colors.white)),
               ),
               const PopupMenuItem(
                 value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete, color: Colors.redAccent, size: 18),
-                    SizedBox(width: 10),
-                    Text("Delete", style: TextStyle(color: Colors.white)),
-                  ],
-                ),
+                child: Text("Delete", style: TextStyle(color: _expenseRed)),
               ),
             ],
           ),
@@ -408,14 +362,20 @@ class MyAccountScreenState extends State<MyAccountScreen>
   }
 
   void _showWalletModal({required BuildContext context, WalletModel? wallet}) {
-    final isEditing = wallet != null;
+    final bool isEditing = wallet != null;
+
     final nameController = TextEditingController(
       text: isEditing ? wallet.name : '',
     );
+
     final balanceController = TextEditingController(
       text: isEditing ? wallet.balance.toString() : '',
     );
+
     String selectedType = isEditing ? wallet.type : 'Bank';
+    String accountMode = isEditing ? wallet.accountMode : 'MANUAL';
+    String? selectedSenderId = isEditing ? wallet.smsSenderId : null;
+    bool isLoadingBalance = false;
 
     showModalBottomSheet(
       context: context,
@@ -424,148 +384,377 @@ class MyAccountScreenState extends State<MyAccountScreen>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
       ),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-            left: 24,
-            right: 24,
-            top: 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(10),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setModalState) {
+          return SingleChildScrollView(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+              left: 24,
+              right: 24,
+              top: 20,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                isEditing ? "Edit Account" : "Add New Account",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+                const SizedBox(height: 20),
+                Text(
+                  isEditing ? "Edit Account" : "Add New Account",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: nameController,
-                style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration(
-                  "Account Name (e.g. Arab Bank)",
-                  Icons.account_balance,
-                ),
-              ),
-              const SizedBox(height: 15),
-              TextField(
-                controller: balanceController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d*')),
+                const SizedBox(height: 20),
+
+                if (!isEditing)
+                  Row(
+                    children: [
+                      Radio<String>(
+                        value: 'MANUAL',
+                        groupValue: accountMode,
+                        activeColor: _accentGreen,
+                        onChanged: (v) {
+                          setModalState(() {
+                            accountMode = v!;
+                            selectedSenderId = null;
+                          });
+                        },
+                      ),
+                      const Text(
+                        "Manual",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      const SizedBox(width: 20),
+                      Radio<String>(
+                        value: 'AUTOMATED',
+                        groupValue: accountMode,
+                        activeColor: _accentGreen,
+                        onChanged: (v) => setModalState(() => accountMode = v!),
+                      ),
+                      const Text(
+                        "Automated",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ],
+                  ),
+
+                const SizedBox(height: 10),
+
+                if (accountMode == 'AUTOMATED' && !isEditing) ...[
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      await _pickSenderFromInbox((sender) async {
+                        setModalState(() {
+                          selectedSenderId = sender;
+                          nameController.text = sender;
+                          isLoadingBalance = true;
+                        });
+
+                        await _autoFetchBalance(sender, balanceController);
+
+                        if (mounted) {
+                          setModalState(() => isLoadingBalance = false);
+                        }
+                      });
+                    },
+                    icon: const Icon(Icons.sms_outlined, size: 18),
+                    label: Text(
+                      selectedSenderId ?? "Select Bank SMS Source",
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _cardColor,
+                      foregroundColor: _accentGreen,
+                      minimumSize: const Size(double.infinity, 50),
+                    ),
+                  ),
+                  if (isLoadingBalance) ...[
+                    const SizedBox(height: 10),
+                    const LinearProgressIndicator(color: _accentGreen),
+                  ],
+                  const SizedBox(height: 15),
                 ],
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+
+                TextField(
+                  controller: nameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    "Account Name",
+                    Icons.account_balance,
+                  ),
                 ),
-                decoration: _inputDecoration(
-                  "Current Balance (JD)",
-                  Icons.payments,
+
+                const SizedBox(height: 15),
+
+                TextField(
+                  controller: balanceController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  decoration: _inputDecoration(
+                    "Current Balance (JD)",
+                    Icons.payments,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 15),
-              DropdownButtonFormField<String>(
-                initialValue: selectedType,
-                dropdownColor: _cardColor,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+
+                const SizedBox(height: 15),
+
+                DropdownButtonFormField<String>(
+                  initialValue: selectedType,
+                  dropdownColor: _cardColor,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration("Account Type", Icons.category),
+                  items: ['Bank', 'Cash', 'Mobile Wallet']
+                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .toList(),
+                  onChanged: (val) => setModalState(() => selectedType = val!),
                 ),
-                decoration: _inputDecoration("Account Type", Icons.category),
-                items: ['Bank', 'Cash', 'Mobile Wallet']
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
-                onChanged: (val) => setModalState(() => selectedType = val!),
-              ),
-              const SizedBox(height: 30),
-              ElevatedButton(
-                onPressed: () async {
-                  if (nameController.text.isNotEmpty &&
-                      balanceController.text.isNotEmpty) {
-                    double balance =
-                        double.tryParse(balanceController.text) ?? 0.0;
+
+                const SizedBox(height: 30),
+
+                ElevatedButton(
+                  onPressed: () async {
+                    final String name = nameController.text.trim();
+                    final double balance =
+                        double.tryParse(balanceController.text.trim()) ?? 0.0;
+
+                    if (name.isEmpty) {
+                      _showSnack("Account name is required.");
+                      return;
+                    }
+
+                    if (accountMode == 'AUTOMATED' &&
+                        (selectedSenderId == null ||
+                            selectedSenderId!.isEmpty)) {
+                      _showSnack("Please select an SMS sender first.");
+                      return;
+                    }
 
                     final walletData = WalletModel(
                       id: isEditing ? wallet.id : '',
-                      name: nameController.text.trim(),
+                      name: name,
                       balance: balance,
                       type: selectedType,
-                      currency: 'JD ',
+                      accountMode: accountMode,
+                      smsSenderId: selectedSenderId,
+                      isActiveMonitoring: accountMode == 'AUTOMATED',
                     );
 
-                    if (isEditing) {
-                      await _supabaseService.updateWallet(walletData);
-                    } else {
-                      await _supabaseService.addWallet(walletData);
-                    }
+                    try {
+                      if (isEditing) {
+                        await _supabaseService.updateWallet(walletData);
+                      } else {
+                        await _supabaseService.addWallet(walletData);
+                      }
 
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    refreshAccounts();
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _accentGreen,
-                  minimumSize: const Size(double.infinity, 60),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
+                      debugPrint(
+                        "Saved wallet mode: ${walletData.accountMode}",
+                      );
+                      debugPrint(
+                        "Saved wallet sender: ${walletData.smsSenderId}",
+                      );
+                      debugPrint(
+                        "Saved wallet monitoring: ${walletData.isActiveMonitoring}",
+                      );
+
+                      if (!mounted) return;
+                      Navigator.pop(sheetContext);
+                      refreshAccounts();
+                    } catch (e) {
+                      _showSnack("Save failed: $e");
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accentGreen,
+                    minimumSize: const Size(double.infinity, 60),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                  ),
+                  child: Text(
+                    isEditing ? "UPDATE ACCOUNT" : "SAVE ACCOUNT",
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-                child: Text(
-                  isEditing ? "UPDATE ACCOUNT" : "SAVE ACCOUNT",
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 25),
-            ],
-          ),
-        ),
+
+                const SizedBox(height: 25),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 
-  InputDecoration _inputDecoration(String label, IconData icon) =>
-      InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: Colors.grey, fontSize: 14),
-        prefixIcon: Icon(icon, color: _accentGreen, size: 22),
-        filled: true,
-        fillColor: _cardColor,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-          borderSide: const BorderSide(color: Colors.white10),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-          borderSide: const BorderSide(color: _accentGreen, width: 2),
-        ),
+  Future<void> _pickSenderFromInbox(Function(String) onPicked) async {
+    final bool? hasPermission = await telephony.requestPhoneAndSmsPermissions;
+
+    debugPrint("SMS permission: $hasPermission");
+
+    if (hasPermission != true) {
+      _showSnack("SMS permission denied.");
+      debugPrint("SMS permission denied");
+      return;
+    }
+
+    final List<SmsMessage> messages = await telephony.getInboxSms(
+      columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+      sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+    );
+
+    debugPrint("Inbox messages count: ${messages.length}");
+
+    for (final SmsMessage m in messages.take(20)) {
+      debugPrint("Sender: ${m.address}");
+      debugPrint("Body: ${m.body}");
+    }
+
+    final List<String> senders = [];
+
+    for (final message in messages) {
+      final String? address = message.address?.trim();
+
+      if (address == null || address.isEmpty) continue;
+
+      if (!senders.contains(address)) {
+        senders.add(address);
+      }
+
+      if (senders.length == 10) break;
+    }
+
+    debugPrint("Latest 10 senders count: ${senders.length}");
+    debugPrint("Latest 10 senders list: $senders");
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _bgColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.65,
+          child: senders.isEmpty
+              ? const Center(
+                  child: Text(
+                    "No SMS senders found",
+                    style: TextStyle(color: Colors.white),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(20),
+                  itemCount: senders.length,
+                  itemBuilder: (context, index) {
+                    final String sender = senders[index];
+
+                    return ListTile(
+                      leading: const Icon(Icons.sms, color: _accentGreen),
+                      title: Text(
+                        sender,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        onPicked(sender);
+                      },
+                    );
+                  },
+                ),
+        );
+      },
+    );
+  }
+
+  Future<void> _autoFetchBalance(
+    String sender,
+    TextEditingController balanceController,
+  ) async {
+    try {
+      final List<SmsMessage> messages = await telephony.getInboxSms(
+        columns: [SmsColumn.BODY, SmsColumn.DATE],
+        filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
+        sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
       );
+
+      debugPrint("Selected sender: $sender");
+      debugPrint("Messages from selected sender: ${messages.length}");
+
+      if (messages.isEmpty) {
+        _showSnack("No SMS messages found for this sender.");
+        return;
+      }
+
+      final String? latestBody = messages.first.body;
+
+      debugPrint("Latest SMS body: $latestBody");
+
+      if (latestBody == null || latestBody.trim().isEmpty) {
+        _showSnack("Latest SMS body is empty.");
+        return;
+      }
+
+      final double? balance = await _aiService.extractBalanceFromSMS(
+        latestBody,
+      );
+
+      if (balance != null) {
+        balanceController.text = balance.toStringAsFixed(2);
+        _showSnack("Balance detected successfully.");
+      } else {
+        _showSnack("Could not detect balance. Enter it manually.");
+      }
+    } catch (e) {
+      debugPrint("Auto fetch balance error: $e");
+      _showSnack("Could not read SMS balance.");
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: _cardColor),
+    );
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+      prefixIcon: Icon(icon, color: _accentGreen, size: 22),
+      filled: true,
+      fillColor: _cardColor,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(15),
+        borderSide: const BorderSide(color: Colors.white10),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(15),
+        borderSide: const BorderSide(color: _accentGreen, width: 2),
+      ),
+    );
+  }
 }
