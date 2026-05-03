@@ -716,9 +716,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
         return;
       }
 
-      final double? balance = await _aiService.extractBalanceFromSMS(
-        latestBody,
-      );
+      final double? balance = _aiService.extractBalanceLocally(latestBody);
 
       if (balance != null) {
         balanceController.text = balance.toStringAsFixed(2);

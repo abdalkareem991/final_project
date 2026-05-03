@@ -9,47 +9,6 @@ import 'ai_service.dart';
 import 'supabase_service.dart';
 
 // ===========================================================================
-// BACKGROUND ENTRY POINT
-// ===========================================================================
-
-/// This function handles SMS messages when the app is terminated or in the background.
-/// It must remain at the top level and be annotated with @pragma('vm:entry-point').
-/*@pragma('vm:entry-point')
-void backGroundMessageHandler(SmsMessage message) async {
-  final AIService aiService = AIService();
-  final SupabaseService supabaseService = SupabaseService();
-
-  if (message.body == null || message.address == null) return;
-
-  final String sender = message.address!;
-  debugPrint("🚨 Background SMS received from: $sender");
-
-  try {
-    // 1. Identify the linked automated wallet for this specific sender
-    final String? walletId = await supabaseService.findWalletBySmsSender(
-      sender,
-    );
-
-    if (walletId != null) {
-      // 2. Analyze the SMS body using Gemini AI to extract transaction details[cite: 6]
-      final data = await aiService.parseBankSMS(message.body!);
-
-      if (data != null) {
-        // 3. Log the transaction and update the cloud database balance
-        await supabaseService.processAutomatedTransaction(data, sender);
-        debugPrint("✅ Background: Automated transaction logged for $sender");
-      }
-    } else {
-      debugPrint(
-        "⚠️ Background: No automated wallet linked for sender '$sender'.",
-      );
-    }
-  } catch (e) {
-    debugPrint("❌ Background Process Error: $e");
-  }
-}
-*/
-// ===========================================================================
 // SERVICE CLASS
 // ===========================================================================
 
@@ -74,7 +33,7 @@ class SMSListenerService {
 
     _smsSyncTimer?.cancel();
 
-    _smsSyncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+    _smsSyncTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       await _syncLatestBankSms();
     });
 
@@ -100,20 +59,22 @@ class SMSListenerService {
           filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
           sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
         );
-
-        if (messages.isEmpty) continue;
-
         final latest = messages.first;
-        final body = latest.body?.trim();
-        final date = latest.date?.toString() ?? '';
+
+        final body = latest.body
+            ?.replaceAll(RegExp(r'\s+'), ' ')
+            .trim()
+            .toLowerCase();
+
+        final date = latest.date ?? 0;
 
         if (body == null || body.isEmpty) continue;
 
-        final smsHash = "$sender-$date-$body";
+        final smsHash = "${sender}_${date}_${body.hashCode}";
 
-        if (_processedInMemory.contains(smsHash)) {
-          continue;
-        }
+        _processedInMemory.add(
+          smsHash,
+        ); // Mark as processed in memory to avoid duplicates within the same session
 
         final alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
           smsHash,
@@ -127,10 +88,18 @@ class SMSListenerService {
         debugPrint("New bank SMS detected from $sender");
         debugPrint("SMS body: $body");
 
-        final data = await _aiService.parseBankSMS(body);
+        final Map<String, dynamic>? data = _aiService.parseBankSmsLocally(
+          body,
+          sender: sender,
+        );
+
+        debugPrint("Local parser result: $data");
 
         if (data == null) {
-          debugPrint("AI could not parse SMS from $sender");
+          debugPrint(
+            "Local parser could not parse SMS from $sender. Skipping.",
+          );
+          _processedInMemory.add(smsHash);
           continue;
         }
 

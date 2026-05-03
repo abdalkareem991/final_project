@@ -294,6 +294,8 @@ class SupabaseService {
     required String description,
     required int categoryId,
     String? smsHash,
+    bool isInternalTransfer = false,
+    String? transferGroupId,
   }) async {
     try {
       final user = client.auth.currentUser;

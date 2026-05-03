@@ -1,7 +1,5 @@
 // lib/services/ai_service.dart
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
@@ -16,89 +14,92 @@ class AIService {
     _model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: _apiKey);
   }
 
-  /// Extracts the current available balance from a raw bank SMS string
-  Future<double?> extractBalanceFromSMS(String smsBody) async {
-    try {
-      final prompt = [
-        Content.text("""
-          You are a financial data extractor. Analyze this SMS: "$smsBody"
-          
-          TASK: Find the "Available Balance" or "New Balance" after the transaction.
-          
-          CRITICAL: 
-          1. Do NOT return the transaction amount (the money spent/received).
-          2. Return ONLY the final current balance available in the account.
-          3. Return ONLY a raw JSON object.
-          
-          Format:
-          {
-            "balance": double or null
-          }
-        """),
-      ];
+  String detectTypeLocally(String smsBody) {
+    final text = smsBody.toLowerCase();
 
-      final response = await _model.generateContent(prompt);
-      final text = response.text;
+    final incomeWords = [
+      'credited',
+      'deposit',
+      'received',
+      'transferred to',
+      'to account',
+      'ايداع',
+      'إيداع',
+      'وارد',
+      'استلام',
+    ];
 
-      if (text != null) {
-        debugPrint("🤖 AI Balance Extraction Response: $text");
-        final jsonResult = _cleanAndParseJson(text);
-        if (jsonResult != null && jsonResult.containsKey('balance')) {
-          return (jsonResult['balance'] as num?)?.toDouble();
-        }
-      }
-    } catch (e) {
-      // Logic: Log error details for debugging API version issues
-      debugPrint("❌ AI Balance Extraction Error: $e");
+    final expenseWords = [
+      'debited',
+      'withdrawn',
+      'paid',
+      'purchase',
+      'transferred from',
+      'from account',
+      'خصم',
+      'سحب',
+      'شراء',
+      'دفع',
+    ];
+
+    for (final word in expenseWords) {
+      if (text.contains(word)) return 'Expense';
     }
-    return null;
+
+    for (final word in incomeWords) {
+      if (text.contains(word)) return 'Income';
+    }
+
+    return 'Unknown';
   }
 
-  /// Parses bank SMS to extract transaction details for automated logging
-  Future<Map<String, dynamic>?> parseBankSMS(String smsBody) async {
-    try {
-      final prompt = [
-        Content.text("""
-          Extract financial transaction data from this SMS: "$smsBody"
-          
-          CRITICAL: Return ONLY a raw JSON object. Do not include markdown code blocks.
-          
-          Required Format:
-          {
-            "amount": double,
-            "type": "Income" or "Expense",
-            "bank": "Bank Name",
-            "status": "Final"
-          }
-        """),
-      ];
+  Map<String, dynamic>? parseBankSmsLocally(String smsBody, {String? sender}) {
+    final text = smsBody.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 
-      final response = await _model.generateContent(prompt);
-      final text = response.text;
+    final amountRegex = RegExp(
+      r'(?:jod|jd)?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:jod|jd)?',
+    );
+    final matches = amountRegex.allMatches(text).toList();
 
-      if (text != null) {
-        debugPrint("🤖 AI Transaction Parsing Response: $text");
-        return _cleanAndParseJson(text);
-      }
-    } catch (e) {
-      debugPrint("❌ SMS AI Analysis Error: $e");
-    }
-    return null;
+    if (matches.isEmpty) return null;
+
+    final type = detectTypeLocally(text);
+
+    if (type == 'Unknown') return null;
+
+    final amount = double.tryParse(matches.first.group(1) ?? '');
+
+    if (amount == null || amount <= 0) return null;
+
+    return {
+      'amount': amount,
+      'type': type,
+      'bank': sender ?? 'Unknown Bank',
+      'status': 'Final',
+    };
   }
 
-  /// Utility to clean AI response and parse JSON safely
-  Map<String, dynamic>? _cleanAndParseJson(String text) {
-    try {
-      final jsonRegex = RegExp(r'\{[\s\S]*\}');
-      final match = jsonRegex.firstMatch(text);
+  double? extractBalanceLocally(String smsBody) {
+    final String text = smsBody
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
 
+    final balancePatterns = [
+      RegExp(r'available balance\s*jod\s*(\d+(?:\.\d+)?)'),
+      RegExp(r'available balance\s*(\d+(?:\.\d+)?)\s*jod'),
+      RegExp(r'available balance\s*(\d+(?:\.\d+)?)'),
+      RegExp(r'رصيدك المتاح\s*(\d+(?:\.\d+)?)\s*دينار'),
+      RegExp(r'الرصيد المتاح\s*(\d+(?:\.\d+)?)\s*دينار'),
+    ];
+
+    for (final pattern in balancePatterns) {
+      final match = pattern.firstMatch(text);
       if (match != null) {
-        final jsonString = match.group(0)!;
-        return json.decode(jsonString) as Map<String, dynamic>;
+        return double.tryParse(match.group(1)!);
       }
-    } catch (e) {
-      debugPrint("❌ AI JSON Parsing Error: $e");
     }
+
     return null;
   }
 
