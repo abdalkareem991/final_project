@@ -428,58 +428,49 @@ class SupabaseService {
     required String fromWalletId,
     required String toWalletId,
     required double amount,
-    required String description,
-    required int categoryId,
+    String description = 'Internal Transfer',
   }) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      final fromWalletData = await client
-          .from('wallets')
-          .select('balance')
-          .eq('id', fromWalletId)
-          .single();
-      final toWalletData = await client
-          .from('wallets')
-          .select('balance')
-          .eq('id', toWalletId)
-          .single();
+      if (fromWalletId == toWalletId) {
+        throw Exception("Cannot transfer to the same account");
+      }
 
-      double fromBalance = (fromWalletData['balance'] as num).toDouble();
-      double toBalance = (toWalletData['balance'] as num).toDouble();
+      if (amount <= 0) {
+        throw Exception("Transfer amount must be greater than zero");
+      }
 
-      if (fromBalance < amount) throw Exception("Insufficient funds.");
+      final transferGroupId =
+          "manual_transfer_${DateTime.now().millisecondsSinceEpoch}";
 
-      await client
-          .from('wallets')
-          .update({'balance': fromBalance - amount})
-          .eq('id', fromWalletId);
-      await client
-          .from('wallets')
-          .update({'balance': toBalance + amount})
-          .eq('id', toWalletId);
+      final categories = await getCategories();
+      final int categoryId = categories.isNotEmpty ? categories.first.id : 1;
 
-      await client.from('transactions').insert([
-        {
-          'user_id': user.id,
-          'wallet_id': fromWalletId,
-          'amount': amount,
-          'type': 'Expense',
-          'description': 'Transfer Out: $description',
-          'category_id': categoryId,
-        },
-        {
-          'user_id': user.id,
-          'wallet_id': toWalletId,
-          'amount': amount,
-          'type': 'Income',
-          'description': 'Transfer In: $description',
-          'category_id': categoryId,
-        },
-      ]);
+      await createTransaction(
+        walletId: fromWalletId,
+        amount: amount,
+        type: 'Expense',
+        description: description,
+        categoryId: categoryId,
+        isInternalTransfer: true,
+        transferGroupId: transferGroupId,
+      );
+
+      await createTransaction(
+        walletId: toWalletId,
+        amount: amount,
+        type: 'Income',
+        description: description,
+        categoryId: categoryId,
+        isInternalTransfer: true,
+        transferGroupId: transferGroupId,
+      );
+
+      debugPrint("Manual internal transfer completed: $transferGroupId");
     } catch (error) {
-      debugPrint('Transfer Error: $error');
+      debugPrint("Transfer Funds Error: $error");
       rethrow;
     }
   }
@@ -511,6 +502,89 @@ class SupabaseService {
       debugPrint('Delete Transaction Error: $error');
       rethrow;
     }
+  }
+
+  Future<void> deleteTransactionSmart(Map<String, dynamic> tx) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) throw Exception("User not logged in");
+
+      final bool isInternalTransfer = tx['is_internal_transfer'] == true;
+      final String? transferGroupId = tx['transfer_group_id']?.toString();
+
+      debugPrint("Delete Smart TX:");
+      debugPrint("ID: ${tx['id']}");
+      debugPrint("isInternalTransfer: $isInternalTransfer");
+      debugPrint("transferGroupId: $transferGroupId");
+      debugPrint("walletId: ${tx['wallet_id']}");
+      debugPrint("amount: ${tx['amount']}");
+      debugPrint("type: ${tx['type']}");
+
+      if (isInternalTransfer &&
+          transferGroupId != null &&
+          transferGroupId.isNotEmpty) {
+        final groupTransactions = await client
+            .from('transactions')
+            .select('id, wallet_id, amount, type')
+            .eq('user_id', user.id)
+            .eq('transfer_group_id', transferGroupId);
+
+        for (final item in groupTransactions) {
+          await _reverseWalletBalance(
+            walletId: item['wallet_id'].toString(),
+            amount: (item['amount'] as num).toDouble(),
+            type: item['type'].toString(),
+          );
+        }
+
+        await client
+            .from('transactions')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('transfer_group_id', transferGroupId);
+
+        debugPrint("Deleted internal transfer group: $transferGroupId");
+        return;
+      }
+
+      await _reverseWalletBalance(
+        walletId: tx['wallet_id'].toString(),
+        amount: (tx['amount'] as num).toDouble(),
+        type: tx['type'].toString(),
+      );
+
+      await client.from('transactions').delete().eq('id', tx['id']);
+
+      debugPrint("Deleted single transaction: ${tx['id']}");
+    } catch (e) {
+      debugPrint("Smart delete transaction error: $e");
+      rethrow;
+    }
+  }
+
+  Future<void> _reverseWalletBalance({
+    required String walletId,
+    required double amount,
+    required String type,
+  }) async {
+    final walletData = await client
+        .from('wallets')
+        .select('balance')
+        .eq('id', walletId)
+        .single();
+
+    final double currentBalance = (walletData['balance'] as num).toDouble();
+
+    final double newBalance = type.toLowerCase() == 'income'
+        ? currentBalance - amount
+        : currentBalance + amount;
+
+    await client
+        .from('wallets')
+        .update({'balance': newBalance})
+        .eq('id', walletId);
+
+    debugPrint("Wallet reversed: $walletId => $newBalance");
   }
 
   Future<void> detectAndMarkInternalTransfer({
@@ -565,6 +639,7 @@ class SupabaseService {
       debugPrint("Internal transfer detection error: $e");
     }
   }
+
   // ===========================================================================
   // 6. TASK OPERATIONS (TODO LIST)
   // ===========================================================================
@@ -947,6 +1022,38 @@ class SupabaseService {
         .from('transactions')
         .stream(primaryKey: ['id'])
         .eq('user_id', userId)
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .asyncMap((transactions) async {
+          final walletsResponse = await client
+              .from('wallets')
+              .select('id, name')
+              .eq('user_id', userId);
+
+          final categoriesResponse = await client
+              .from('categories')
+              .select('id, name')
+              .eq('user_id', userId);
+
+          final Map<String, String> walletNames = {
+            for (final wallet in walletsResponse)
+              wallet['id'].toString(): wallet['name'].toString(),
+          };
+
+          final Map<String, String> categoryNames = {
+            for (final category in categoriesResponse)
+              category['id'].toString(): category['name'].toString(),
+          };
+
+          return transactions.map((tx) {
+            final walletId = tx['wallet_id']?.toString();
+            final categoryId = tx['category_id']?.toString();
+
+            return {
+              ...tx,
+              'wallet_name': walletNames[walletId] ?? 'Unknown Account',
+              'category_name': categoryNames[categoryId] ?? 'Uncategorized',
+            };
+          }).toList();
+        });
   }
 }

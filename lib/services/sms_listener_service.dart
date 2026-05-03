@@ -59,6 +59,12 @@ class SMSListenerService {
           filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
           sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
         );
+
+        if (messages.isEmpty) {
+          debugPrint("No SMS messages found for sender: $sender");
+          continue;
+        }
+
         final latest = messages.first;
 
         final body = latest.body

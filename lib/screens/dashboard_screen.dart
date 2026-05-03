@@ -470,19 +470,41 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     Map<String, dynamic> tx, {
     bool isHidden = false,
   }) {
+    final bool isInternalTransfer = tx['is_internal_transfer'] == true;
     final bool isExpense = tx['type'] == 'Expense';
-    final Color iconColor = isExpense ? _expenseRed : _accentGreen;
 
-    // Safety check for joined tables in Real-time streams[cite: 14]
-    final String walletName = tx['wallets'] is Map
-        ? tx['wallets']['name']
-        : 'Account';
-    final String title = tx['description'] ?? "Transaction";
+    final String walletName =
+        tx['wallet_name']?.toString() ?? 'Unknown Account';
+    final String categoryName =
+        tx['category_name']?.toString() ?? 'Uncategorized';
+
+    final Color iconColor = isInternalTransfer
+        ? _transferBlue
+        : isExpense
+        ? _expenseRed
+        : _accentGreen;
+
+    final IconData transactionIcon = isInternalTransfer
+        ? Icons.swap_horiz
+        : isExpense
+        ? Icons.arrow_upward
+        : Icons.arrow_downward;
+
+    final String title = isInternalTransfer
+        ? "Internal Transfer"
+        : (tx['description'] ?? "Transaction");
+
     final String date = tx['created_at'].toString().split('T')[0];
-    final String amount =
-        "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}";
 
-    final bool isTransfer = title.toLowerCase().contains('transfer');
+    final String amount = isInternalTransfer
+        ? _formatAmount((tx['amount'] as num).toDouble())
+        : "${isExpense ? '-' : '+'}${_formatAmount((tx['amount'] as num).toDouble())}";
+
+    final String secondaryText = isInternalTransfer
+        ? isExpense
+              ? "$date • From: $walletName"
+              : "$date • To: $walletName"
+        : "$date • $walletName • $categoryName";
 
     return Opacity(
       opacity: isHidden ? 0.5 : 1.0,
@@ -510,11 +532,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                       color: iconColor.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Icon(
-                      isExpense ? Icons.arrow_downward : Icons.arrow_upward,
-                      color: iconColor,
-                      size: 20,
-                    ),
+                    child: Icon(transactionIcon, color: iconColor, size: 20),
                   ),
                   const SizedBox(width: 15),
                   Expanded(
@@ -529,7 +547,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                           ),
                         ),
                         Text(
-                          "$date • $walletName",
+                          secondaryText,
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 12,
@@ -543,6 +561,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                     style: TextStyle(
                       color: iconColor,
                       fontWeight: FontWeight.bold,
+                      fontSize: 14,
                     ),
                   ),
                   const SizedBox(width: 5),
@@ -591,7 +610,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                           ],
                         ),
                       ),
-                      if (!isTransfer)
+                      if (!isInternalTransfer)
                         const PopupMenuItem(
                           value: 'edit',
                           child: Row(
@@ -657,12 +676,18 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   }
 
   void _showTransactionDetailsDialog(Map<String, dynamic> tx) {
-    final String walletName = tx['wallets'] is Map
-        ? tx['wallets']['name']
-        : 'Account';
-    final String catName = tx['categories'] is Map
-        ? tx['categories']['name']
-        : 'General';
+    final String walletName =
+        tx['wallet_name']?.toString() ??
+        (tx['wallets'] is Map && tx['wallets']['name'] != null
+            ? tx['wallets']['name'].toString()
+            : 'Unknown Account');
+
+    final String categoryName =
+        tx['category_name']?.toString() ??
+        (tx['categories'] is Map && tx['categories']['name'] != null
+            ? tx['categories']['name'].toString()
+            : 'Uncategorized');
+    final bool isInternalTransfer = tx['is_internal_transfer'] == true;
     final bool isExpense = tx['type'] == 'Expense';
 
     showDialog(
@@ -686,11 +711,18 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
             _buildDetailRow(
               "Amount",
               _formatAmount((tx['amount'] as num).toDouble()),
-              valueColor: isExpense ? _expenseRed : _accentGreen,
+              valueColor: isInternalTransfer
+                  ? _transferBlue
+                  : isExpense
+                  ? _expenseRed
+                  : _accentGreen,
             ),
-            _buildDetailRow("Type", tx['type']),
+            _buildDetailRow(
+              "Type",
+              isInternalTransfer ? "Internal Transfer" : tx['type'],
+            ),
             _buildDetailRow("Account", walletName),
-            _buildDetailRow("Category", catName),
+            _buildDetailRow("Category", categoryName),
             _buildDetailRow("Date", tx['created_at'].toString().split('T')[0]),
           ],
         ),
@@ -769,7 +801,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
 
     if (confirm == true) {
       try {
-        await _supabaseService.deleteTransaction(tx);
+        await _supabaseService.deleteTransactionSmart(tx);
         refreshDashboard();
         widget.onTransactionChanged?.call();
       } catch (e) {
@@ -1017,17 +1049,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                           );
                         } else {
                           if (selectedType == 'Transfer') {
-                            final cats = await _supabaseService.getCategories();
-                            final transferCat = cats.firstWhere(
-                              (c) => c.name.toLowerCase() == 'transfer',
-                              orElse: () => cats.first,
-                            );
                             await _supabaseService.transferFunds(
                               fromWalletId: selectedWalletId!,
                               toWalletId: targetWalletId!,
                               amount: parsedAmount,
                               description: descController.text,
-                              categoryId: transferCat.id,
                             );
                           } else {
                             await _supabaseService.createTransaction(
