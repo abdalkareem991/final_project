@@ -287,7 +287,7 @@ class SupabaseService {
     }
   }
 
-  Future<void> createTransaction({
+  Future<String?> createTransaction({
     required String walletId,
     required double amount,
     required String type,
@@ -301,34 +301,62 @@ class SupabaseService {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
 
-      await client.from('transactions').insert({
-        'user_id': user.id,
-        'wallet_id': walletId,
-        'amount': amount,
-        'type': type,
-        'description': description,
-        'category_id': categoryId,
-        'sms_hash': smsHash,
-      });
+      // 1. Insert transaction and return its ID
+      final inserted = await client
+          .from('transactions')
+          .insert({
+            'user_id': user.id,
+            'wallet_id': walletId,
+            'amount': amount,
+            'type': type,
+            'description': description,
+            'category_id': categoryId,
+            'sms_hash': smsHash,
+            'is_internal_transfer': isInternalTransfer,
+            'transfer_group_id': transferGroupId,
+          })
+          .select('id')
+          .single();
 
+      final String transactionId = inserted['id'] as String;
+
+      // 2. Read current wallet balance
       final walletData = await client
           .from('wallets')
           .select('balance')
           .eq('id', walletId)
           .single();
-      double currentBalance = (walletData['balance'] as num).toDouble();
 
-      double newBalance = type.toLowerCase() == 'income'
+      final double currentBalance = (walletData['balance'] as num).toDouble();
+
+      // 3. Calculate new balance
+      final double newBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
 
+      // 4. Update wallet balance
       await client
           .from('wallets')
           .update({'balance': newBalance})
           .eq('id', walletId);
+
+      // 5. Try to detect internal transfer after successful insertion
+      if (!isInternalTransfer) {
+        await detectAndMarkInternalTransfer(
+          newTransactionId: transactionId,
+          walletId: walletId,
+          amount: amount,
+          type: type,
+        );
+      }
+
+      debugPrint("Transaction created successfully: $transactionId");
+      debugPrint("Wallet balance updated: $newBalance");
+
+      return transactionId;
     } catch (error) {
       debugPrint('Create Transaction Error: $error');
-      rethrow;
+      return null;
     }
   }
 
@@ -485,6 +513,58 @@ class SupabaseService {
     }
   }
 
+  Future<void> detectAndMarkInternalTransfer({
+    required String newTransactionId,
+    required String walletId,
+    required double amount,
+    required String type,
+  }) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return;
+
+      final oppositeType = type.toLowerCase() == 'income'
+          ? 'Expense'
+          : 'Income';
+
+      final now = DateTime.now();
+      final windowStart = now.subtract(const Duration(minutes: 10));
+
+      final matches = await client
+          .from('transactions')
+          .select('id, wallet_id, amount, type, date')
+          .eq('user_id', user.id)
+          .eq('type', oppositeType)
+          .eq('amount', amount)
+          .neq('wallet_id', walletId)
+          .gte('date', windowStart.toIso8601String())
+          .order('date', ascending: false)
+          .limit(1);
+
+      if (matches.isEmpty) {
+        debugPrint("No internal transfer match found.");
+        return;
+      }
+
+      final matchedTransaction = matches.first;
+      final matchedId = matchedTransaction['id'] as String;
+
+      final transferGroupId =
+          "transfer_${DateTime.now().millisecondsSinceEpoch}";
+
+      await client
+          .from('transactions')
+          .update({
+            'is_internal_transfer': true,
+            'transfer_group_id': transferGroupId,
+          })
+          .inFilter('id', [newTransactionId, matchedId]);
+
+      debugPrint("Internal transfer detected and linked.");
+    } catch (e) {
+      debugPrint("Internal transfer detection error: $e");
+    }
+  }
   // ===========================================================================
   // 6. TASK OPERATIONS (TODO LIST)
   // ===========================================================================
@@ -636,6 +716,7 @@ class SupabaseService {
           .from('transactions')
           .select('amount, type')
           .eq('user_id', user.id)
+          .eq('is_internal_transfer', false)
           .gte('created_at', startDate.toIso8601String());
 
       Map<String, double> summary = {'Income': 0.0, 'Expense': 0.0};
