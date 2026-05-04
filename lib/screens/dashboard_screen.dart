@@ -9,9 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/category_model.dart';
 import '../models/wallet_model.dart';
+import '../services/sms_listener_service.dart';
 import '../services/supabase_service.dart';
 import 'my_account_screen.dart';
 import 'todo_list_screen.dart';
+import 'transactions_history_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -159,6 +161,74 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     return "$_currencySymbol${converted.toStringAsFixed(2)}";
   }
 
+  String _formatDateTime(dynamic rawDate) {
+    if (rawDate == null) return '';
+
+    final date = DateTime.tryParse(rawDate.toString());
+    if (date == null) return rawDate.toString();
+
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+
+    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} $hour:$minute";
+  }
+
+  Widget _buildSmsSyncStatusCard() {
+    final lastSync = SMSListenerService.lastSyncTime;
+    final status = SMSListenerService.lastSyncStatus;
+    final count = SMSListenerService.lastProcessedCount;
+
+    final String lastSyncText = lastSync == null
+        ? "Not synced yet"
+        : _formatDateTime(lastSync.toIso8601String());
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _accentGreen.withOpacity(0.15)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _accentGreen.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.sync, color: _accentGreen),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "SMS Auto Sync",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "$status • Last sync: $lastSyncText",
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                Text(
+                  "Processed in last sync: $count",
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -184,6 +254,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           child: Column(
             children: [
               _buildLiveTotalBalanceCard(),
+              const SizedBox(height: 14),
+              _buildSmsSyncStatusCard(),
               const SizedBox(height: 20),
               _buildAnalyticsSection(),
               const SizedBox(height: 25),
@@ -336,7 +408,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           );
         }
 
-        final recentTransactions = visibleTransactions.take(5).toList();
+        final recentTransactions = visibleTransactions.take(10).toList();
 
         return Column(
           children: recentTransactions.map((tx) {
@@ -419,7 +491,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
               },
             ),
           TextButton(
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const TransactionsHistoryScreen(),
+                ),
+              );
+            },
             child: const Text("See All", style: TextStyle(color: _accentGreen)),
           ),
         ],
@@ -494,7 +573,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         ? "Internal Transfer"
         : (tx['description'] ?? "Transaction");
 
-    final String date = tx['created_at'].toString().split('T')[0];
+    final String date = _formatDateTime(tx['created_at']);
 
     final String amount = isInternalTransfer
         ? _formatAmount((tx['amount'] as num).toDouble())
@@ -581,13 +660,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                       } else if (value == 'edit') {
                         _showTransactionModal(existingTx: tx);
                       } else if (value == 'hide') {
-                        setState(() {
-                          _hiddenTransactions.add(tx['id'].toString());
-                        });
-                      } else if (value == 'unhide') {
-                        setState(() {
-                          _hiddenTransactions.remove(tx['id'].toString());
-                        });
+                        await _supabaseService.hideTransaction(
+                          tx['id'].toString(),
+                        );
+                        refreshDashboard();
+                        widget.onTransactionChanged?.call();
                       } else if (value == 'delete') {
                         await _deleteTransactionWithConfirm(tx);
                       }

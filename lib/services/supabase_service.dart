@@ -265,6 +265,128 @@ class SupabaseService {
     }
   }
 
+  Future<int> getOrCreateCategoryByName({
+    required String name,
+    required String type,
+    String icon = 'category',
+    String color = '#34EAB9',
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    final existing = await client
+        .from('categories')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('name', name)
+        .maybeSingle();
+
+    if (existing != null) {
+      return existing['id'] as int;
+    }
+
+    final inserted = await client
+        .from('categories')
+        .insert({
+          'user_id': user.id,
+          'name': name,
+          'type': type,
+          'icon': icon,
+          'color': color,
+        })
+        .select('id')
+        .single();
+
+    return inserted['id'] as int;
+  }
+
+  Future<int> getAutoCategoryIdForSms({
+    required String smsKind,
+    String? merchantName,
+  }) async {
+    final text =
+        "${smsKind.toLowerCase()} ${(merchantName ?? '').toLowerCase()}";
+
+    if (text.contains('cliq') || text.contains('transfer')) {
+      return getOrCreateCategoryByName(
+        name: 'تحويل',
+        type: 'Transfer',
+        icon: 'swap_horiz',
+        color: '#3B82F6',
+      );
+    }
+
+    if (text.contains('bill') ||
+        text.contains('biller') ||
+        text.contains('efawateercom') ||
+        text.contains('فاتورة') ||
+        text.contains('orange') ||
+        text.contains('zain') ||
+        text.contains('umniah')) {
+      return getOrCreateCategoryByName(
+        name: 'Bills',
+        type: 'Expense',
+        icon: 'receipt',
+        color: '#F59E0B',
+      );
+    }
+
+    if (text.contains('carrefour') ||
+        text.contains('market') ||
+        text.contains('supermarket') ||
+        text.contains('grocery')) {
+      return getOrCreateCategoryByName(
+        name: 'Groceries',
+        type: 'Expense',
+        icon: 'shopping_cart',
+        color: '#22C55E',
+      );
+    }
+
+    if (text.contains('restaurant') ||
+        text.contains('cafe') ||
+        text.contains('food') ||
+        text.contains('meal')) {
+      return getOrCreateCategoryByName(
+        name: 'Food',
+        type: 'Expense',
+        icon: 'restaurant',
+        color: '#EF4444',
+      );
+    }
+
+    if (text.contains('careem') ||
+        text.contains('uber') ||
+        text.contains('taxi') ||
+        text.contains('transport')) {
+      return getOrCreateCategoryByName(
+        name: 'Transport',
+        type: 'Expense',
+        icon: 'directions_car',
+        color: '#06B6D4',
+      );
+    }
+
+    if (text.contains('card') ||
+        text.contains('visa') ||
+        text.contains('pos') ||
+        text.contains('purchase')) {
+      return getOrCreateCategoryByName(
+        name: 'Card Payment',
+        type: 'Expense',
+        icon: 'credit_card',
+        color: '#8B5CF6',
+      );
+    }
+
+    return getOrCreateCategoryByName(
+      name: 'General',
+      type: 'Expense',
+      icon: 'category',
+      color: '#94A3B8',
+    );
+  }
+
   // ===========================================================================
   // 5. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
@@ -297,6 +419,8 @@ class SupabaseService {
     bool isInternalTransfer = false,
     String? transferGroupId,
     double? balanceAfter,
+    String? merchantName,
+    String? smsKind,
   }) async {
     try {
       final user = client.auth.currentUser;
@@ -315,6 +439,8 @@ class SupabaseService {
             'sms_hash': smsHash,
             'is_internal_transfer': isInternalTransfer,
             'transfer_group_id': transferGroupId,
+            'merchant_name': merchantName,
+            'sms_kind': smsKind,
           })
           .select('id')
           .single();
@@ -455,6 +581,20 @@ class SupabaseService {
         .single();
 
     return inserted['id'] as int;
+  }
+
+  Future<void> hideTransaction(String transactionId) async {
+    try {
+      await client
+          .from('transactions')
+          .update({'is_hidden': true})
+          .eq('id', transactionId);
+
+      debugPrint("Transaction hidden: $transactionId");
+    } catch (e) {
+      debugPrint("Hide transaction error: $e");
+      rethrow;
+    }
   }
 
   Future<void> transferFunds({
@@ -1012,24 +1152,23 @@ class SupabaseService {
 
       final bool isCliq = aiData['is_cliq'] == true;
       final String? counterparty = aiData['counterparty']?.toString();
+      final String smsKind =
+          aiData['sms_kind']?.toString() ?? 'Bank Transaction';
+      final String? merchantName = aiData['merchant_name']?.toString();
 
       final double? balanceAfter = (aiData['available_balance'] as num?)
           ?.toDouble();
 
-      int categoryId;
-
-      if (isCliq) {
-        categoryId = await getOrCreateTransferCategoryId();
-      } else {
-        final categories = await getCategories();
-        categoryId = categories.isNotEmpty ? categories.first.id : 1;
-      }
+      final int categoryId = await getAutoCategoryIdForSms(
+        smsKind: smsKind,
+        merchantName: merchantName,
+      );
 
       final String description = isCliq
           ? type == 'Income'
                 ? "CliQ transfer from ${counterparty ?? 'Unknown sender'}"
                 : "CliQ transfer to ${counterparty ?? 'Unknown receiver'}"
-          : "SMS Auto Transaction - $bank";
+          : "$smsKind - $bank";
 
       await createTransaction(
         walletId: walletId,
@@ -1039,6 +1178,8 @@ class SupabaseService {
         categoryId: categoryId,
         smsHash: smsHash,
         balanceAfter: balanceAfter,
+        merchantName: merchantName,
+        smsKind: smsKind,
       );
 
       debugPrint("SMS transaction added to dashboard successfully.");
@@ -1129,8 +1270,11 @@ class SupabaseService {
             for (final category in categoriesResponse)
               category['id'].toString(): category['name'].toString(),
           };
+          final visibleTransactions = transactions
+              .where((tx) => tx['is_hidden'] != true)
+              .toList();
 
-          return transactions.map((tx) {
+          return visibleTransactions.map((tx) {
             final walletId = tx['wallet_id']?.toString();
             final categoryId = tx['category_id']?.toString();
 

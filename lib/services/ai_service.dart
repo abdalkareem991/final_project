@@ -69,7 +69,7 @@ class AIService {
     } else if (text.contains('transferred by cliq to account')) {
       type = 'Income';
     } else if (RegExp(
-      r'(debited|withdrawn|paid|payment|purchase|atm|atv|خصم|سحب|شراء|دفع|إلى المحفظة)',
+      r'(debited|withdrawn|paid|payment|purchase|pos|visa|card|bill|biller|efawateercom|atm|atv|خصم|سحب|شراء|دفع|فاتورة|فواتير|إلى المحفظة)',
     ).hasMatch(text)) {
       type = 'Expense';
     } else if (RegExp(
@@ -93,7 +93,31 @@ class AIService {
       'available_balance': availableBalance,
       'counterparty': _extractCliqCounterparty(text, type),
       'is_cliq': text.contains('cliq'),
+      'sms_kind': _detectSmsKind(text),
+      'merchant_name': _extractMerchantName(text),
     };
+  }
+
+  String? _extractMerchantName(String text) {
+    final patterns = [
+      RegExp(r'at\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|,| on | available|$)'),
+      RegExp(
+        r'from\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|,| on | available|$)',
+      ),
+      RegExp(r'لدى\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)'),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(text);
+      if (match != null) {
+        final value = match.group(1)?.trim();
+        if (value != null && value.length >= 2) {
+          return value;
+        }
+      }
+    }
+
+    return null;
   }
 
   double? _extractTransactionAmount(String text) {
@@ -108,6 +132,8 @@ class AIService {
     final patterns = [
       RegExp(r'jod\s*(\d+(?:\.\d+)?)\s*has been'),
       RegExp(r'(\d+(?:\.\d+)?)\s*jod\s*has been'),
+      RegExp(r'jod\s*(\d+(?:\.\d+)?)\s*(?:payment|purchase|paid)'),
+      RegExp(r'(?:payment|purchase|paid).*?jod\s*(\d+(?:\.\d+)?)'),
       RegExp(r'بقيمة\s*(\d+(?:\.\d+)?)\s*دينار'),
       RegExp(r'مبلغ\s*(\d+(?:\.\d+)?)\s*دينار'),
     ];
@@ -119,7 +145,6 @@ class AIService {
         if (value != null && value > 0) return value;
       }
     }
-
     return null;
   }
 
@@ -145,6 +170,20 @@ class AIService {
     }
 
     return null;
+  }
+
+  String _detectSmsKind(String text) {
+    if (text.contains('cliq')) return 'CliQ Transfer';
+    if (RegExp(r'(visa|card|pos|purchase)').hasMatch(text)) {
+      return 'Card Payment';
+    }
+    if (RegExp(r'(bill|biller|efawateercom|فاتورة|فواتير)').hasMatch(text)) {
+      return 'Bill Payment';
+    }
+    if (RegExp(r'(atm|withdrawn|سحب)').hasMatch(text)) {
+      return 'ATM Withdrawal';
+    }
+    return 'Bank Transaction';
   }
 
   double? extractBalanceLocally(String smsBody) {
