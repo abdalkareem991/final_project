@@ -1,5 +1,7 @@
 // lib/screens/settings_screen.dart
 
+// ignore_for_file: deprecated_member_use
+
 import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';

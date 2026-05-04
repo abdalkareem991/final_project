@@ -1,5 +1,7 @@
 // lib/screens/dashboard_screen.dart
 
+// ignore_for_file: deprecated_member_use
+
 import 'package:final_project/screens/ai_assistant_screen.dart';
 import 'package:final_project/screens/analytics_screen.dart';
 import 'package:final_project/screens/settings_screen.dart';

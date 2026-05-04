@@ -1,5 +1,7 @@
 // lib/services/supabase_service.dart
 
+// ignore_for_file: empty_catches
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
