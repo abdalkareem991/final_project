@@ -56,27 +56,95 @@ class AIService {
   Map<String, dynamic>? parseBankSmsLocally(String smsBody, {String? sender}) {
     final text = smsBody.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 
-    final amountRegex = RegExp(
-      r'(?:jod|jd)?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:jod|jd)?',
-    );
-    final matches = amountRegex.allMatches(text).toList();
+    if (RegExp(
+      r'(otp|code|verification|password|authorization|رمز|كود|تحقق)',
+    ).hasMatch(text)) {
+      return null;
+    }
 
-    if (matches.isEmpty) return null;
+    String type = 'Unknown';
 
-    final type = detectTypeLocally(text);
+    if (text.contains('transferred by cliq from account')) {
+      type = 'Expense';
+    } else if (text.contains('transferred by cliq to account')) {
+      type = 'Income';
+    } else if (RegExp(
+      r'(debited|withdrawn|paid|payment|purchase|atm|atv|خصم|سحب|شراء|دفع|إلى المحفظة)',
+    ).hasMatch(text)) {
+      type = 'Expense';
+    } else if (RegExp(
+      r'(credited|deposit|received|إيداع|ايداع|وارد|استلام|تم استقبال حوالة|تم شحن)',
+    ).hasMatch(text)) {
+      type = 'Income';
+    }
 
     if (type == 'Unknown') return null;
 
-    final amount = double.tryParse(matches.first.group(1) ?? '');
-
+    final double? amount = _extractTransactionAmount(text);
     if (amount == null || amount <= 0) return null;
+
+    final double? availableBalance = extractBalanceLocally(text);
 
     return {
       'amount': amount,
       'type': type,
       'bank': sender ?? 'Unknown Bank',
       'status': 'Final',
+      'available_balance': availableBalance,
+      'counterparty': _extractCliqCounterparty(text, type),
+      'is_cliq': text.contains('cliq'),
     };
+  }
+
+  double? _extractTransactionAmount(String text) {
+    if (text.contains('فلس')) {
+      final filsRegex = RegExp(r'بقيمة\s*(\d+(?:\.\d+)?)\s*فلس');
+      final match = filsRegex.firstMatch(text);
+      if (match != null) {
+        return (double.tryParse(match.group(1)!) ?? 0) / 1000;
+      }
+    }
+
+    final patterns = [
+      RegExp(r'jod\s*(\d+(?:\.\d+)?)\s*has been'),
+      RegExp(r'(\d+(?:\.\d+)?)\s*jod\s*has been'),
+      RegExp(r'بقيمة\s*(\d+(?:\.\d+)?)\s*دينار'),
+      RegExp(r'مبلغ\s*(\d+(?:\.\d+)?)\s*دينار'),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(text);
+      if (match != null) {
+        final value = double.tryParse(match.group(1)!);
+        if (value != null && value > 0) return value;
+      }
+    }
+
+    return null;
+  }
+
+  String? _extractCliqCounterparty(String text, String type) {
+    if (!text.contains('cliq')) return null;
+
+    if (type == 'Income') {
+      final match = RegExp(
+        r'\sfrom\s+([a-z0-9]+)',
+        caseSensitive: false,
+      ).firstMatch(text);
+
+      return match?.group(1);
+    }
+
+    if (type == 'Expense') {
+      final match = RegExp(
+        r'\sto\s+([a-z0-9\u0600-\u06FF\s]+?)(?:\.| available|$)',
+        caseSensitive: false,
+      ).firstMatch(text);
+
+      return match?.group(1)?.trim();
+    }
+
+    return null;
   }
 
   double? extractBalanceLocally(String smsBody) {

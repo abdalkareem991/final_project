@@ -15,9 +15,6 @@ class BankSelectionScreen extends StatefulWidget {
 class _BankSelectionScreenState extends State<BankSelectionScreen> {
   final SupabaseService _supabaseService = SupabaseService();
 
-  // Real-time stream for wallets
-  late Stream<List<WalletModel>> _walletsStream;
-
   // Theme Colors
   static const Color bgColor = Color(0xFF061414);
   static const Color cardColor = Color(0xFF111D1D);
@@ -32,7 +29,6 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
 
   void _initWalletsStream() {
     // Note: This maps the dynamic list from Supabase to WalletModel objects
-    _walletsStream = _supabaseService.getTransactionsStream().map((_) => []);
     // For production, ensure SupabaseService has getWalletsStream()
   }
 

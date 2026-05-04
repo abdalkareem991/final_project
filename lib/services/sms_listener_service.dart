@@ -40,51 +40,51 @@ class SMSListenerService {
     await _syncLatestBankSms();
   }
 
-  Future<void> _syncLatestBankSms() async {
-    try {
-      final wallets = await _supabaseService.getWallets();
+ Future<void> _syncLatestBankSms() async {
+  try {
+    final wallets = await _supabaseService.getWallets();
 
-      final automatedWallets = wallets.where((wallet) {
-        return wallet.accountMode == 'AUTOMATED' &&
-            wallet.isActiveMonitoring == true &&
-            wallet.smsSenderId != null &&
-            wallet.smsSenderId!.trim().isNotEmpty;
-      }).toList();
+    final automatedWallets = wallets.where((wallet) {
+      return wallet.accountMode == 'AUTOMATED' &&
+          wallet.isActiveMonitoring == true &&
+          wallet.smsSenderId != null &&
+          wallet.smsSenderId!.trim().isNotEmpty;
+    }).toList();
 
-      for (final wallet in automatedWallets) {
-        final sender = wallet.smsSenderId!.trim();
+    for (final wallet in automatedWallets) {
+      final sender = wallet.smsSenderId!.trim();
 
-        final messages = await telephony.getInboxSms(
-          columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
-          filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
-          sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
-        );
+      final messages = await telephony.getInboxSms(
+        columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+        filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
+        sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+      );
 
-        if (messages.isEmpty) {
-          debugPrint("No SMS messages found for sender: $sender");
-          continue;
-        }
+      if (messages.isEmpty) {
+        debugPrint("No SMS messages found for sender: $sender");
+        continue;
+      }
 
-        final latest = messages.first;
+      final recentMessages = messages.take(5).toList().reversed;
 
-        final body = latest.body
+      for (final message in recentMessages) {
+        final body = message.body
             ?.replaceAll(RegExp(r'\s+'), ' ')
             .trim()
             .toLowerCase();
 
-        final date = latest.date ?? 0;
+        final date = message.date ?? 0;
 
         if (body == null || body.isEmpty) continue;
 
         final smsHash = "${sender}_${date}_${body.hashCode}";
 
-        _processedInMemory.add(
-          smsHash,
-        ); // Mark as processed in memory to avoid duplicates within the same session
+        if (_processedInMemory.contains(smsHash)) {
+          continue;
+        }
 
-        final alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
-          smsHash,
-        );
+        final alreadyProcessed =
+            await _supabaseService.isSmsAlreadyProcessed(smsHash);
 
         if (alreadyProcessed) {
           _processedInMemory.add(smsHash);
@@ -102,9 +102,7 @@ class SMSListenerService {
         debugPrint("Local parser result: $data");
 
         if (data == null) {
-          debugPrint(
-            "Local parser could not parse SMS from $sender. Skipping.",
-          );
+          debugPrint("Local parser could not parse SMS from $sender. Skipping.");
           _processedInMemory.add(smsHash);
           continue;
         }
@@ -119,11 +117,12 @@ class SMSListenerService {
 
         debugPrint("SMS synced into dashboard.");
       }
-    } catch (e, stackTrace) {
-      debugPrint("SMS auto sync error: $e");
-      debugPrint("StackTrace: $stackTrace");
     }
+  } catch (e, stackTrace) {
+    debugPrint("SMS auto sync error: $e");
+    debugPrint("StackTrace: $stackTrace");
   }
+ }
 
   /// Stops the SMS listener service manually
   void stopListening() {

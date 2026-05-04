@@ -296,6 +296,7 @@ class SupabaseService {
     String? smsHash,
     bool isInternalTransfer = false,
     String? transferGroupId,
+    double? balanceAfter,
   }) async {
     try {
       final user = client.auth.currentUser;
@@ -330,9 +331,11 @@ class SupabaseService {
       final double currentBalance = (walletData['balance'] as num).toDouble();
 
       // 3. Calculate new balance
-      final double newBalance = type.toLowerCase() == 'income'
+      final double calculatedBalance = type.toLowerCase() == 'income'
           ? currentBalance + amount
           : currentBalance - amount;
+
+      final double newBalance = balanceAfter ?? calculatedBalance;
 
       // 4. Update wallet balance
       await client
@@ -422,6 +425,36 @@ class SupabaseService {
       debugPrint('Update Transaction Error: $error');
       rethrow;
     }
+  }
+
+  Future<int> getOrCreateTransferCategoryId() async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    final existing = await client
+        .from('categories')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('name', 'تحويل')
+        .maybeSingle();
+
+    if (existing != null) {
+      return existing['id'] as int;
+    }
+
+    final inserted = await client
+        .from('categories')
+        .insert({
+          'user_id': user.id,
+          'name': 'تحويل',
+          'type': 'Transfer',
+          'icon': 'swap_horiz',
+          'color': '#3B82F6',
+        })
+        .select('id')
+        .single();
+
+    return inserted['id'] as int;
   }
 
   Future<void> transferFunds({
@@ -625,15 +658,47 @@ class SupabaseService {
 
       final transferGroupId =
           "transfer_${DateTime.now().millisecondsSinceEpoch}";
+      final int transferCategoryId = await getOrCreateTransferCategoryId();
+
+      final currentWallet = await client
+          .from('wallets')
+          .select('name')
+          .eq('id', walletId)
+          .single();
+
+      final matchedWallet = await client
+          .from('wallets')
+          .select('name')
+          .eq('id', matchedTransaction['wallet_id'])
+          .single();
+
+      final String currentWalletName = currentWallet['name'].toString();
+      final String matchedWalletName = matchedWallet['name'].toString();
+
+      final bool newTransactionIsIncome = type.toLowerCase() == 'income';
+
+      final String fromWalletName = newTransactionIsIncome
+          ? matchedWalletName
+          : currentWalletName;
+
+      final String toWalletName = newTransactionIsIncome
+          ? currentWalletName
+          : matchedWalletName;
+
+      final String transferDescription =
+          "تحويل من $fromWalletName إلى $toWalletName";
 
       await client
           .from('transactions')
           .update({
             'is_internal_transfer': true,
             'transfer_group_id': transferGroupId,
+            'category_id': transferCategoryId,
+            'description': transferDescription,
           })
           .inFilter('id', [newTransactionId, matchedId]);
 
+      debugPrint("Internal transfer detected: $transferDescription");
       debugPrint("Internal transfer detected and linked.");
     } catch (e) {
       debugPrint("Internal transfer detection error: $e");
@@ -932,6 +997,7 @@ class SupabaseService {
         debugPrint("No linked wallet found for sender: $senderId");
         return;
       }
+
       if (smsHash != null) {
         final alreadyProcessed = await isSmsAlreadyProcessed(smsHash);
         if (alreadyProcessed) {
@@ -940,21 +1006,41 @@ class SupabaseService {
         }
       }
 
-      final categories = await getCategories();
-      final int categoryId = categories.isNotEmpty ? categories.first.id : 1;
-
       final double amount = (aiData['amount'] as num).toDouble();
       final String type = aiData['type'] ?? 'Expense';
       final String bank = aiData['bank'] ?? senderId;
+
+      final bool isCliq = aiData['is_cliq'] == true;
+      final String? counterparty = aiData['counterparty']?.toString();
+
+      final double? balanceAfter = (aiData['available_balance'] as num?)
+          ?.toDouble();
+
+      int categoryId;
+
+      if (isCliq) {
+        categoryId = await getOrCreateTransferCategoryId();
+      } else {
+        final categories = await getCategories();
+        categoryId = categories.isNotEmpty ? categories.first.id : 1;
+      }
+
+      final String description = isCliq
+          ? type == 'Income'
+                ? "CliQ transfer from ${counterparty ?? 'Unknown sender'}"
+                : "CliQ transfer to ${counterparty ?? 'Unknown receiver'}"
+          : "SMS Auto Transaction - $bank";
 
       await createTransaction(
         walletId: walletId,
         amount: amount,
         type: type,
-        description: "SMS Auto Transaction - $bank",
+        description: description,
         categoryId: categoryId,
         smsHash: smsHash,
+        balanceAfter: balanceAfter,
       );
+
       debugPrint("SMS transaction added to dashboard successfully.");
     } catch (e) {
       debugPrint("SMS automation error: $e");
