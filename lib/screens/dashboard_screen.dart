@@ -166,67 +166,90 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   String _formatDateTime(dynamic rawDate) {
     if (rawDate == null) return '';
 
-    final date = DateTime.tryParse(rawDate.toString());
-    if (date == null) return rawDate.toString();
+    final parsed = DateTime.tryParse(rawDate.toString());
+    if (parsed == null) return rawDate.toString();
 
-    final hour = date.hour.toString().padLeft(2, '0');
-    final minute = date.minute.toString().padLeft(2, '0');
+    final date = parsed.toLocal();
 
-    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} $hour:$minute";
+    final int hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    final String minute = date.minute.toString().padLeft(2, '0');
+    final String period = date.hour >= 12 ? 'PM' : 'AM';
+
+    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} "
+        "$hour12:$minute $period";
   }
 
-  Widget _buildSmsSyncStatusCard() {
+  String _formatTimeOnly12(dynamic rawDate) {
+    if (rawDate == null) return 'Not synced';
+
+    final parsed = DateTime.tryParse(rawDate.toString());
+    if (parsed == null) return 'Not synced';
+
+    final date = parsed.toLocal();
+
+    final int hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    final String minute = date.minute.toString().padLeft(2, '0');
+    final String period = date.hour >= 12 ? 'PM' : 'AM';
+
+    return "$hour12:$minute $period";
+  }
+
+  Widget _buildSmsSyncStatusLine() {
     final lastSync = SMSListenerService.lastSyncTime;
     final status = SMSListenerService.lastSyncStatus;
     final count = SMSListenerService.lastProcessedCount;
 
     final String lastSyncText = lastSync == null
-        ? "Not synced yet"
-        : _formatDateTime(lastSync.toIso8601String());
+        ? "Not synced"
+        : _formatTimeOnly12(lastSync.toIso8601String());
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _cardColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _accentGreen.withOpacity(0.15)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: _accentGreen.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () async {
+        setState(() {
+          SMSListenerService.lastSyncStatus = "Syncing";
+        });
+
+        await SMSListenerService().syncNow();
+
+        refreshDashboard();
+
+        if (mounted) {
+          setState(() {});
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 8, bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: _cardColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _accentGreen.withOpacity(0.16)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              status == "Syncing" ? Icons.sync : Icons.sync_outlined,
+              color: _accentGreen,
+              size: 18,
             ),
-            child: const Icon(Icons.sync, color: _accentGreen),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "SMS Auto Sync",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                "SMS Sync: $status • $lastSyncText • $count new",
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  "$status • Last sync: $lastSyncText",
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-                Text(
-                  "Processed in last sync: $count",
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        ],
+            const Icon(Icons.touch_app, color: Colors.grey, size: 15),
+          ],
+        ),
       ),
     );
   }
@@ -256,8 +279,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           child: Column(
             children: [
               _buildLiveTotalBalanceCard(),
-              const SizedBox(height: 14),
-              _buildSmsSyncStatusCard(),
+              _buildSmsSyncStatusLine(),
               const SizedBox(height: 20),
               _buildAnalyticsSection(),
               const SizedBox(height: 25),
@@ -575,7 +597,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         ? "Internal Transfer"
         : (tx['description'] ?? "Transaction");
 
-    final String date = _formatDateTime(tx['created_at']);
+    final String date = _formatDateTime(tx['date'] ?? tx['created_at']);
 
     final String amount = isInternalTransfer
         ? _formatAmount((tx['amount'] as num).toDouble())
@@ -802,7 +824,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
             ),
             _buildDetailRow("Account", walletName),
             _buildDetailRow("Category", categoryName),
-            _buildDetailRow("Date", tx['created_at'].toString().split('T')[0]),
+            _buildDetailRow(
+              "Date",
+              _formatDateTime(tx['date'] ?? tx['created_at']),
+            ),
           ],
         ),
         actions: [

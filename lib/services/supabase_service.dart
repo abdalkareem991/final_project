@@ -423,11 +423,12 @@ class SupabaseService {
     double? balanceAfter,
     String? merchantName,
     String? smsKind,
+    DateTime? transactionDate,
   }) async {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
-
+      final DateTime effectiveDate = transactionDate ?? DateTime.now();
       // 1. Insert transaction and return its ID
       final inserted = await client
           .from('transactions')
@@ -443,6 +444,7 @@ class SupabaseService {
             'transfer_group_id': transferGroupId,
             'merchant_name': merchantName,
             'sms_kind': smsKind,
+            'date': effectiveDate.toIso8601String(),
           })
           .select('id')
           .single();
@@ -463,7 +465,22 @@ class SupabaseService {
           ? currentBalance + amount
           : currentBalance - amount;
 
-      final double newBalance = balanceAfter ?? calculatedBalance;
+      double newBalance = calculatedBalance;
+
+      if (balanceAfter != null) {
+        final newerTransactions = await client
+            .from('transactions')
+            .select('id')
+            .eq('wallet_id', walletId)
+            .gt('date', effectiveDate.toIso8601String())
+            .limit(1);
+
+        final bool hasNewerTransaction = newerTransactions.isNotEmpty;
+
+        if (!hasNewerTransaction) {
+          newBalance = balanceAfter;
+        }
+      }
 
       // 4. Update wallet balance
       await client
@@ -999,7 +1016,7 @@ class SupabaseService {
           .select('amount, type')
           .eq('user_id', user.id)
           .eq('is_internal_transfer', false)
-          .gte('created_at', startDate.toIso8601String());
+          .gte('date', startDate.toIso8601String());
 
       Map<String, double> summary = {'Income': 0.0, 'Expense': 0.0};
 
@@ -1160,7 +1177,13 @@ class SupabaseService {
 
       final double? balanceAfter = (aiData['available_balance'] as num?)
           ?.toDouble();
+      DateTime? transactionDate;
 
+      final smsTimestamp = aiData['sms_timestamp'];
+
+      if (smsTimestamp is int && smsTimestamp > 0) {
+        transactionDate = DateTime.fromMillisecondsSinceEpoch(smsTimestamp);
+      }
       final int categoryId = await getAutoCategoryIdForSms(
         smsKind: smsKind,
         merchantName: merchantName,
@@ -1182,6 +1205,7 @@ class SupabaseService {
         balanceAfter: balanceAfter,
         merchantName: merchantName,
         smsKind: smsKind,
+        transactionDate: transactionDate,
       );
 
       debugPrint("SMS transaction added to dashboard successfully.");
@@ -1251,7 +1275,7 @@ class SupabaseService {
         .from('transactions')
         .stream(primaryKey: ['id'])
         .eq('user_id', userId)
-        .order('created_at', ascending: false)
+        .order('date', ascending: false)
         .asyncMap((transactions) async {
           final walletsResponse = await client
               .from('wallets')
