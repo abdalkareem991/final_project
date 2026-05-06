@@ -69,13 +69,13 @@ class AIService {
     } else if (text.contains('transferred by cliq to account')) {
       type = 'Income';
     } else if (RegExp(
+      r'(credited|deposit|deposited|received|salary|refund|إيداع|ايداع|وارد|استلام|تم استقبال حوالة|تم شحن|تم ايداع|تم إيداع)',
+    ).hasMatch(text)) {
+      type = 'Income';
+    } else if (RegExp(
       r'(debited|withdrawn|paid|payment|purchase|pos|visa|card|bill|biller|efawateercom|atm|atv|خصم|سحب|شراء|دفع|فاتورة|فواتير|إلى المحفظة)',
     ).hasMatch(text)) {
       type = 'Expense';
-    } else if (RegExp(
-      r'(credited|deposit|received|إيداع|ايداع|وارد|استلام|تم استقبال حوالة|تم شحن)',
-    ).hasMatch(text)) {
-      type = 'Income';
     }
 
     if (type == 'Unknown') return null;
@@ -84,6 +84,9 @@ class AIService {
     if (amount == null || amount <= 0) return null;
 
     final double? availableBalance = extractBalanceLocally(text);
+    final String smsKind = _detectSmsKind(text);
+    final String? counterparty = _extractCliqCounterparty(text, type);
+    final String? merchantName = counterparty ?? _extractMerchantName(text);
 
     return {
       'amount': amount,
@@ -91,38 +94,16 @@ class AIService {
       'bank': sender ?? 'Unknown Bank',
       'status': 'Final',
       'available_balance': availableBalance,
-      'counterparty': _extractCliqCounterparty(text, type),
+      'counterparty': counterparty,
       'is_cliq': text.contains('cliq'),
-      'sms_kind': _detectSmsKind(text),
-      'merchant_name': _extractMerchantName(text),
+      'sms_kind': smsKind,
+      'merchant_name': merchantName,
     };
-  }
-
-  String? _extractMerchantName(String text) {
-    final patterns = [
-      RegExp(r'at\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|,| on | available|$)'),
-      RegExp(
-        r'from\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|,| on | available|$)',
-      ),
-      RegExp(r'لدى\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)'),
-    ];
-
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(text);
-      if (match != null) {
-        final value = match.group(1)?.trim();
-        if (value != null && value.length >= 2) {
-          return value;
-        }
-      }
-    }
-
-    return null;
   }
 
   double? _extractTransactionAmount(String text) {
     if (text.contains('فلس')) {
-      final filsRegex = RegExp(r'بقيمة\s*(\d+(?:\.\d+)?)\s*فلس');
+      final filsRegex = RegExp(r'(?:بقيمة|مبلغ)\s*(\d+(?:\.\d+)?)\s*فلس');
       final match = filsRegex.firstMatch(text);
       if (match != null) {
         return (double.tryParse(match.group(1)!) ?? 0) / 1000;
@@ -132,10 +113,14 @@ class AIService {
     final patterns = [
       RegExp(r'jod\s*(\d+(?:\.\d+)?)\s*has been'),
       RegExp(r'(\d+(?:\.\d+)?)\s*jod\s*has been'),
-      RegExp(r'jod\s*(\d+(?:\.\d+)?)\s*(?:payment|purchase|paid)'),
-      RegExp(r'(?:payment|purchase|paid).*?jod\s*(\d+(?:\.\d+)?)'),
-      RegExp(r'بقيمة\s*(\d+(?:\.\d+)?)\s*دينار'),
-      RegExp(r'مبلغ\s*(\d+(?:\.\d+)?)\s*دينار'),
+      RegExp(
+        r'jod\s*(\d+(?:\.\d+)?)\s*(?:credited|debited|withdrawn|transferred|payment|purchase|paid)',
+      ),
+      RegExp(
+        r'(?:credited|debited|withdrawn|transferred|payment|purchase|paid).*?jod\s*(\d+(?:\.\d+)?)',
+      ),
+      RegExp(r'(?:بقيمة|مبلغ)\s*(\d+(?:\.\d+)?)\s*دينار'),
+      RegExp(r'(\d+(?:\.\d+)?)\s*دينار'),
     ];
 
     for (final pattern in patterns) {
@@ -145,6 +130,7 @@ class AIService {
         if (value != null && value > 0) return value;
       }
     }
+
     return null;
   }
 
@@ -162,7 +148,7 @@ class AIService {
 
     if (type == 'Expense') {
       final match = RegExp(
-        r'\sto\s+([a-z0-9\u0600-\u06FF\s]+?)(?:\.| available|$)',
+        r'\sto\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.| available|$)',
         caseSensitive: false,
       ).firstMatch(text);
 
@@ -172,17 +158,44 @@ class AIService {
     return null;
   }
 
+  String? _extractMerchantName(String text) {
+    final patterns = [
+      RegExp(r'at\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|,| on | available|$)'),
+      RegExp(r'لدى\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)'),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(text);
+      if (match != null) {
+        final value = match.group(1)?.trim();
+        if (value != null && value.length >= 2) return value;
+      }
+    }
+
+    return null;
+  }
+
   String _detectSmsKind(String text) {
     if (text.contains('cliq')) return 'CliQ Transfer';
+
     if (RegExp(r'(visa|card|pos|purchase)').hasMatch(text)) {
       return 'Card Payment';
     }
+
     if (RegExp(r'(bill|biller|efawateercom|فاتورة|فواتير)').hasMatch(text)) {
       return 'Bill Payment';
     }
+
     if (RegExp(r'(atm|withdrawn|سحب)').hasMatch(text)) {
       return 'ATM Withdrawal';
     }
+
+    if (RegExp(
+      r'(credited|deposit|deposited|إيداع|ايداع|تم ايداع|تم إيداع)',
+    ).hasMatch(text)) {
+      return 'Deposit';
+    }
+
     return 'Bank Transaction';
   }
 
@@ -215,22 +228,45 @@ class AIService {
     String userMessage,
     String financialContext,
   ) async {
-    try {
-      final prompt = [
-        Content.text("""
-          You are 'FinMind AI', a professional financial assistant for Abdulkareem.
-          Context: $financialContext
-          Question: $userMessage
-          Provide professional, concise, and actionable advice.
-        """),
-      ];
+    const int maxRetries = 2;
 
-      final response = await _model.generateContent(prompt);
-      return response.text ??
-          "I'm having trouble analyzing your request right now.";
-    } catch (e) {
-      debugPrint("❌ FinMind AI Advice Error: $e");
-      return "Connection error. Please check your internet or API key.";
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final prompt = [
+          Content.text("""
+You are FinMind AI, a financial assistant inside a personal finance app.
+
+Use the user's real financial data below:
+$financialContext
+
+User question:
+$userMessage
+
+Rules:
+- Use only the available financial data.
+- Do not invent numbers.
+- Mention if data is missing.
+- Keep the answer practical, short, and clear.
+- Give advice based on balances, income, expenses, wallets, and recent transactions.
+"""),
+        ];
+
+        final response = await _model
+            .generateContent(prompt)
+            .timeout(const Duration(seconds: 25));
+
+        return response.text ?? "I could not generate a response right now.";
+      } catch (e) {
+        debugPrint("FinMind AI attempt $attempt failed: $e");
+
+        if (attempt == maxRetries) {
+          return "AI connection is temporarily unstable. Please try again shortly.";
+        }
+
+        await Future.delayed(Duration(seconds: attempt + 1));
+      }
     }
+
+    return "AI connection is temporarily unstable.";
   }
 }

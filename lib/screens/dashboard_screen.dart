@@ -133,6 +133,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     _balancesStream = _supabaseService.getBalancesStream();
     _transactionsStream = _supabaseService.getTransactionsStream();
     loadCurrencyPreference();
+    // Start the SMS Listener for automated transaction logging[cite: 10]
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(seconds: 1), () {
+        SMSListenerService().startListening();
+      });
+    });
   }
 
   void refreshDashboard() {
@@ -685,6 +691,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
                         _showTransactionModal(existingTx: tx);
                       } else if (value == 'hide') {
                         await _supabaseService.hideTransaction(
+                          tx['id'].toString(),
+                        );
+                        refreshDashboard();
+                        widget.onTransactionChanged?.call();
+                      } else if (value == 'unhide') {
+                        await _supabaseService.unhideTransaction(
                           tx['id'].toString(),
                         );
                         refreshDashboard();

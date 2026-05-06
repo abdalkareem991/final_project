@@ -475,9 +475,7 @@ class SupabaseService {
             .gt('date', effectiveDate.toIso8601String())
             .limit(1);
 
-        final bool hasNewerTransaction = newerTransactions.isNotEmpty;
-
-        if (!hasNewerTransaction) {
+        if (newerTransactions.isEmpty) {
           newBalance = balanceAfter;
         }
       }
@@ -777,6 +775,20 @@ class SupabaseService {
         .eq('id', walletId);
 
     debugPrint("Wallet reversed: $walletId => $newBalance");
+  }
+
+  Future<void> unhideTransaction(String transactionId) async {
+    try {
+      await client
+          .from('transactions')
+          .update({'is_hidden': false})
+          .eq('id', transactionId);
+
+      debugPrint("Transaction unhidden: $transactionId");
+    } catch (e) {
+      debugPrint("Unhide transaction error: $e");
+      rethrow;
+    }
   }
 
   Future<void> detectAndMarkInternalTransfer({
@@ -1168,22 +1180,22 @@ class SupabaseService {
       final double amount = (aiData['amount'] as num).toDouble();
       final String type = aiData['type'] ?? 'Expense';
       final String bank = aiData['bank'] ?? senderId;
-
       final bool isCliq = aiData['is_cliq'] == true;
-      final String? counterparty = aiData['counterparty']?.toString();
       final String smsKind =
           aiData['sms_kind']?.toString() ?? 'Bank Transaction';
       final String? merchantName = aiData['merchant_name']?.toString();
+      final String? counterparty = aiData['counterparty']?.toString();
 
       final double? balanceAfter = (aiData['available_balance'] as num?)
           ?.toDouble();
-      DateTime? transactionDate;
 
+      DateTime? transactionDate;
       final smsTimestamp = aiData['sms_timestamp'];
 
       if (smsTimestamp is int && smsTimestamp > 0) {
         transactionDate = DateTime.fromMillisecondsSinceEpoch(smsTimestamp);
       }
+
       final int categoryId = await getAutoCategoryIdForSms(
         smsKind: smsKind,
         merchantName: merchantName,
@@ -1231,6 +1243,57 @@ class SupabaseService {
       debugPrint("SMS duplicate check error: $e");
       return true;
     }
+  }
+
+  Future<String> buildFinancialContextForAI() async {
+    final user = client.auth.currentUser;
+    if (user == null) return "No logged-in user.";
+
+    final profile = await getProfileData();
+    final wallets = await getWallets();
+    final summary = await getFilteredSummary('Month');
+
+    final transactions = await client
+        .from('transactions')
+        .select(
+          'amount, type, description, date, wallets(name), categories(name)',
+        )
+        .eq('user_id', user.id)
+        .eq('is_hidden', false)
+        .order('date', ascending: false)
+        .limit(10);
+
+    final walletsText = wallets
+        .map((w) {
+          return "- ${w.name}: ${w.balance.toStringAsFixed(2)} ${w.currency}, type: ${w.type}";
+        })
+        .join("\n");
+
+    final txText = (transactions as List)
+        .map((tx) {
+          final walletName = tx['wallets'] is Map
+              ? tx['wallets']['name']
+              : 'Unknown';
+          final categoryName = tx['categories'] is Map
+              ? tx['categories']['name']
+              : 'Uncategorized';
+
+          return "- ${tx['type']} ${tx['amount']} from $walletName, category $categoryName, description: ${tx['description']}";
+        })
+        .join("\n");
+
+    return """
+User name: ${profile.fullName}
+Total net worth: ${profile.totalNetWorth}
+Monthly income: ${summary['Income'] ?? 0}
+Monthly expenses: ${summary['Expense'] ?? 0}
+
+Wallets:
+$walletsText
+
+Recent transactions:
+$txText
+""";
   }
   // ===========================================================================
   // 9. REAL-TIME STREAMS (OPTIONAL ADDITIONS FOR UI UPDATES)
@@ -1311,5 +1374,98 @@ class SupabaseService {
             };
           }).toList();
         });
+  }
+  // ===========================================================================
+  //  10. AI CHAT HISTORY OPERATIONS
+  // ===========================================================================
+
+  Future<String> createAiChat({String title = 'New Chat'}) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    final inserted = await client
+        .from('ai_chats')
+        .insert({'user_id': user.id, 'title': title})
+        .select('id')
+        .single();
+
+    return inserted['id'] as String;
+  }
+
+  Future<List<Map<String, dynamic>>> getAiChats() async {
+    final user = client.auth.currentUser;
+    if (user == null) return [];
+
+    final response = await client
+        .from('ai_chats')
+        .select('id, title, created_at, updated_at')
+        .eq('user_id', user.id)
+        .order('updated_at', ascending: false);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  Future<List<Map<String, dynamic>>> getAiMessages(String chatId) async {
+    final user = client.auth.currentUser;
+    if (user == null) return [];
+
+    final response = await client
+        .from('ai_messages')
+        .select('id, text, is_ai, created_at')
+        .eq('user_id', user.id)
+        .eq('chat_id', chatId)
+        .order('created_at', ascending: true);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  Future<void> addAiMessage({
+    required String chatId,
+    required String text,
+    required bool isAi,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    await client.from('ai_messages').insert({
+      'chat_id': chatId,
+      'user_id': user.id,
+      'text': text,
+      'is_ai': isAi,
+    });
+
+    await client
+        .from('ai_chats')
+        .update({'updated_at': DateTime.now().toIso8601String()})
+        .eq('id', chatId)
+        .eq('user_id', user.id);
+  }
+
+  Future<void> updateAiChatTitle({
+    required String chatId,
+    required String title,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    await client
+        .from('ai_chats')
+        .update({
+          'title': title,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', chatId)
+        .eq('user_id', user.id);
+  }
+
+  Future<void> deleteAiChat(String chatId) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    await client
+        .from('ai_chats')
+        .delete()
+        .eq('id', chatId)
+        .eq('user_id', user.id);
   }
 }
