@@ -6,10 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:telephony/telephony.dart';
 
 import 'ai_service.dart';
+import 'notification_service.dart';
 import 'supabase_service.dart';
 
 class SMSListenerService {
-  // Singleton: prevents multiple timers from running at the same time.
   static final SMSListenerService _instance = SMSListenerService._internal();
 
   factory SMSListenerService() => _instance;
@@ -32,9 +32,9 @@ class SMSListenerService {
   static int lastProcessedCount = 0;
   static String lastSyncStatus = "Not started";
 
-  static const Duration _syncInterval = Duration(minutes: 30);
+  static const Duration _syncInterval = Duration(minutes: 2);
   static const Duration _networkCooldown = Duration(minutes: 2);
-  static const int _recentMessagesLimit = 5;
+  static const int _recentMessagesLimit = 10;
 
   Future<void> startListening() async {
     debugPrint("SMS Auto Sync STARTED");
@@ -44,16 +44,18 @@ class SMSListenerService {
 
     if (permission != true) {
       lastSyncStatus = "Permission denied";
-      debugPrint("SMS sync stopped: permission denied");
+
+      await NotificationService().showSyncErrorNotification(
+        "SMS permission is required to automate bank transactions.",
+      );
+
       return;
     }
 
     _smsSyncTimer?.cancel();
 
-    // Run once immediately.
     await syncNow();
 
-    // Then keep syncing periodically.
     _smsSyncTimer = Timer.periodic(_syncInterval, (_) async {
       await syncNow();
     });
@@ -73,7 +75,6 @@ class SMSListenerService {
       final diff = DateTime.now().difference(_lastNetworkErrorAt!);
       if (diff < _networkCooldown) {
         lastSyncStatus = "Offline";
-        debugPrint("SMS sync skipped: waiting after network error.");
         return;
       }
     }
@@ -111,9 +112,7 @@ class SMSListenerService {
 
           debugPrint("Messages found for $sender: ${messages.length}");
 
-          if (messages.isEmpty) {
-            continue;
-          }
+          if (messages.isEmpty) continue;
 
           final recentMessages = messages
               .take(_recentMessagesLimit)
@@ -155,9 +154,6 @@ class SMSListenerService {
 
             if (parsedData == null) {
               _ignoredInMemory.add(smsHash);
-              debugPrint(
-                "SMS ignored: unsupported or non-transaction message.",
-              );
               continue;
             }
 
@@ -193,11 +189,19 @@ class SMSListenerService {
           errorText.contains("Connection timed out")) {
         _lastNetworkErrorAt = DateTime.now();
         lastSyncStatus = "Offline";
-        debugPrint("SMS sync offline: network/DNS error.");
+
+        await NotificationService().showSyncErrorNotification(
+          "Could not sync bank SMS. Check your internet connection.",
+        );
       } else {
         lastSyncStatus = "Error";
-        debugPrint("SMS auto sync error: $e");
+
+        await NotificationService().showSyncErrorNotification(
+          "SMS automation failed. Please try again.",
+        );
       }
+
+      debugPrint("SMS auto sync error: $e");
     } finally {
       _isSyncing = false;
     }

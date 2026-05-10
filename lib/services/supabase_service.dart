@@ -869,6 +869,12 @@ class SupabaseService {
           })
           .inFilter('id', [newTransactionId, matchedId]);
 
+      await NotificationService().showInternalTransferNotification(
+        fromWallet: fromWalletName,
+        toWallet: toWalletName,
+        amount: amount,
+      );
+
       debugPrint("Internal transfer detected: $transferDescription");
       debugPrint("Internal transfer detected and linked.");
     } catch (e) {
@@ -1156,6 +1162,21 @@ class SupabaseService {
     }
   }
 
+  Future<String> getWalletNameById(String walletId) async {
+    try {
+      final wallet = await client
+          .from('wallets')
+          .select('name')
+          .eq('id', walletId)
+          .maybeSingle();
+
+      return wallet?['name']?.toString() ?? 'Unknown Account';
+    } catch (e) {
+      debugPrint("Get wallet name error: $e");
+      return 'Unknown Account';
+    }
+  }
+
   Future<void> processAutomatedTransaction(
     Map<String, dynamic> aiData,
     String senderId, {
@@ -1207,7 +1228,7 @@ class SupabaseService {
                 : "CliQ transfer to ${counterparty ?? 'Unknown receiver'}"
           : "$smsKind - $bank";
 
-      await createTransaction(
+      final String? transactionId = await createTransaction(
         walletId: walletId,
         amount: amount,
         type: type,
@@ -1219,6 +1240,37 @@ class SupabaseService {
         smsKind: smsKind,
         transactionDate: transactionDate,
       );
+
+      if (transactionId == null) {
+        debugPrint("SMS transaction was not created, notification skipped.");
+        return;
+      }
+
+      final String walletName = await getWalletNameById(walletId);
+
+      // Send notification only after the transaction is saved successfully.
+      try {
+        final savedTransaction = await client
+            .from('transactions')
+            .select('is_internal_transfer')
+            .eq('id', transactionId)
+            .maybeSingle();
+
+        final bool isInternalTransfer =
+            savedTransaction?['is_internal_transfer'] == true;
+
+        if (!isInternalTransfer) {
+          await NotificationService().showTransactionNotification(
+            type: type,
+            amount: amount,
+            walletName: walletName,
+            description: description,
+            balanceAfter: balanceAfter,
+          );
+        }
+      } catch (e) {
+        debugPrint("Transaction notification error: $e");
+      }
 
       debugPrint("SMS transaction added to dashboard successfully.");
     } catch (e) {

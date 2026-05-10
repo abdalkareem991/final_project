@@ -27,7 +27,7 @@ void main() async {
   );
 
   // 4. NEW: Start the SMS Monitoring engine
- 
+  // SMS automation starts after user login from Settings or Dashboard.
   runApp(const FinancialMindApp());
 }
 

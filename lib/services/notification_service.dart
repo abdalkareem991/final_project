@@ -6,40 +6,61 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+class AppNotificationItem {
+  final String id;
+  final String title;
+  final String body;
+  final String type;
+  final DateTime createdAt;
+  final bool isRead;
+
+  AppNotificationItem({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.type,
+    required this.createdAt,
+    this.isRead = false,
+  });
+
+  AppNotificationItem copyWith({bool? isRead}) {
+    return AppNotificationItem(
+      id: id,
+      title: title,
+      body: body,
+      type: type,
+      createdAt: createdAt,
+      isRead: isRead ?? this.isRead,
+    );
+  }
+}
+
 class NotificationService {
-  // Singleton pattern to ensure only one instance of the service exists
   static final NotificationService _instance = NotificationService._internal();
+
   factory NotificationService() => _instance;
+
   NotificationService._internal();
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
-  /// Logic: Checks if notifications are globally enabled in settings
+  final ValueNotifier<List<AppNotificationItem>> recentNotifications =
+      ValueNotifier<List<AppNotificationItem>>([]);
+
+  final ValueNotifier<int> unreadCount = ValueNotifier<int>(0);
+
+  static const int _maxRecentNotifications = 20;
+
   Future<bool> get isNotificationEnabled async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('notifications_enabled') ?? true;
   }
 
-  /// Logic: Cancels a specific scheduled notification using its unique ID
-  Future<void> cancelNotification(int id) async {
-    await flutterLocalNotificationsPlugin.cancel(id);
-    debugPrint("Notification with ID $id cancelled.");
-  }
-
-  /// Logic: Clears all scheduled notifications (Useful for sign-out or bulk delete)
-  Future<void> cancelAllNotifications() async {
-    await flutterLocalNotificationsPlugin.cancelAll();
-    debugPrint("All notifications cancelled.");
-  }
-
-  /// Logic: Initializes the notification settings for both Android and iOS
   Future<void> initNotification() async {
-    // Android settings: Uses the app launcher icon
     const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+        AndroidInitializationSettings('@mipmap/launcher_icon');
 
-    // iOS settings: Requests permissions for alerts, badges, and sounds
     const DarwinInitializationSettings initializationSettingsIOS =
         DarwinInitializationSettings(
           requestAlertPermission: true,
@@ -55,33 +76,150 @@ class NotificationService {
 
     await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-    // Required to handle scheduled notifications based on timezones
+    final androidImplementation = flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+
+    await androidImplementation?.requestNotificationsPermission();
+
     tz.initializeTimeZones();
   }
 
-  /// UI Logic: Displays an immediate notification (Used for test alerts)
-  Future<void> showInstantNotification(String title, String body) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+  int _generateNotificationId() {
+    return DateTime.now().millisecondsSinceEpoch.remainder(2147483647);
+  }
+
+  void _addToNotificationCenter({
+    required String title,
+    required String body,
+    required String type,
+  }) {
+    final item = AppNotificationItem(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      title: title,
+      body: body,
+      type: type,
+      createdAt: DateTime.now(),
+      isRead: false,
+    );
+
+    final updatedList = [
+      item,
+      ...recentNotifications.value,
+    ].take(_maxRecentNotifications).toList();
+
+    recentNotifications.value = updatedList;
+    unreadCount.value = updatedList.where((item) => !item.isRead).length;
+  }
+
+  void markAllAsRead() {
+    final updatedList = recentNotifications.value
+        .map((item) => item.copyWith(isRead: true))
+        .toList();
+
+    recentNotifications.value = updatedList;
+    unreadCount.value = 0;
+  }
+
+  void clearNotificationCenter() {
+    recentNotifications.value = [];
+    unreadCount.value = 0;
+  }
+
+  Future<void> cancelNotification(int id) async {
+    await flutterLocalNotificationsPlugin.cancel(id);
+    debugPrint("Notification with ID $id cancelled.");
+  }
+
+  Future<void> cancelAllNotifications() async {
+    await flutterLocalNotificationsPlugin.cancelAll();
+    debugPrint("All notifications cancelled.");
+  }
+
+  Future<void> showInstantNotification(
+    String title,
+    String body, {
+    String type = 'general',
+  }) async {
+    _addToNotificationCenter(title: title, body: body, type: type);
+
+    final isEnabled = await isNotificationEnabled;
+    if (!isEnabled) return;
+
+    const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-          'finmind_channel_id',
+          'finmind_general_channel',
           'FinMind Notifications',
+          channelDescription: 'General FinMind app notifications',
           importance: Importance.max,
           priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+          styleInformation: BigTextStyleInformation(''),
         );
 
-    const NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidPlatformChannelSpecifics,
+    const NotificationDetails platformDetails = NotificationDetails(
+      android: androidDetails,
     );
 
     await flutterLocalNotificationsPlugin.show(
-      0,
+      _generateNotificationId(),
       title,
       body,
-      platformChannelSpecifics,
+      platformDetails,
     );
   }
 
-  /// Logic: Schedules a notification for a specific task due date
+  Future<void> showTransactionNotification({
+    required String type,
+    required double amount,
+    required String walletName,
+    String? description,
+    double? balanceAfter,
+  }) async {
+    final bool isIncome = type.toLowerCase() == 'income';
+
+    final String title = isIncome
+        ? "Income transaction recorded"
+        : "Expense transaction recorded";
+
+    final String amountText = "JOD ${amount.toStringAsFixed(3)}";
+
+    final String body = balanceAfter == null
+        ? "$walletName • $amountText"
+        : "$walletName • $amountText • Balance: ${balanceAfter.toStringAsFixed(3)} JD";
+
+    await showInstantNotification(
+      title,
+      description == null || description.isEmpty ? body : "$description\n$body",
+      type: 'transaction',
+    );
+  }
+
+  Future<void> showInternalTransferNotification({
+    required String fromWallet,
+    required String toWallet,
+    required double amount,
+  }) async {
+    await showInstantNotification(
+      "Transfer recorded successfully",
+      "$fromWallet → $toWallet\nJOD ${amount.toStringAsFixed(3)} • Category: Transfer • Balance updated",
+      type: 'transfer',
+    );
+  }
+
+  Future<void> showSyncErrorNotification(String message) async {
+    await showInstantNotification("SMS sync issue", message, type: 'error');
+  }
+
+  Future<void> showTaskReminderNotification({
+    required String title,
+    required String body,
+  }) async {
+    await showInstantNotification(title, body, type: 'task');
+  }
+
   Future<void> scheduleNotification(
     int id,
     String title,
@@ -89,10 +227,7 @@ class NotificationService {
     DateTime scheduledDate,
   ) async {
     final isEnabled = await isNotificationEnabled;
-    if (!isEnabled) {
-      // Do not schedule if globally disabled
-      return;
-    }
+    if (!isEnabled) return;
 
     await flutterLocalNotificationsPlugin.zonedSchedule(
       id,
@@ -103,7 +238,11 @@ class NotificationService {
         android: AndroidNotificationDetails(
           'finmind_tasks_channel',
           'Task Reminders',
-          importance: Importance.high,
+          channelDescription: 'Financial task reminders',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,

@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/category_model.dart';
 import '../models/wallet_model.dart';
+import '../services/notification_service.dart';
 import '../services/sms_listener_service.dart';
 import '../services/supabase_service.dart';
 import 'my_account_screen.dart';
@@ -109,7 +110,7 @@ class _DashboardMainContent extends StatefulWidget {
 
 class _DashboardMainContentState extends State<_DashboardMainContent> {
   final _supabaseService = SupabaseService();
-
+  final NotificationService _notificationService = NotificationService();
   // STREAMS INTEGRATION: Replaced Futures with Streams for real-time reactivity
   late Stream<Map<String, double>> _balancesStream;
   late Stream<List<Map<String, dynamic>>> _transactionsStream;
@@ -200,6 +201,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
     return "$hour12:$minute $period";
   }
 
+  String _formatNotificationTime(DateTime date) {
+    final localDate = date.toLocal();
+
+    final int hour12 = localDate.hour % 12 == 0 ? 12 : localDate.hour % 12;
+    final String minute = localDate.minute.toString().padLeft(2, '0');
+    final String period = localDate.hour >= 12 ? 'PM' : 'AM';
+
+    return "$hour12:$minute $period";
+  }
+
   Widget _buildSmsSyncStatusLine() {
     final lastSync = SMSListenerService.lastSyncTime;
     final status = SMSListenerService.lastSyncStatus;
@@ -272,7 +283,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
           "FinMind",
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
-        actions: [_buildAIChip(context), const SizedBox(width: 15)],
+        actions: [
+          _buildNotificationButton(),
+          const SizedBox(width: 8),
+          _buildAIChip(context),
+          const SizedBox(width: 15),
+        ],
       ),
       body: RefreshIndicator(
         color: _accentGreen,
@@ -492,6 +508,191 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
       ),
     ),
   );
+  Widget _buildNotificationButton() {
+    return ValueListenableBuilder<int>(
+      valueListenable: _notificationService.unreadCount,
+      builder: (context, count, _) {
+        return PopupMenuButton<String>(
+          color: _cardColor,
+          offset: const Offset(0, 45),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          onOpened: () {
+            _notificationService.markAllAsRead();
+          },
+          itemBuilder: (context) {
+            final notifications =
+                _notificationService.recentNotifications.value;
+
+            if (notifications.isEmpty) {
+              return [
+                const PopupMenuItem<String>(
+                  enabled: false,
+                  child: SizedBox(
+                    width: 280,
+                    child: Text(
+                      "No notifications yet.",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                ),
+              ];
+            }
+
+            return [
+              PopupMenuItem<String>(
+                enabled: false,
+                child: SizedBox(
+                  width: 300,
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          "Notifications",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _notificationService.clearNotificationCenter();
+                        },
+                        child: const Text(
+                          "Clear",
+                          style: TextStyle(color: _accentGreen),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              ...notifications.map((notification) {
+                return PopupMenuItem<String>(
+                  enabled: false,
+                  child: SizedBox(
+                    width: 300,
+                    child: _buildNotificationMenuItem(notification),
+                  ),
+                );
+              }),
+            ];
+          },
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: _accentGreen.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: _accentGreen.withOpacity(0.3)),
+                ),
+                child: const Icon(
+                  Icons.notifications_none,
+                  color: _accentGreen,
+                  size: 20,
+                ),
+              ),
+              if (count > 0)
+                Positioned(
+                  right: -3,
+                  top: -3,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      count > 9 ? "9+" : count.toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildNotificationMenuItem(AppNotificationItem notification) {
+    IconData icon;
+    Color color;
+
+    switch (notification.type) {
+      case 'transaction':
+        icon = Icons.receipt_long;
+        color = _accentGreen;
+        break;
+      case 'transfer':
+        icon = Icons.swap_horiz;
+        color = _transferBlue;
+        break;
+      case 'error':
+        icon = Icons.error_outline;
+        color = Colors.redAccent;
+        break;
+      default:
+        icon = Icons.notifications_none;
+        color = Colors.grey;
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: color, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                notification.title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 3),
+              Text(
+                notification.body,
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _formatNotificationTime(notification.createdAt),
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildRecentTransactionsHeader() => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,

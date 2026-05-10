@@ -1137,6 +1137,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
                       isRecurring: isRecurring,
                       linkedWalletId: selectedWalletId,
                       amount: double.tryParse(amountController.text) ?? 0.0,
+                      hasNotification:
+                          enableNotification && notificationTime != null,
                     );
 
                     final insertedTask = await _supabaseService.addTask(
@@ -1159,6 +1161,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                           insertedTask.title,
                           scheduledDate,
                         );
+                        debugPrint(
+                          "Task notification scheduled at: $scheduledDate",
+                        ); // Update task in Supabase to indicate it has a notification
                         await _supabaseService.updateTaskNotificationStatus(
                           insertedTask.id,
                           true,
