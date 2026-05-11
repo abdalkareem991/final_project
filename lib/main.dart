@@ -1,7 +1,6 @@
 // lib/main.dart
 
 import 'package:final_project/services/notification_service.dart';
-// NEW: Imported for automation
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -26,7 +25,7 @@ void main() async {
     anonKey: 'sb_publishable_GaooL_VcN7UWg2HgPC2z9g_7v3Zb_en',
   );
 
-  // 4. NEW: Start the SMS Monitoring engine
+  // 4. SMS automation is started after login from Dashboard or Settings.
   // SMS automation starts after user login from Settings or Dashboard.
   runApp(const FinancialMindApp());
 }

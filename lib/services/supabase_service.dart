@@ -493,6 +493,7 @@ class SupabaseService {
           walletId: walletId,
           amount: amount,
           type: type,
+          transactionDate: effectiveDate,
         );
       }
 
@@ -635,8 +636,8 @@ class SupabaseService {
       final transferGroupId =
           "manual_transfer_${DateTime.now().millisecondsSinceEpoch}";
 
-      final categories = await getCategories();
-      final int categoryId = categories.isNotEmpty ? categories.first.id : 1;
+      final int categoryId =
+          await getOrCreateTransferCategoryId(); // Ensure the transfer category exists
 
       await createTransaction(
         walletId: fromWalletId,
@@ -796,6 +797,7 @@ class SupabaseService {
     required String walletId,
     required double amount,
     required String type,
+    required DateTime transactionDate,
   }) async {
     try {
       final user = client.auth.currentUser;
@@ -805,9 +807,13 @@ class SupabaseService {
           ? 'Expense'
           : 'Income';
 
-      final now = DateTime.now();
-      final windowStart = now.subtract(const Duration(minutes: 10));
-
+      final windowStart = transactionDate.subtract(
+        const Duration(minutes: 10),
+      ); // 20-minute window to find matching transaction
+      final windowEnd = transactionDate.add(
+        const Duration(minutes: 10),
+      ); // This accounts for slight delays in transaction recording and ensures we capture the correct match even if timestamps aren't perfectly aligned.
+      // Debugging logs for internal transfer detection
       final matches = await client
           .from('transactions')
           .select('id, wallet_id, amount, type, date')
@@ -816,6 +822,7 @@ class SupabaseService {
           .eq('amount', amount)
           .neq('wallet_id', walletId)
           .gte('date', windowStart.toIso8601String())
+          .lte('date', windowEnd.toIso8601String())
           .order('date', ascending: false)
           .limit(1);
 

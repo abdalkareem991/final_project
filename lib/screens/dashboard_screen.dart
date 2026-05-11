@@ -229,8 +229,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
 
         await SMSListenerService().syncNow();
 
-        refreshDashboard();
-
         if (mounted) {
           setState(() {});
         }

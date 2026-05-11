@@ -25,6 +25,7 @@ class SMSListenerService {
   final Set<String> _processedInMemory = {};
   final Set<String> _ignoredInMemory = {};
 
+  bool _isStarted = false;
   bool _isSyncing = false;
   DateTime? _lastNetworkErrorAt;
 
@@ -37,6 +38,13 @@ class SMSListenerService {
   static const int _recentMessagesLimit = 10;
 
   Future<void> startListening() async {
+    if (_isStarted && _smsSyncTimer != null) {
+      debugPrint("SMS Auto Sync already running.");
+      return;
+    }
+
+    _isStarted = true;
+
     debugPrint("SMS Auto Sync STARTED");
 
     final bool? permission = await telephony.requestPhoneAndSmsPermissions;
@@ -63,6 +71,26 @@ class SMSListenerService {
 
   Future<void> syncNow() async {
     await _syncLatestBankSms();
+  }
+
+  String _stableSmsHash({
+    required String sender,
+    required int smsDate,
+    required String body,
+  }) {
+    int hash = 0;
+
+    for (int i = 0; i < body.length; i++) {
+      hash = 0x1fffffff & (hash + body.codeUnitAt(i));
+      hash = 0x1fffffff & (hash + ((0x0007ffff & hash) << 10));
+      hash = hash ^ (hash >> 6);
+    }
+
+    hash = 0x1fffffff & (hash + ((0x03ffffff & hash) << 3));
+    hash = hash ^ (hash >> 11);
+    hash = 0x1fffffff & (hash + ((0x00003fff & hash) << 15));
+
+    return "${sender.trim().toLowerCase()}_${smsDate}_$hash";
   }
 
   Future<void> _syncLatestBankSms() async {
@@ -131,8 +159,11 @@ class SMSListenerService {
               continue;
             }
 
-            final String smsHash =
-                "${sender}_${smsDate}_${normalizedBody.hashCode}";
+            final String smsHash = _stableSmsHash(
+              sender: sender,
+              smsDate: smsDate,
+              body: normalizedBody,
+            );
 
             if (_processedInMemory.contains(smsHash) ||
                 _ignoredInMemory.contains(smsHash)) {
@@ -208,8 +239,10 @@ class SMSListenerService {
   }
 
   void stopListening() {
+    // Call this method when user logs out or disables SMS automation
     _smsSyncTimer?.cancel();
     _smsSyncTimer = null;
+    _isStarted = false;
     _isSyncing = false;
     lastSyncStatus = "Stopped";
     debugPrint("SMS Auto Sync stopped.");

@@ -84,6 +84,7 @@ class NotificationService {
     await androidImplementation?.requestNotificationsPermission();
 
     tz.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('Asia/Amman'));
   }
 
   int _generateNotificationId() {
@@ -147,7 +148,7 @@ class NotificationService {
     final isEnabled = await isNotificationEnabled;
     if (!isEnabled) return;
 
-    const AndroidNotificationDetails androidDetails =
+    final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
           'finmind_general_channel',
           'FinMind Notifications',
@@ -156,10 +157,10 @@ class NotificationService {
           priority: Priority.high,
           playSound: true,
           enableVibration: true,
-          styleInformation: BigTextStyleInformation(''),
+          styleInformation: BigTextStyleInformation(body),
         );
 
-    const NotificationDetails platformDetails = NotificationDetails(
+    final NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
     );
 
