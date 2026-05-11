@@ -108,7 +108,8 @@ class _DashboardMainContent extends StatefulWidget {
   State<_DashboardMainContent> createState() => _DashboardMainContentState();
 }
 
-class _DashboardMainContentState extends State<_DashboardMainContent> {
+class _DashboardMainContentState extends State<_DashboardMainContent>
+    with WidgetsBindingObserver {
   final _supabaseService = SupabaseService();
   final NotificationService _notificationService = NotificationService();
   // STREAMS INTEGRATION: Replaced Futures with Streams for real-time reactivity
@@ -130,7 +131,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
   @override
   void initState() {
     super.initState();
-    // Logic: Initialize Real-time Data Streams from Supabase[cite: 9]
+    WidgetsBinding.instance.addObserver(this);
+    // Initialize streams for live updates on balances and transactions
     _balancesStream = _supabaseService.getBalancesStream();
     _transactionsStream = _supabaseService.getTransactionsStream();
     loadCurrencyPreference();
@@ -140,6 +142,25 @@ class _DashboardMainContentState extends State<_DashboardMainContent> {
         SMSListenerService().startListening();
       });
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // debugPrint("App resumed. Running automatic SMS sync.");
+
+      SMSListenerService().startListening();
+
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   void refreshDashboard() {

@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <application
-        android:label="final_project"
+        android:label="FinancialMind"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         

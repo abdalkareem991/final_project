@@ -159,11 +159,19 @@ class NotificationService {
           enableVibration: true,
           styleInformation: BigTextStyleInformation(body),
         );
-
+    await NotificationService().showInstantNotification(
+      "Test Notification",
+      "If you see this, instant notifications work.",
+    );
     final NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
     );
-
+    await NotificationService().scheduleNotification(
+      999999,
+      "FinMind Task Reminder",
+      "Test reminder after one minute",
+      DateTime.now().add(const Duration(minutes: 1)),
+    );
     await flutterLocalNotificationsPlugin.show(
       _generateNotificationId(),
       title,
@@ -228,13 +236,34 @@ class NotificationService {
     DateTime scheduledDate,
   ) async {
     final isEnabled = await isNotificationEnabled;
-    if (!isEnabled) return;
+
+    debugPrint("Notifications enabled: $isEnabled");
+    debugPrint("Requested schedule time: $scheduledDate");
+    debugPrint("Current time: ${DateTime.now()}");
+
+    if (!isEnabled) {
+      debugPrint(
+        "Notification not scheduled because notifications are disabled.",
+      );
+      return;
+    }
+
+    if (!scheduledDate.isAfter(DateTime.now())) {
+      debugPrint(
+        "Notification not scheduled because selected time is in the past.",
+      );
+      return;
+    }
+
+    final scheduledTzDate = tz.TZDateTime.from(scheduledDate, tz.local);
+
+    debugPrint("Notification scheduled TZ time: $scheduledTzDate");
 
     await flutterLocalNotificationsPlugin.zonedSchedule(
       id,
       title,
       body,
-      tz.TZDateTime.from(scheduledDate, tz.local),
+      scheduledTzDate,
       const NotificationDetails(
         android: AndroidNotificationDetails(
           'finmind_tasks_channel',
@@ -250,5 +279,7 @@ class NotificationService {
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
     );
+
+    debugPrint("Task notification scheduled successfully.");
   }
 }

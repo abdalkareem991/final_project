@@ -1126,11 +1126,23 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     final user = _supabaseService.client.auth.currentUser;
                     if (user == null) return;
 
+                    DateTime taskDueDate = startDate;
+
+                    if (enableNotification && notificationTime != null) {
+                      taskDueDate = DateTime(
+                        startDate.year,
+                        startDate.month,
+                        startDate.day,
+                        notificationTime!.hour,
+                        notificationTime!.minute,
+                      );
+                    }
+
                     final newTask = TaskModel(
                       id: '',
                       title: titleController.text.trim(),
                       description: '',
-                      dueDate: startDate,
+                      dueDate: taskDueDate,
                       endDate: endDate,
                       priority: priority,
                       userId: user.id,
@@ -1146,27 +1158,25 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     );
 
                     if (enableNotification && notificationTime != null) {
-                      final scheduledDate = DateTime(
-                        startDate.year,
-                        startDate.month,
-                        startDate.day,
-                        notificationTime!.hour,
-                        notificationTime!.minute,
-                      );
-
-                      if (scheduledDate.isAfter(DateTime.now())) {
+                      if (taskDueDate.isAfter(DateTime.now())) {
                         await NotificationService().scheduleNotification(
                           insertedTask.id.hashCode,
                           'FinMind Task Reminder',
                           insertedTask.title,
-                          scheduledDate,
+                          taskDueDate,
                         );
+
                         debugPrint(
-                          "Task notification scheduled at: $scheduledDate",
-                        ); // Update task in Supabase to indicate it has a notification
+                          "Task notification scheduled at: $taskDueDate",
+                        );
+
                         await _supabaseService.updateTaskNotificationStatus(
                           insertedTask.id,
                           true,
+                        );
+                      } else {
+                        debugPrint(
+                          "Task notification not scheduled because time is in the past.",
                         );
                       }
                     }
@@ -1474,23 +1484,10 @@ class _TodoListScreenState extends State<TodoListScreen> {
               ElevatedButton(
                 onPressed: () async {
                   if (titleController.text.isNotEmpty) {
-                    final updatedTask = TaskModel(
-                      id: existingTask.id,
-                      title: titleController.text.trim(),
-                      description: existingTask.description,
-                      dueDate: startDate,
-                      endDate: endDate,
-                      priority: priority,
-                      isCompleted: existingTask.isCompleted,
-                      userId: existingTask.userId,
-                      isRecurring: isRecurring,
-                      linkedWalletId: selectedWalletId,
-                      amount: double.tryParse(amountController.text) ?? 0.0,
-                    );
+                    DateTime updatedDueDate = startDate;
 
-                    DateTime? scheduledAlertDate;
                     if (enableNotification && notificationTime != null) {
-                      scheduledAlertDate = DateTime(
+                      updatedDueDate = DateTime(
                         startDate.year,
                         startDate.month,
                         startDate.day,
@@ -1499,14 +1496,35 @@ class _TodoListScreenState extends State<TodoListScreen> {
                       );
                     }
 
+                    final updatedTask = TaskModel(
+                      id: existingTask.id,
+                      title: titleController.text.trim(),
+                      description: existingTask.description,
+                      dueDate: updatedDueDate,
+                      endDate: endDate,
+                      priority: priority,
+                      isCompleted: existingTask.isCompleted,
+                      userId: existingTask.userId,
+                      isRecurring: isRecurring,
+                      linkedWalletId: selectedWalletId,
+                      amount: double.tryParse(amountController.text) ?? 0.0,
+                      hasNotification:
+                          enableNotification && notificationTime != null,
+                    );
+
                     await _supabaseService.updateTask(
                       updatedTask,
-                      rescheduleAlert: enableNotification,
-                      newAlertTime: scheduledAlertDate,
+                      rescheduleAlert:
+                          enableNotification && notificationTime != null,
+                      newAlertTime:
+                          enableNotification && notificationTime != null
+                          ? updatedDueDate
+                          : null,
                     );
+
                     await _supabaseService.updateTaskNotificationStatus(
                       existingTask.id,
-                      enableNotification,
+                      enableNotification && notificationTime != null,
                     );
 
                     if (!mounted) return;

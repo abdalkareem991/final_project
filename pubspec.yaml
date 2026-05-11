@@ -42,7 +42,7 @@ flutter:
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
-  image_path: "assets/images/LOGO1.png"
+  image_path: "assets/images/LOGOicon.png"
   min_sdk_android: 21
 
 flutter_native_splash:

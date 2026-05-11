@@ -105,6 +105,23 @@ class SupabaseService {
     }
   }
 
+  Future<void> updateProfileNetWorth() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return;
+
+      final total = await calculateTotalNetWorth();
+
+      await client
+          .from('profiles')
+          .update({'total_net_worth': total})
+          .eq('id', user.id);
+
+      debugPrint("Profile net worth updated: $total");
+    } catch (e) {
+      debugPrint("Update profile net worth error: $e");
+    }
+  }
   // ===========================================================================
   // 3. WALLET OPERATIONS
   // ===========================================================================
@@ -129,6 +146,7 @@ class SupabaseService {
       debugPrint("Mode: ${wallet.accountMode}");
       debugPrint("SMS Sender: ${wallet.smsSenderId}");
       debugPrint("Monitoring: ${wallet.isActiveMonitoring}");
+      await updateProfileNetWorth();
     } catch (error) {
       debugPrint('Add Wallet Error: $error');
       rethrow;
@@ -211,6 +229,7 @@ class SupabaseService {
 
       await client.from('wallets').update(updateData).eq('id', wallet.id);
 
+      await updateProfileNetWorth();
       debugPrint("Wallet updated: ${wallet.name}");
       debugPrint("Mode: ${wallet.accountMode}");
       debugPrint("SMS Sender: ${wallet.smsSenderId}");
@@ -444,7 +463,7 @@ class SupabaseService {
             'transfer_group_id': transferGroupId,
             'merchant_name': merchantName,
             'sms_kind': smsKind,
-            'date': effectiveDate.toIso8601String(),
+            'date': effectiveDate.toUtc().toIso8601String(),
           })
           .select('id')
           .single();
@@ -472,7 +491,7 @@ class SupabaseService {
             .from('transactions')
             .select('id')
             .eq('wallet_id', walletId)
-            .gt('date', effectiveDate.toIso8601String())
+            .gt('date', effectiveDate.toUtc().toIso8601String())
             .limit(1);
 
         if (newerTransactions.isEmpty) {
@@ -821,8 +840,8 @@ class SupabaseService {
           .eq('type', oppositeType)
           .eq('amount', amount)
           .neq('wallet_id', walletId)
-          .gte('date', windowStart.toIso8601String())
-          .lte('date', windowEnd.toIso8601String())
+          .gte('date', windowStart.toUtc().toIso8601String())
+          .lte('date', windowEnd.toUtc().toIso8601String())
           .order('date', ascending: false)
           .limit(1);
 

@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:telephony/telephony.dart';
 
 import 'ai_service.dart';
-import 'notification_service.dart';
 import 'supabase_service.dart';
 
 class SMSListenerService {
@@ -39,24 +38,16 @@ class SMSListenerService {
 
   Future<void> startListening() async {
     if (_isStarted && _smsSyncTimer != null) {
-      debugPrint("SMS Auto Sync already running.");
       return;
     }
-
     _isStarted = true;
 
-    debugPrint("SMS Auto Sync STARTED");
-
     final bool? permission = await telephony.requestPhoneAndSmsPermissions;
-    debugPrint("SMS permission: $permission");
+    // debugPrint("SMS permission: $permission");
 
     if (permission != true) {
+      _isStarted = false;
       lastSyncStatus = "Permission denied";
-
-      await NotificationService().showSyncErrorNotification(
-        "SMS permission is required to automate bank transactions.",
-      );
-
       return;
     }
 
@@ -93,6 +84,56 @@ class SMSListenerService {
     return "${sender.trim().toLowerCase()}_${smsDate}_$hash";
   }
 
+  List<String> _senderCandidates(String sender) {
+    final trimmed = sender.trim();
+    final noSpaces = trimmed.replaceAll(' ', '');
+
+    return {
+      trimmed,
+      noSpaces,
+      trimmed.toLowerCase(),
+      noSpaces.toLowerCase(),
+      trimmed.toUpperCase(),
+      noSpaces.toUpperCase(),
+    }.where((value) => value.isNotEmpty).toList();
+  }
+
+  Future<List<SmsMessage>> _getMessagesForSender(String sender) async {
+    final Map<String, SmsMessage> uniqueMessages = {};
+
+    for (final candidate in _senderCandidates(sender)) {
+      try {
+        final messages = await telephony.getInboxSms(
+          columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+          filter: SmsFilter.where(SmsColumn.ADDRESS).equals(candidate),
+          sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+        );
+
+        for (final message in messages) {
+          final key =
+              "${message.address}_${message.date}_${message.body?.hashCode}";
+          uniqueMessages[key] = message;
+        }
+
+        if (messages.isNotEmpty) {
+          debugPrint("Messages found using sender candidate: $candidate");
+        }
+      } catch (e) {
+        debugPrint("Sender candidate failed: $candidate => $e");
+      }
+    }
+
+    final result = uniqueMessages.values.toList();
+
+    result.sort((a, b) {
+      final aDate = a.date ?? 0;
+      final bDate = b.date ?? 0;
+      return bDate.compareTo(aDate);
+    });
+
+    return result;
+  }
+
   Future<void> _syncLatestBankSms() async {
     if (_isSyncing) {
       debugPrint("SMS sync skipped: previous sync still running.");
@@ -113,7 +154,7 @@ class SMSListenerService {
     int processedCount = 0;
 
     try {
-      debugPrint("SMS SYNC TICK STARTED");
+      // debugPrint("SMS SYNC TICK STARTED");
 
       final wallets = await _supabaseService.getWallets();
 
@@ -132,11 +173,9 @@ class SMSListenerService {
         try {
           debugPrint("Checking SMS sender: $sender");
 
-          final messages = await telephony.getInboxSms(
-            columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
-            filter: SmsFilter.where(SmsColumn.ADDRESS).equals(sender),
-            sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
-          );
+          final messages = await _getMessagesForSender(
+            sender,
+          ); // This method now handles multiple sender candidates and deduplicates messages
 
           debugPrint("Messages found for $sender: ${messages.length}");
 
@@ -221,30 +260,24 @@ class SMSListenerService {
         _lastNetworkErrorAt = DateTime.now();
         lastSyncStatus = "Offline";
 
-        await NotificationService().showSyncErrorNotification(
-          "Could not sync bank SMS. Check your internet connection.",
-        );
+        debugPrint("SMS sync offline: $e");
       } else {
         lastSyncStatus = "Error";
 
-        await NotificationService().showSyncErrorNotification(
-          "SMS automation failed. Please try again.",
-        );
+        debugPrint("SMS auto sync error: $e");
       }
-
-      debugPrint("SMS auto sync error: $e");
     } finally {
       _isSyncing = false;
     }
   }
 
   void stopListening() {
-    // Call this method when user logs out or disables SMS automation
+    // Call this method when the app is closing or when you want to stop the service
     _smsSyncTimer?.cancel();
     _smsSyncTimer = null;
     _isStarted = false;
     _isSyncing = false;
     lastSyncStatus = "Stopped";
-    debugPrint("SMS Auto Sync stopped.");
+    // debugPrint("SMS Auto Sync stopped.");
   }
 }

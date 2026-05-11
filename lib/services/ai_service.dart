@@ -163,16 +163,12 @@ class AIService {
   // Detects Orange Money transaction type.
   String? _detectOrangeMoneyType(String text) {
     if (text.contains('تم استقبال حواله ماليه') ||
-        text.contains('تم استقبال حوالة مالية') ||
-        text.contains('الى محفظتك') ||
-        text.contains('إلى محفظتك')) {
+        text.contains('الى محفظتك')) {
       return 'Income';
     }
 
     if (text.contains('تمت عمليه التحويل المالي الى المحفظه') ||
-        text.contains('تمت عملية التحويل المالي الى المحفظة') ||
-        text.contains('الى المحفظه') ||
-        text.contains('إلى المحفظة')) {
+        text.contains('الى المحفظه')) {
       return 'Expense';
     }
 
@@ -317,13 +313,12 @@ class AIService {
 
   // Detects Orange Money-specific SMS kind.
   String _detectOrangeMoneySmsKind(String text) {
-    if (text.contains('تم استقبال حواله ماليه') ||
-        text.contains('تم استقبال حوالة مالية')) {
+    if (text.contains('تم استقبال حواله ماليه')) {
       return 'Orange Money Transfer In';
     }
 
     if (text.contains('تمت عمليه التحويل المالي الى المحفظه') ||
-        text.contains('تمت عملية التحويل المالي الى المحفظة')) {
+        text.contains('الى المحفظه')) {
       return 'Orange Money Transfer Out';
     }
 
