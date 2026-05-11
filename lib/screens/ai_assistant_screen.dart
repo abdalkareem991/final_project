@@ -1,5 +1,7 @@
 // lib/screens/ai_assistant_screen.dart
 
+// ignore_for_file: deprecated_member_use
+
 import 'package:flutter/material.dart';
 
 import '../services/ai_service.dart';
@@ -40,7 +42,6 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
   static const Color _aiChatColor = Color(0xFF111D1D);
-  static const Color _cardColor = Color(0xFF111D1D);
 
   @override
   void initState() {
@@ -57,16 +58,31 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
 
   Future<void> _initializeChatScreen() async {
     await _loadUserName();
+
+    if (!mounted) return;
+
     await _loadChats();
+
+    if (!mounted) return;
+
     _startNewChatLocally();
   }
 
   Future<void> _loadUserName() async {
     try {
       final profile = await _supabaseService.getProfileData();
-      _userName = profile.fullName.isNotEmpty ? profile.fullName : "User";
-    } catch (_) {
-      _userName = "User";
+
+      if (!mounted) return;
+
+      setState(() {
+        _userName = profile.fullName.isNotEmpty ? profile.fullName : "User";
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _userName = "User";
+      });
     }
   }
 
@@ -76,7 +92,11 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
 
   Future<void> _loadChats() async {
     try {
-      setState(() => _isLoadingChats = true);
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingChats = true;
+      });
 
       final chats = await _supabaseService.getAiChats();
 
@@ -86,15 +106,23 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
         _chats
           ..clear()
           ..addAll(chats);
+
         _isLoadingChats = false;
       });
     } catch (e) {
+      debugPrint("Load AI chats error: $e");
+
       if (!mounted) return;
-      setState(() => _isLoadingChats = false);
+
+      setState(() {
+        _isLoadingChats = false;
+      });
     }
   }
 
   void _startNewChatLocally() {
+    if (!mounted) return;
+
     setState(() {
       _currentChatId = null;
       _messages
@@ -104,12 +132,15 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
   }
 
   Future<String> _ensureCurrentChat(String firstUserMessage) async {
-    if (_currentChatId != null) return _currentChatId!;
+    if (_currentChatId != null) {
+      return _currentChatId!;
+    }
 
     final title = _generateChatTitle(firstUserMessage);
     final chatId = await _supabaseService.createAiChat(title: title);
 
     _currentChatId = chatId;
+
     await _loadChats();
 
     return chatId;
@@ -117,12 +148,22 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
 
   String _generateChatTitle(String text) {
     final cleaned = text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (cleaned.length <= 35) return cleaned;
+
+    if (cleaned.isEmpty) {
+      return "New Chat";
+    }
+
+    if (cleaned.length <= 35) {
+      return cleaned;
+    }
+
     return "${cleaned.substring(0, 35)}...";
   }
 
   Future<void> _loadChat(Map<String, dynamic> chat) async {
-    final chatId = chat['id'].toString();
+    final chatId = chat['id']?.toString();
+
+    if (chatId == null || chatId.isEmpty) return;
 
     try {
       setState(() {
@@ -154,9 +195,14 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
         _isLoading = false;
       });
 
-      Navigator.pop(context);
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
       _scrollToBottom();
     } catch (e) {
+      debugPrint("Load AI chat messages error: $e");
+
       if (!mounted) return;
 
       setState(() {
@@ -167,17 +213,23 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
   }
 
   Future<void> _deleteChat(Map<String, dynamic> chat) async {
-    final chatId = chat['id'].toString();
+    final chatId = chat['id']?.toString();
+
+    if (chatId == null || chatId.isEmpty) return;
 
     try {
       await _supabaseService.deleteAiChat(chatId);
+
+      if (!mounted) return;
 
       if (_currentChatId == chatId) {
         _startNewChatLocally();
       }
 
       await _loadChats();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint("Delete AI chat error: $e");
+    }
   }
 
   void _scrollToBottom() {
@@ -201,14 +253,18 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
 
     setState(() {
       _messages.add({"text": userMessage, "isAI": false});
+
       _isLoading = true;
+
       _messages.add({"text": "Thinking...", "isAI": true});
     });
 
     _scrollToBottom();
 
+    String? chatId;
+
     try {
-      final chatId = await _ensureCurrentChat(userMessage);
+      chatId = await _ensureCurrentChat(userMessage);
 
       await _supabaseService.addAiMessage(
         chatId: chatId,
@@ -232,30 +288,44 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
       if (!mounted) return;
 
       setState(() {
-        _messages.removeLast();
+        if (_messages.isNotEmpty && _messages.last["text"] == "Thinking...") {
+          _messages.removeLast();
+        }
+
         _messages.add({"text": aiResponse, "isAI": true});
+
         _isLoading = false;
       });
 
       await _loadChats();
     } catch (e) {
+      debugPrint("Send AI message error: $e");
+
       if (!mounted) return;
 
-      final errorMessage =
+      const errorMessage =
           "AI connection is temporarily unstable. Please try again shortly.";
 
       setState(() {
-        _messages.removeLast();
+        if (_messages.isNotEmpty && _messages.last["text"] == "Thinking...") {
+          _messages.removeLast();
+        }
+
         _messages.add({"text": errorMessage, "isAI": true});
+
         _isLoading = false;
       });
 
-      if (_currentChatId != null) {
-        await _supabaseService.addAiMessage(
-          chatId: _currentChatId!,
-          text: errorMessage,
-          isAi: true,
-        );
+      if (chatId != null) {
+        try {
+          await _supabaseService.addAiMessage(
+            chatId: chatId,
+            text: errorMessage,
+            isAi: true,
+          );
+        } catch (saveError) {
+          debugPrint("Save AI error message failed: $saveError");
+        }
       }
     }
 
@@ -329,7 +399,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                       itemCount: _chats.length,
                       itemBuilder: (context, index) {
                         final chat = _chats[index];
-                        final chatId = chat['id'].toString();
+                        final chatId = chat['id']?.toString() ?? '';
                         final isSelected = chatId == _currentChatId;
 
                         return Container(
@@ -367,7 +437,9 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                                 color: Colors.redAccent,
                                 size: 19,
                               ),
-                              onPressed: () => _deleteChat(chat),
+                              onPressed: () async {
+                                await _deleteChat(chat);
+                              },
                             ),
                             onTap: () => _loadChat(chat),
                           ),
@@ -516,8 +588,9 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final msg = _messages[index];
+
                 return _buildChatBubble(
-                  msg["text"].toString(),
+                  msg["text"]?.toString() ?? '',
                   msg["isAI"] == true,
                 );
               },
