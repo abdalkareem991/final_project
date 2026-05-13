@@ -27,6 +27,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
+  final PageController _pageController = PageController();
 
   static const Color _bgColor = Color(0xFF061414);
   static const Color _accentGreen = Color(0xFF34EAB9);
@@ -56,10 +57,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _handlePageVisible(int index) {
+    if (index == 0) {
+      _mainContentKey.currentState?.refreshDashboard();
+    } else if (index == 1) {
+      _accountsKey.currentState?.refreshAccounts();
+    }
+  }
+
+  void _onBottomNavTap(int index) {
+    if (index == _selectedIndex) {
+      _handlePageVisible(index);
+      return;
+    }
+
+    setState(() => _selectedIndex = index);
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  void _onPageChanged(int index) {
+    setState(() => _selectedIndex = index);
+    _handlePageVisible(index);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bgColor,
-      body: IndexedStack(index: _selectedIndex, children: _screens),
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: _onPageChanged,
+        children: _screens,
+      ),
       bottomNavigationBar: _buildBottomNav(),
     );
   }
@@ -71,14 +109,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       unselectedItemColor: Colors.grey,
       type: BottomNavigationBarType.fixed,
       currentIndex: _selectedIndex,
-      onTap: (index) {
-        setState(() => _selectedIndex = index);
-        if (index == 0) {
-          _mainContentKey.currentState?.refreshDashboard();
-        } else if (index == 1) {
-          _accountsKey.currentState?.refreshAccounts();
-        }
-      },
+      onTap: _onBottomNavTap,
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home), label: "HOME"),
         BottomNavigationBarItem(

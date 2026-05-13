@@ -8,6 +8,7 @@ import 'package:telephony/telephony.dart';
 import '../models/wallet_model.dart';
 import '../services/ai_service.dart';
 import '../services/supabase_service.dart';
+import '../widgets/debts_section_widget.dart';
 
 class MyAccountScreen extends StatefulWidget {
   const MyAccountScreen({super.key});
@@ -21,6 +22,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
   final SupabaseService _supabaseService = SupabaseService();
   final AIService _aiService = AIService();
   final Telephony telephony = Telephony.instance;
+  final GlobalKey<DebtsSectionWidgetState> _debtsSectionKey = GlobalKey();
 
   late Stream<Map<String, double>> _balancesStream;
   late Stream<List<WalletModel>> _walletsStream;
@@ -83,9 +85,10 @@ class MyAccountScreenState extends State<MyAccountScreen>
         .map((data) => data.map((json) => WalletModel.fromJson(json)).toList());
   }
 
-  void refreshAccounts() {
+  Future<void> refreshAccounts() async {
     if (!mounted) return;
     setState(() => _initStreams());
+    await _debtsSectionKey.currentState?.refreshDebts();
   }
 
   Future<void> _deleteWallet(String walletId) async {
@@ -124,7 +127,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
 
     if (confirm == true) {
       await _supabaseService.deleteWallet(walletId);
-      refreshAccounts();
+      await refreshAccounts();
     }
   }
 
@@ -147,7 +150,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
       ),
       body: RefreshIndicator(
         color: _accentGreen,
-        onRefresh: () async => refreshAccounts(),
+        onRefresh: refreshAccounts,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Column(
@@ -166,6 +169,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 ),
               ),
               _buildAccountsListWithAnimation(),
+              DebtsSectionWidget(key: _debtsSectionKey),
+              const SizedBox(height: 110),
             ],
           ),
         ),
@@ -268,7 +273,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
             child: ListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.only(left: 20, right: 20, bottom: 90),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               itemCount: wallets.length,
               itemBuilder: (context, index) =>
                   _buildAccountCard(wallets[index]),
@@ -577,7 +582,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
 
                       if (!mounted) return;
                       Navigator.pop(sheetContext);
-                      refreshAccounts();
+                      await refreshAccounts();
                     } catch (e) {
                       _showSnack("Save failed: $e");
                     }
