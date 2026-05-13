@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/app_text.dart';
 import '../services/supabase_service.dart';
 import 'update_password_screen.dart';
 
@@ -21,7 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _supabaseService = SupabaseService();
-  
+
   bool _isLoading = false;
   bool _isPasswordVisible = false;
   late final StreamSubscription<AuthState> _authStateSubscription;
@@ -71,7 +72,14 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _handleLogin() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter email and password')),
+        SnackBar(
+          content: Text(
+            context.t(
+              'Please enter email and password',
+              'يرجى إدخال البريد الإلكتروني وكلمة المرور',
+            ),
+          ),
+        ),
       );
       return;
     }
@@ -129,7 +137,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (savedEmail != null && savedPw != null) {
           setState(() => _isLoading = true);
-          
+
           await _supabaseService.signIn(savedEmail, savedPw);
 
           if (mounted) {
@@ -137,8 +145,13 @@ class _LoginScreenState extends State<LoginScreen> {
           }
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please log in with password first to enable biometrics.'),
+            SnackBar(
+              content: Text(
+                context.t(
+                  'Please log in with password first to enable biometrics.',
+                  'يرجى تسجيل الدخول بكلمة المرور أولًا لتفعيل البصمة.',
+                ),
+              ),
             ),
           );
         }
@@ -159,16 +172,19 @@ class _LoginScreenState extends State<LoginScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
-        title: const Text(
-          'Reset Password',
-          style: TextStyle(color: Colors.white),
+        title: Text(
+          context.t('Reset Password', 'إعادة تعيين كلمة المرور'),
+          style: const TextStyle(color: Colors.white),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Enter your email to receive a password reset link.',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
+            Text(
+              context.t(
+                'Enter your email to receive a password reset link.',
+                'أدخل بريدك الإلكتروني لاستلام رابط إعادة التعيين.',
+              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -189,9 +205,9 @@ class _LoginScreenState extends State<LoginScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: Colors.white38),
+            child: Text(
+              context.t('Cancel', 'إلغاء'),
+              style: const TextStyle(color: Colors.white38),
             ),
           ),
           ElevatedButton(
@@ -224,7 +240,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 }
               }
             },
-            child: const Text('Send', style: TextStyle(color: Colors.black)),
+            child: Text(
+              context.t('Send', 'إرسال'),
+              style: const TextStyle(color: Colors.black),
+            ),
           ),
         ],
       ),
@@ -250,9 +269,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     size: 30,
                   ),
                   const SizedBox(width: 10),
-                  const Text(
-                    'Financial Mind',
-                    style: TextStyle(
+                  Text(
+                    context.t('Financial Mind', 'فايننشال مايند'),
+                    style: const TextStyle(
                       color: Color(0xFF00E676),
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -261,18 +280,21 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
               ),
               const SizedBox(height: 60),
-              const Text(
-                'Welcome Back',
-                style: TextStyle(
+              Text(
+                context.t('Welcome Back', 'مرحبًا بعودتك'),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Enter your credentials to access your vault',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
+              Text(
+                context.t(
+                  'Enter your credentials to access your vault',
+                  'أدخل بياناتك للوصول إلى حسابك',
+                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
               ),
               const SizedBox(height: 40),
               Container(
@@ -284,9 +306,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      ' EMAIL',
-                      style: TextStyle(
+                    Text(
+                      context.t(' EMAIL', ' البريد الإلكتروني'),
+                      style: const TextStyle(
                         color: Colors.white60,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -302,9 +324,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'PASSWORD',
-                          style: TextStyle(
+                        Text(
+                          context.t('PASSWORD', 'كلمة المرور'),
+                          style: const TextStyle(
                             color: Colors.white60,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -312,9 +334,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         TextButton(
                           onPressed: _showForgotPasswordDialog,
-                          child: const Text(
-                            'Forgot Password?',
-                            style: TextStyle(
+                          child: Text(
+                            context.t('Forgot Password?', 'نسيت كلمة المرور؟'),
+                            style: const TextStyle(
                               color: Color(0xFF00E676),
                               fontSize: 12,
                             ),
@@ -355,9 +377,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            child: const Text(
-                              'Log In',
-                              style: TextStyle(
+                            child: Text(
+                              context.t('Log In', 'تسجيل الدخول'),
+                              style: const TextStyle(
                                 color: Colors.black,
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -432,12 +454,16 @@ class _LoginScreenState extends State<LoginScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildNavItem(Icons.login, 'LOGIN', true),
+          _buildNavItem(Icons.login, context.t('LOGIN', 'الدخول'), true),
           GestureDetector(
             onTap: () {
               Navigator.pushNamed(context, '/register');
             },
-            child: _buildNavItem(Icons.person_add_outlined, 'REGISTER', false),
+            child: _buildNavItem(
+              Icons.person_add_outlined,
+              context.t('REGISTER', 'التسجيل'),
+              false,
+            ),
           ),
         ],
       ),

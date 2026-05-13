@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:telephony/telephony.dart';
 
+import '../core/app_text.dart';
 import '../models/wallet_model.dart';
 import '../services/ai_service.dart';
 import '../services/supabase_service.dart';
@@ -97,25 +98,34 @@ class MyAccountScreenState extends State<MyAccountScreen>
       builder: (ctx) => AlertDialog(
         backgroundColor: _cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          "Delete Account",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          context.t("Delete Account", "حذف الحساب"),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
-        content: const Text(
-          "This action will remove the account and its history. Continue?",
-          style: TextStyle(color: Colors.white70),
+        content: Text(
+          context.t(
+            "This action will remove the account and its history. Continue?",
+            "سيؤدي هذا الإجراء إلى حذف الحساب وسجله. هل تريد المتابعة؟",
+          ),
+          style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            child: Text(
+              context.t("Cancel", "إلغاء"),
+              style: const TextStyle(color: Colors.grey),
+            ),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: _expenseRed),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              "Delete",
-              style: TextStyle(
+            child: Text(
+              context.t("Delete", "حذف"),
+              style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
               ),
@@ -139,9 +149,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
         backgroundColor: _bgColor,
         elevation: 0,
         automaticallyImplyLeading: false,
-        title: const Text(
-          "Accounts",
-          style: TextStyle(
+        title: Text(
+          context.t("Accounts", "الحسابات"),
+          style: const TextStyle(
             fontWeight: FontWeight.bold,
             color: Colors.white,
             fontSize: 28,
@@ -157,11 +167,14 @@ class MyAccountScreenState extends State<MyAccountScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildLiveTotalNetWorthHeader(),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
                 child: Text(
-                  "Your Wallets",
-                  style: TextStyle(
+                  context.t("Your Wallets", "محافظك"),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -182,9 +195,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
           heroTag: 'account_add_btn',
           backgroundColor: _accentGreen,
           icon: const Icon(Icons.add, color: Colors.black),
-          label: const Text(
-            "Add New Account",
-            style: TextStyle(
+          label: Text(
+            context.t("Add New Account", "إضافة حساب جديد"),
+            style: const TextStyle(
               color: Colors.black,
               fontWeight: FontWeight.bold,
               fontSize: 16,
@@ -218,7 +231,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "CREDIT TOTAL",
+                context.t("CREDIT TOTAL", "إجمالي الرصيد"),
                 style: TextStyle(
                   color: Colors.black.withOpacity(0.5),
                   fontSize: 12,
@@ -255,12 +268,12 @@ class MyAccountScreenState extends State<MyAccountScreen>
         final wallets = snapshot.data!;
 
         if (wallets.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.all(30),
+          return Padding(
+            padding: const EdgeInsets.all(30),
             child: Center(
               child: Text(
-                "No accounts yet.",
-                style: TextStyle(color: Colors.grey),
+                context.t("No accounts yet.", "لا توجد حسابات بعد."),
+                style: const TextStyle(color: Colors.grey),
               ),
             ),
           );
@@ -325,8 +338,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 const SizedBox(height: 3),
                 Text(
                   account.accountMode == 'AUTOMATED'
-                      ? "${account.type} • ${account.smsSenderId ?? 'No sender'}"
-                      : account.type,
+                      ? "${context.enumText(account.type)} • ${account.smsSenderId ?? context.t('No sender', 'لا يوجد مرسل')}"
+                      : context.enumText(account.type),
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
               ],
@@ -353,13 +366,19 @@ class MyAccountScreenState extends State<MyAccountScreen>
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'edit',
-                child: Text("Edit", style: TextStyle(color: Colors.white)),
+                child: Text(
+                  context.t("Edit", "تعديل"),
+                  style: const TextStyle(color: Colors.white),
+                ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'delete',
-                child: Text("Delete", style: TextStyle(color: _expenseRed)),
+                child: Text(
+                  context.t("Delete", "حذف"),
+                  style: const TextStyle(color: _expenseRed),
+                ),
               ),
             ],
           ),
@@ -416,7 +435,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  isEditing ? "Edit Account" : "Add New Account",
+                  isEditing
+                      ? context.t("Edit Account", "تعديل الحساب")
+                      : context.t("Add New Account", "إضافة حساب جديد"),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
@@ -439,9 +460,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
                           });
                         },
                       ),
-                      const Text(
-                        "Manual",
-                        style: TextStyle(color: Colors.white),
+                      Text(
+                        context.t("Manual", "يدوي"),
+                        style: const TextStyle(color: Colors.white),
                       ),
                       const SizedBox(width: 20),
                       Radio<String>(
@@ -450,9 +471,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
                         activeColor: _accentGreen,
                         onChanged: (v) => setModalState(() => accountMode = v!),
                       ),
-                      const Text(
-                        "Automated",
-                        style: TextStyle(color: Colors.white),
+                      Text(
+                        context.t("Automated", "آلي"),
+                        style: const TextStyle(color: Colors.white),
                       ),
                     ],
                   ),
@@ -478,7 +499,11 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     },
                     icon: const Icon(Icons.sms_outlined, size: 18),
                     label: Text(
-                      selectedSenderId ?? "Select Bank SMS Source",
+                      selectedSenderId ??
+                          context.t(
+                            "Select Bank SMS Source",
+                            "اختر مصدر رسائل البنك",
+                          ),
                       overflow: TextOverflow.ellipsis,
                     ),
                     style: ElevatedButton.styleFrom(
@@ -498,7 +523,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                   controller: nameController,
                   style: const TextStyle(color: Colors.white),
                   decoration: _inputDecoration(
-                    "Account Name",
+                    context.t("Account Name", "اسم الحساب"),
                     Icons.account_balance,
                   ),
                 ),
@@ -515,7 +540,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     fontWeight: FontWeight.bold,
                   ),
                   decoration: _inputDecoration(
-                    "Current Balance (JD)",
+                    context.t("Current Balance (JD)", "الرصيد الحالي بالدينار"),
                     Icons.payments,
                   ),
                 ),
@@ -526,9 +551,17 @@ class MyAccountScreenState extends State<MyAccountScreen>
                   initialValue: selectedType,
                   dropdownColor: _cardColor,
                   style: const TextStyle(color: Colors.white),
-                  decoration: _inputDecoration("Account Type", Icons.category),
+                  decoration: _inputDecoration(
+                    context.t("Account Type", "نوع الحساب"),
+                    Icons.category,
+                  ),
                   items: ['Bank', 'Cash', 'Mobile Wallet']
-                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .map(
+                        (t) => DropdownMenuItem(
+                          value: t,
+                          child: Text(context.enumText(t)),
+                        ),
+                      )
                       .toList(),
                   onChanged: (val) => setModalState(() => selectedType = val!),
                 ),
@@ -542,14 +575,24 @@ class MyAccountScreenState extends State<MyAccountScreen>
                         double.tryParse(balanceController.text.trim()) ?? 0.0;
 
                     if (name.isEmpty) {
-                      _showSnack("Account name is required.");
+                      _showSnack(
+                        context.t(
+                          "Account name is required.",
+                          "اسم الحساب مطلوب.",
+                        ),
+                      );
                       return;
                     }
 
                     if (accountMode == 'AUTOMATED' &&
                         (selectedSenderId == null ||
                             selectedSenderId!.isEmpty)) {
-                      _showSnack("Please select an SMS sender first.");
+                      _showSnack(
+                        context.t(
+                          "Please select an SMS sender first.",
+                          "يرجى اختيار مرسل الرسائل أولًا.",
+                        ),
+                      );
                       return;
                     }
 
@@ -584,7 +627,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                       Navigator.pop(sheetContext);
                       await refreshAccounts();
                     } catch (e) {
-                      _showSnack("Save failed: $e");
+                      _showSnack(context.t("Save failed: $e", "فشل الحفظ: $e"));
                     }
                   },
                   style: ElevatedButton.styleFrom(
@@ -595,7 +638,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     ),
                   ),
                   child: Text(
-                    isEditing ? "UPDATE ACCOUNT" : "SAVE ACCOUNT",
+                    isEditing
+                        ? context.t("UPDATE ACCOUNT", "تحديث الحساب")
+                        : context.t("SAVE ACCOUNT", "حفظ الحساب"),
                     style: const TextStyle(
                       color: Colors.black,
                       fontWeight: FontWeight.w900,
@@ -618,7 +663,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
     debugPrint("SMS permission: $hasPermission");
 
     if (hasPermission != true) {
-      _showSnack("SMS permission denied.");
+      _showSnack(context.t("SMS permission denied.", "تم رفض صلاحية الرسائل."));
       debugPrint("SMS permission denied");
       return;
     }
@@ -665,10 +710,13 @@ class MyAccountScreenState extends State<MyAccountScreen>
         return SizedBox(
           height: MediaQuery.of(ctx).size.height * 0.65,
           child: senders.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    "No SMS senders found",
-                    style: TextStyle(color: Colors.white),
+                    context.t(
+                      "No SMS senders found",
+                      "لم يتم العثور على مرسلين",
+                    ),
+                    style: const TextStyle(color: Colors.white),
                   ),
                 )
               : ListView.builder(
@@ -710,7 +758,12 @@ class MyAccountScreenState extends State<MyAccountScreen>
       debugPrint("Messages from selected sender: ${messages.length}");
 
       if (messages.isEmpty) {
-        _showSnack("No SMS messages found for this sender.");
+        _showSnack(
+          context.t(
+            "No SMS messages found for this sender.",
+            "لا توجد رسائل لهذا المرسل.",
+          ),
+        );
         return;
       }
 
@@ -719,7 +772,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
       debugPrint("Latest SMS body: $latestBody");
 
       if (latestBody == null || latestBody.trim().isEmpty) {
-        _showSnack("Latest SMS body is empty.");
+        _showSnack(context.t("Latest SMS body is empty.", "آخر رسالة فارغة."));
         return;
       }
 
@@ -727,13 +780,25 @@ class MyAccountScreenState extends State<MyAccountScreen>
 
       if (balance != null) {
         balanceController.text = balance.toStringAsFixed(2);
-        _showSnack("Balance detected successfully.");
+        _showSnack(
+          context.t(
+            "Balance detected successfully.",
+            "تم اكتشاف الرصيد بنجاح.",
+          ),
+        );
       } else {
-        _showSnack("Could not detect balance. Enter it manually.");
+        _showSnack(
+          context.t(
+            "Could not detect balance. Enter it manually.",
+            "تعذر اكتشاف الرصيد. أدخله يدويًا.",
+          ),
+        );
       }
     } catch (e) {
       debugPrint("Auto fetch balance error: $e");
-      _showSnack("Could not read SMS balance.");
+      _showSnack(
+        context.t("Could not read SMS balance.", "تعذر قراءة رصيد الرسائل."),
+      );
     }
   }
 

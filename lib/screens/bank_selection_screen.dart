@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../core/app_text.dart';
 import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
 
@@ -37,21 +38,19 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
   /// Logic: Toggles the active monitoring status for an automated account
   Future<void> _toggleMonitoring(WalletModel wallet, bool status) async {
     try {
-      final updatedWallet = WalletModel(
-        id: wallet.id,
-        name: wallet.name,
-        balance: wallet.balance,
-        type: wallet.type,
-        accountMode: wallet.accountMode,
-        smsSenderId: wallet.smsSenderId,
-        isActiveMonitoring: status,
+      await _supabaseService.updateWallet(
+        wallet.copyWith(isActiveMonitoring: status),
       );
 
-      await _supabaseService.updateWallet(updatedWallet);
+      if (mounted) setState(() {});
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(status ? "Monitoring Enabled" : "Monitoring Disabled"),
+          content: Text(
+            status
+                ? context.t("Monitoring Enabled", "تم تفعيل المراقبة")
+                : context.t("Monitoring Disabled", "تم إيقاف المراقبة"),
+          ),
           backgroundColor: status ? Colors.green : Colors.orange,
         ),
       );
@@ -68,9 +67,12 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
         backgroundColor: bgColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          "Bank Monitoring",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          context.t("Bank Monitoring", "مراقبة البنك"),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: Padding(
@@ -78,9 +80,9 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Automated Accounts",
-              style: TextStyle(color: Colors.grey, fontSize: 16),
+            Text(
+              context.t("Automated Accounts", "الحسابات الآلية"),
+              style: const TextStyle(color: Colors.grey, fontSize: 16),
             ),
             const SizedBox(height: 20),
             Expanded(
@@ -167,14 +169,17 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
             color: Colors.white.withOpacity(0.1),
           ),
           const SizedBox(height: 15),
-          const Text(
-            "No automated accounts found.",
-            style: TextStyle(color: Colors.grey),
+          Text(
+            context.t("No automated accounts found.", "لا توجد حسابات آلية."),
+            style: const TextStyle(color: Colors.grey),
           ),
-          const Text(
-            "Add an Automated Account from the main screen.",
+          Text(
+            context.t(
+              "Add an Automated Account from the main screen.",
+              "أضف حسابًا آليًا من الشاشة الرئيسية.",
+            ),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white24, fontSize: 12),
+            style: const TextStyle(color: Colors.white24, fontSize: 12),
           ),
         ],
       ),

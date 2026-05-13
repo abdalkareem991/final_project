@@ -93,7 +93,7 @@ class AIService {
   // Checks whether the SMS should be ignored, such as OTP, scam, or service messages.
   bool _isIgnorableSms(String text) {
     return RegExp(
-      r'(otp|one time password|verification|verify|authorization|auth code|please enter the following code|please do not share|do not share|beware|scam|system updates|digital banking services will be suspended|رمز التحقق|رمز|كود|تحقق|توثيق|تفعيل|يرجى عدم مشاركته|عدم مشاركته)',
+      r'(otp|one time password|verification|verify|auth code|please enter the following code|please do not share|do not share|beware|scam|system updates|digital banking services will be suspended|رمز التحقق|رمز|كود|تحقق|توثيق|تفعيل|يرجى عدم مشاركته|عدم مشاركته)',
     ).hasMatch(text);
   }
 
@@ -163,12 +163,15 @@ class AIService {
   // Detects Orange Money transaction type.
   String? _detectOrangeMoneyType(String text) {
     if (text.contains('تم استقبال حواله ماليه') ||
-        text.contains('الى محفظتك')) {
+        text.contains('الى محفظتك') ||
+        text.contains('الي محفظتك')) {
       return 'Income';
     }
 
     if (text.contains('تمت عمليه التحويل المالي الى المحفظه') ||
-        text.contains('الى المحفظه')) {
+        text.contains('تمت عمليه التحويل المالي الي المحفظه') ||
+        text.contains('الى المحفظه') ||
+        text.contains('الي المحفظه')) {
       return 'Expense';
     }
 
@@ -276,7 +279,7 @@ class AIService {
       RegExp(r'الرصيد\s*(?:الحالي|المتاح|المتوفر)?\s*(\d+(?:\.\d+)?)'),
     ];
 
-    return _firstDoubleMatch(text, balancePatterns);
+    return _firstDoubleMatch(text, balancePatterns, allowZero: true);
   }
 
   // Detects the SMS category/kind used later for automatic categorization.
@@ -314,12 +317,15 @@ class AIService {
   // Detects Orange Money-specific SMS kind.
   String _detectOrangeMoneySmsKind(String text) {
     if (text.contains('تم استقبال حواله ماليه') ||
-        text.contains('الى محفظتك')) {
+        text.contains('الى محفظتك') ||
+        text.contains('الي محفظتك')) {
       return 'Orange Money Transfer In';
     }
 
     if (text.contains('تمت عمليه التحويل المالي الى المحفظه') ||
-        text.contains('الى المحفظه')) {
+        text.contains('تمت عمليه التحويل المالي الي المحفظه') ||
+        text.contains('الى المحفظه') ||
+        text.contains('الي المحفظه')) {
       return 'Orange Money Transfer Out';
     }
 
@@ -433,7 +439,9 @@ class AIService {
     if (type == 'Expense') {
       final patterns = [
         RegExp(r'الى المحفظه\s+([a-z0-9]+)'),
+        RegExp(r'الي المحفظه\s+([a-z0-9]+)'),
         RegExp(r'الى المحفظة\s+([a-z0-9]+)'),
+        RegExp(r'الي المحفظة\s+([a-z0-9]+)'),
       ];
 
       return _firstStringMatch(text, patterns);
@@ -481,6 +489,10 @@ class AIService {
         r'لدى\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)',
         caseSensitive: false,
       ),
+      RegExp(
+        r'لدي\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)',
+        caseSensitive: false,
+      ),
     ];
 
     final String? value = _firstStringMatch(text, patterns);
@@ -503,13 +515,17 @@ class AIService {
   }
 
   // Returns the first valid double captured by the provided patterns.
-  double? _firstDoubleMatch(String text, List<RegExp> patterns) {
+  double? _firstDoubleMatch(
+    String text,
+    List<RegExp> patterns, {
+    bool allowZero = false,
+  }) {
     for (final pattern in patterns) {
       final match = pattern.firstMatch(text);
       if (match == null) continue;
 
       final value = double.tryParse(match.group(1)!);
-      if (value != null && value > 0) return value;
+      if (value != null && (allowZero ? value >= 0 : value > 0)) return value;
     }
 
     return null;
@@ -539,20 +555,32 @@ class AIService {
       try {
         final prompt = [
           Content.text("""
-You are FinMind AI, a financial assistant inside a personal finance app.
+You are FinMind AI, a personal finance assistant inside a finance tracking app.
 
-Use the user's real financial data below:
+Respond in the same language as the user. If the user writes Arabic, answer in clear Arabic.
+
+Use only the user's real financial data below:
 $financialContext
 
 User question:
 $userMessage
 
-Rules:
-- Use only the available financial data.
-- Do not invent numbers.
-- Mention if data is missing.
-- Keep the answer practical, short, and clear.
-- Give advice based on balances, income, expenses, wallets, and recent transactions.
+Core rules:
+- Do not invent numbers, accounts, debts, categories, or transactions.
+- If a required number is missing, say it is not available.
+- Treat wallet/account balances, transactions, analytics, and debts as separate concepts.
+- Debts are not wallet balances and are not transactions.
+- Do not add debts to net worth unless the user explicitly asks for a separate debt-adjusted view.
+- Internal transfers are not real income or real spending.
+- Income category percentages and expense category percentages are calculated separately.
+
+Answer style:
+- Be practical, short, and clear.
+- Mention whether your answer is based on balances, income, expenses, debts, or recent transactions.
+- Use exact numbers only when they appear in the context.
+- For advice, give 2 to 4 actionable steps.
+- If there is risk or uncertainty, mention it gently.
+- Do not provide legal, tax, or investment guarantees.
 """),
         ];
 

@@ -4,6 +4,7 @@ import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/app_text.dart';
 import 'core/app_theme.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
@@ -25,8 +26,10 @@ void main() async {
     anonKey: 'sb_publishable_GaooL_VcN7UWg2HgPC2z9g_7v3Zb_en',
   );
 
-  // 4. SMS automation is started after login from Dashboard or Settings.
-  // SMS automation starts after user login from Settings or Dashboard.
+  // 4. Load saved language before the first frame. The UI stays LTR globally.
+  await AppText.init();
+
+  // 5. SMS automation is started after login from Dashboard or Settings.
   runApp(const FinancialMindApp());
 }
 
@@ -35,23 +38,38 @@ class FinancialMindApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Financial Mind',
-      debugShowCheckedModeBanner: false,
+    return ValueListenableBuilder<String>(
+      valueListenable: AppText.languageCode,
+      builder: (context, languageCode, _) {
+        return MaterialApp(
+          title: 'Financial Mind',
+          debugShowCheckedModeBanner: false,
+          locale: Locale(languageCode),
+          supportedLocales: const [Locale('en'), Locale('ar')],
+          builder: (context, child) {
+            return AppLanguageScope(
+              child: Directionality(
+                textDirection: TextDirection.ltr,
+                child: child ?? const SizedBox.shrink(),
+              ),
+            );
+          },
 
-      // Applying the professional dark theme (Neon Design System)
-      theme: AppTheme.darkTheme,
+          // Applying the professional dark theme (Neon Design System)
+          theme: AppTheme.darkTheme,
 
-      // Initial route shown to the user upon app launch
-      home: const LoginScreen(),
+          // Initial route shown to the user upon app launch
+          home: const LoginScreen(),
 
-      // Defining the app routes for structured navigation
-      // These routes are crucial for moving between authentication and dashboard
-      routes: {
-        '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
-        '/dashboard': (context) => const DashboardScreen(),
-        '/update-password': (context) => const UpdatePasswordScreen(),
+          // Defining the app routes for structured navigation
+          // These routes are crucial for moving between authentication and dashboard
+          routes: {
+            '/login': (context) => const LoginScreen(),
+            '/register': (context) => const RegisterScreen(),
+            '/dashboard': (context) => const DashboardScreen(),
+            '/update-password': (context) => const UpdatePasswordScreen(),
+          },
+        );
       },
     );
   }

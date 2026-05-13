@@ -5,10 +5,14 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../models/analytics_model.dart';
 import '../models/category_model.dart';
+import '../models/debts_model.dart';
 import '../models/profile_model.dart';
 import '../models/task_model.dart';
 import '../models/wallet_model.dart';
+import 'analytics_service.dart';
+import 'debts_service.dart';
 import 'notification_service.dart';
 
 class SupabaseService {
@@ -236,6 +240,22 @@ class SupabaseService {
       debugPrint("Monitoring: ${wallet.isActiveMonitoring}");
     } catch (error) {
       debugPrint('Update Wallet Error: $error');
+      rethrow;
+    }
+  }
+
+  Future<void> setAllAutomatedWalletMonitoring(bool enabled) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return;
+
+      await client
+          .from('wallets')
+          .update({'is_active_monitoring': enabled})
+          .eq('user_id', user.id)
+          .eq('account_mode', 'AUTOMATED');
+    } catch (error) {
+      debugPrint('Bulk monitoring update error: $error');
       rethrow;
     }
   }
@@ -922,23 +942,90 @@ class SupabaseService {
 
   Future<List<TaskModel>> getTasks(DateTime date) async {
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return [];
-
-      final dateStr = date.toIso8601String().split('T')[0];
-      final response = await client
-          .from('tasks')
-          .select()
-          .eq('user_id', user.id)
-          .gte('due_date', '$dateStr 00:00:00')
-          .lte('due_date', '$dateStr 23:59:59');
-
-      return (response as List)
-          .map((task) => TaskModel.fromJson(task))
-          .toList();
+      return await _getTaskOccurrencesForRange(date, date);
     } catch (error) {
       return [];
     }
+  }
+
+  Future<List<TaskModel>> _getTaskOccurrencesForRange(
+    DateTime start,
+    DateTime end,
+  ) async {
+    final user = client.auth.currentUser;
+    if (user == null) return [];
+
+    final rangeStart = _dateOnly(start);
+    final rangeEnd = DateTime(end.year, end.month, end.day, 23, 59, 59, 999);
+
+    final response = await client
+        .from('tasks')
+        .select()
+        .eq('user_id', user.id)
+        .lte('due_date', rangeEnd.toIso8601String())
+        .order('due_date');
+
+    final tasks = (response as List)
+        .map((task) => TaskModel.fromJson(task))
+        .where((task) => !_dateOnly(task.endDate).isBefore(rangeStart))
+        .toList();
+
+    final occurrences = <TaskModel>[];
+
+    for (final task in tasks) {
+      for (
+        var day = rangeStart;
+        !day.isAfter(rangeEnd);
+        day = day.add(const Duration(days: 1))
+      ) {
+        final occurrence = _taskOccurrenceOnDate(task, day);
+        if (occurrence != null) {
+          occurrences.add(occurrence);
+        }
+      }
+    }
+
+    occurrences.sort(
+      (a, b) => (a.occurrenceDate ?? a.dueDate).compareTo(
+        b.occurrenceDate ?? b.dueDate,
+      ),
+    );
+    return occurrences;
+  }
+
+  TaskModel? _taskOccurrenceOnDate(TaskModel task, DateTime date) {
+    final day = _dateOnly(date);
+    final startDay = _dateOnly(task.dueDate);
+    final endDay = _dateOnly(task.endDate);
+
+    if (day.isBefore(startDay) || day.isAfter(endDay)) return null;
+
+    final occursToday = switch (task.recurrenceType) {
+      TaskModel.recurrenceDaily => true,
+      TaskModel.recurrenceMonthly => day.day == task.dueDate.day,
+      _ => _isSameDay(day, task.dueDate),
+    };
+
+    if (!occursToday) return null;
+
+    return task.copyWith(
+      occurrenceDate: DateTime(
+        day.year,
+        day.month,
+        day.day,
+        task.dueDate.hour,
+        task.dueDate.minute,
+      ),
+    );
+  }
+
+  DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+
+  bool _isSameDay(DateTime first, DateTime second) {
+    return first.year == second.year &&
+        first.month == second.month &&
+        first.day == second.day;
   }
 
   Future<TaskModel> addTask(TaskModel task) async {
@@ -961,17 +1048,21 @@ class SupabaseService {
   }) async {
     try {
       await client.from('tasks').update(task.toJson()).eq('id', task.id);
-      await NotificationService().cancelNotification(task.id.hashCode);
+      await NotificationService().cancelTaskReminder(task.id);
 
-      if (rescheduleAlert &&
-          newAlertTime != null &&
-          newAlertTime.isAfter(DateTime.now())) {
-        await NotificationService().scheduleNotification(
-          task.id.hashCode,
-          "Task Reminder",
-          task.title,
-          newAlertTime,
+      var reminderScheduled = false;
+      if (rescheduleAlert && newAlertTime != null && !task.isCompleted) {
+        reminderScheduled = await NotificationService().scheduleTaskReminder(
+          id: NotificationService.taskReminderId(task.id),
+          title: "Task Reminder",
+          body: task.title,
+          firstDateTime: newAlertTime,
+          recurrenceType: task.recurrenceType,
         );
+      }
+
+      if (rescheduleAlert || !task.hasNotification) {
+        await updateTaskNotificationStatus(task.id, reminderScheduled);
       }
     } catch (error) {
       rethrow;
@@ -980,10 +1071,18 @@ class SupabaseService {
 
   Future<void> toggleTaskStatus(String taskId, bool currentStatus) async {
     try {
+      final nextStatus = !currentStatus;
       await client
           .from('tasks')
-          .update({'is_completed': !currentStatus})
+          .update({
+            'is_completed': nextStatus,
+            if (nextStatus) 'has_notification': false,
+          })
           .eq('id', taskId);
+
+      if (nextStatus) {
+        await NotificationService().cancelTaskReminder(taskId);
+      }
     } catch (error) {}
   }
 
@@ -999,10 +1098,50 @@ class SupabaseService {
     } catch (error) {}
   }
 
+  Future<int> reschedulePendingTaskReminders() async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return 0;
+
+      final response = await client
+          .from('tasks')
+          .select()
+          .eq('user_id', user.id)
+          .eq('has_notification', true)
+          .eq('is_completed', false);
+
+      var scheduledCount = 0;
+
+      for (final row in response as List) {
+        final task = TaskModel.fromJson(row);
+        await NotificationService().cancelTaskReminder(task.id);
+
+        final scheduled = await NotificationService().scheduleTaskReminder(
+          id: NotificationService.taskReminderId(task.id),
+          title: "Task Reminder",
+          body: task.title,
+          firstDateTime: task.dueDate,
+          recurrenceType: task.recurrenceType,
+        );
+
+        if (scheduled) {
+          scheduledCount++;
+        } else {
+          await updateTaskNotificationStatus(task.id, false);
+        }
+      }
+
+      return scheduledCount;
+    } catch (error) {
+      debugPrint("Reschedule task reminders error: $error");
+      return 0;
+    }
+  }
+
   Future<void> deleteTask(String taskId) async {
     try {
       await client.from('tasks').delete().eq('id', taskId);
-      await NotificationService().cancelNotification(taskId.hashCode);
+      await NotificationService().cancelTaskReminder(taskId);
     } catch (error) {}
   }
 
@@ -1089,20 +1228,9 @@ class SupabaseService {
 
   Future<Map<String, int>> getDailyTaskStats(DateTime date) async {
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return {'total': 0, 'completed': 0, 'pending': 0};
-
-      final dateStr = date.toIso8601String().split('T')[0];
-      final response = await client
-          .from('tasks')
-          .select('is_completed')
-          .eq('user_id', user.id)
-          .gte('due_date', '$dateStr 00:00:00')
-          .lte('due_date', '$dateStr 23:59:59');
-
-      final List tasks = response as List;
+      final tasks = await getTasks(date);
       int total = tasks.length;
-      int completed = tasks.where((t) => t['is_completed'] == true).length;
+      int completed = tasks.where((task) => task.isCompleted).length;
       return {
         'total': total,
         'completed': completed,
@@ -1115,21 +1243,11 @@ class SupabaseService {
 
   Future<Map<String, int>> getMonthlyTaskStats(DateTime month) async {
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return {'total': 0, 'completed': 0, 'pending': 0};
-
       final firstDay = DateTime(month.year, month.month, 1);
       final lastDay = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
-      final response = await client
-          .from('tasks')
-          .select('is_completed')
-          .eq('user_id', user.id)
-          .gte('due_date', firstDay.toIso8601String())
-          .lte('due_date', lastDay.toIso8601String());
-
-      final List tasks = response as List;
+      final tasks = await _getTaskOccurrencesForRange(firstDay, lastDay);
       int total = tasks.length;
-      int completed = tasks.where((t) => t['is_completed'] == true).length;
+      int completed = tasks.where((task) => task.isCompleted).length;
       return {
         'total': total,
         'completed': completed,
@@ -1142,22 +1260,15 @@ class SupabaseService {
 
   Future<Map<DateTime, int>> getTasksCountForMonth(DateTime month) async {
     try {
-      final user = client.auth.currentUser;
-      if (user == null) return {};
-
       final firstDay = DateTime(month.year, month.month, 1);
-      final lastDay = DateTime(month.year, month.month + 1, 0);
-      final response = await client
-          .from('tasks')
-          .select('due_date')
-          .eq('user_id', user.id)
-          .gte('due_date', firstDay.toIso8601String())
-          .lte('due_date', lastDay.toIso8601String());
+      final lastDay = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+      final tasks = await _getTaskOccurrencesForRange(firstDay, lastDay);
 
       Map<DateTime, int> counts = {};
-      for (var row in response as List) {
-        DateTime date = DateTime.parse(row['due_date']);
-        DateTime normalizedDate = DateTime(date.year, date.month, date.day);
+      for (final task in tasks) {
+        DateTime normalizedDate = _dateOnly(
+          task.occurrenceDate ?? task.dueDate,
+        );
         counts[normalizedDate] = (counts[normalizedDate] ?? 0) + 1;
       }
       return counts;
@@ -1340,11 +1451,55 @@ class SupabaseService {
     final profile = await getProfileData();
     final wallets = await getWallets();
     final summary = await getFilteredSummary('Month');
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+
+    String analyticsText = "Monthly category analytics unavailable.";
+    try {
+      final analyticsReport = await AnalyticsService().getAnalyticsReport(
+        userId: user.id,
+        startDate: monthStart,
+        endDate: monthEnd,
+      );
+
+      analyticsText =
+          """
+Income by category this month:
+${_formatCategoryAnalyticsForAI(analyticsReport.incomeCategories, emptyText: "- No income category data.")}
+
+Expenses by category this month:
+${_formatCategoryAnalyticsForAI(analyticsReport.expenseCategories, emptyText: "- No expense category data.")}
+""";
+    } catch (e) {
+      debugPrint("AI analytics context error: $e");
+    }
+
+    String debtsText = "Debt tracking unavailable.";
+    try {
+      final debtsService = DebtsService();
+      final activeDebts = await debtsService.getActiveDebts(user.id);
+      final debtSummary = debtsService.buildSummary(activeDebts);
+
+      debtsText =
+          """
+Debt tracking:
+- Money owed to user (active debtor debts): ${debtSummary.totalDebtorAmount.toStringAsFixed(2)} JOD
+- Money user owes (active creditor debts): ${debtSummary.totalCreditorAmount.toStringAsFixed(2)} JOD
+- Net debt position: ${debtSummary.netDebt.toStringAsFixed(2)} JOD
+- Important: debts are separate from wallet/account balances and are not transactions.
+
+Active debt list:
+${_formatDebtsForAI(activeDebts)}
+""";
+    } catch (e) {
+      debugPrint("AI debts context error: $e");
+    }
 
     final transactions = await client
         .from('transactions')
         .select(
-          'amount, type, description, date, wallets(name), categories(name)',
+          'amount, type, description, date, is_internal_transfer, wallets(name), categories(name)',
         )
         .eq('user_id', user.id)
         .eq('is_hidden', false)
@@ -1357,6 +1512,10 @@ class SupabaseService {
         })
         .join("\n");
 
+    final walletsContext = walletsText.isEmpty
+        ? "- No wallets/accounts found."
+        : walletsText;
+
     final txText = (transactions as List)
         .map((tx) {
           final walletName = tx['wallets'] is Map
@@ -1365,23 +1524,78 @@ class SupabaseService {
           final categoryName = tx['categories'] is Map
               ? tx['categories']['name']
               : 'Uncategorized';
+          final bool isInternalTransfer = tx['is_internal_transfer'] == true;
+          final typeLabel = isInternalTransfer
+              ? "Internal Transfer (${tx['type']})"
+              : tx['type'];
 
-          return "- ${tx['type']} ${tx['amount']} from $walletName, category $categoryName, description: ${tx['description']}";
+          return "- $typeLabel ${tx['amount']} JOD, wallet: $walletName, category: $categoryName, date: ${tx['date']}, description: ${tx['description']}";
         })
         .join("\n");
 
+    final recentTransactionsText = txText.isEmpty
+        ? "- No recent visible transactions found."
+        : txText;
+
     return """
 User name: ${profile.fullName}
-Total net worth: ${profile.totalNetWorth}
-Monthly income: ${summary['Income'] ?? 0}
-Monthly expenses: ${summary['Expense'] ?? 0}
+Current wallet/account net worth: ${profile.totalNetWorth.toStringAsFixed(2)} JOD
+Current month period: ${monthStart.toIso8601String().split('T').first} to ${monthEnd.toIso8601String().split('T').first}
+Monthly income, excluding internal transfers: ${(summary['Income'] ?? 0).toStringAsFixed(2)} JOD
+Monthly expenses, excluding internal transfers: ${(summary['Expense'] ?? 0).toStringAsFixed(2)} JOD
+
+Important interpretation rules:
+- Wallet/account balances are separate from debts.
+- Debts are not transactions and must not be added to wallet balances.
+- Internal transfers are movement between user's accounts, not real income or spending.
+- Income category percentages are calculated only from income transactions.
+- Expense category percentages are calculated only from expense transactions.
 
 Wallets:
-$walletsText
+$walletsContext
+
+$analyticsText
+
+$debtsText
 
 Recent transactions:
-$txText
+$recentTransactionsText
 """;
+  }
+
+  String _formatCategoryAnalyticsForAI(
+    List<CategoryAnalytics> categories, {
+    required String emptyText,
+  }) {
+    if (categories.isEmpty) return emptyText;
+
+    return categories
+        .take(8)
+        .map((category) {
+          return "- ${category.categoryName}: ${category.totalAmount.toStringAsFixed(2)} JOD (${category.percentage.toStringAsFixed(1)}%)";
+        })
+        .join("\n");
+  }
+
+  String _formatDebtsForAI(List<DebtModel> debts) {
+    if (debts.isEmpty) return "- No active debts.";
+
+    return debts
+        .take(10)
+        .map((debt) {
+          final direction = debt.isDebtor
+              ? "Debtor: this person owes the user"
+              : "Creditor: the user owes this person";
+          final dueDate = debt.dueDate == null
+              ? "no due date"
+              : debt.dueDate!.toIso8601String().split('T').first;
+          final note = debt.note == null || debt.note!.trim().isEmpty
+              ? ""
+              : ", note: ${debt.note}";
+
+          return "- ${debt.personName}: $direction, ${debt.amount.toStringAsFixed(2)} JOD, due: $dueDate$note";
+        })
+        .join("\n");
   }
   // ===========================================================================
   // 9. REAL-TIME STREAMS (OPTIONAL ADDITIONS FOR UI UPDATES)

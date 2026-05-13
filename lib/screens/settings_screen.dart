@@ -4,10 +4,13 @@
 
 import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:telephony/telephony.dart'; //new
 
+import '../core/app_text.dart';
 import '../models/profile_model.dart';
 import '../services/sms_listener_service.dart'; //new
 import '../services/supabase_service.dart';
@@ -24,11 +27,15 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _supabaseService = SupabaseService();
+  final _localAuth = LocalAuthentication();
+  final _secureStorage = const FlutterSecureStorage();
 
   // Local Settings State for Persistence
   bool _isBiometricEnabled = false;
   bool _isNotificationsEnabled = true;
-  String _selectedLanguage = "English";
+  bool _isSmsAutomationEnabled = false;
+  String? _busySettingKey;
+  String _selectedLanguageCode = "en";
   String _selectedCurrency = "JOD (JD)";
   late final Future<ProfileModel> _profileFuture = _supabaseService
       .getProfileData();
@@ -47,10 +54,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Logic: Fetches all saved preferences from SharedPreferences
   Future<void> _loadUserSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    final secureBiometric = await _secureStorage.read(key: 'use_biometrics');
+    final biometricEnabled = secureBiometric == 'true';
+    if (prefs.getBool('biometric_enabled') != biometricEnabled) {
+      await prefs.setBool('biometric_enabled', biometricEnabled);
+    }
+
+    if (!mounted) return;
     setState(() {
-      _isBiometricEnabled = prefs.getBool('biometric_enabled') ?? false;
+      _isBiometricEnabled = biometricEnabled;
       _isNotificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
-      _selectedLanguage = prefs.getString('language') ?? "English";
+      _isSmsAutomationEnabled =
+          prefs.getBool('sms_automation_enabled') ?? false;
+      _selectedLanguageCode = prefs.getString(AppText.languageKey) ?? 'en';
       _selectedCurrency = prefs.getString('currency') ?? "JOD (JD)";
     });
   }
@@ -60,12 +76,223 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     if (value is bool) await prefs.setBool(key, value);
     if (value is String) await prefs.setString(key, value);
-    _loadUserSettings(); // Refresh UI State
+    await _loadUserSettings(); // Refresh UI State
+  }
+
+  Future<void> _setLanguage(String code) async {
+    await AppText.setLanguageCode(code);
+    await _loadUserSettings();
+  }
+
+  Future<void> _setBusy(String? key) async {
+    if (!mounted) return;
+    setState(() => _busySettingKey = key);
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.redAccent : Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _setBiometricEnabled(bool enabled) async {
+    await _setBusy('biometric');
+
+    try {
+      if (enabled) {
+        final canAuthenticate =
+            await _localAuth.canCheckBiometrics ||
+            await _localAuth.isDeviceSupported();
+
+        if (!canAuthenticate) {
+          _showSnack(
+            context.t(
+              "Biometric authentication is not available.",
+              "المصادقة بالبصمة غير متاحة.",
+            ),
+            isError: true,
+          );
+          return;
+        }
+
+        final savedEmail = await _secureStorage.read(key: 'email');
+        final savedPassword = await _secureStorage.read(key: 'password');
+
+        if (savedEmail == null || savedPassword == null) {
+          _showSnack(
+            context.t(
+              "Log in with your password once before enabling biometrics.",
+              "سجل الدخول بكلمة المرور مرة واحدة قبل تفعيل البصمة.",
+            ),
+            isError: true,
+          );
+          return;
+        }
+
+        final didAuthenticate = await _localAuth.authenticate(
+          localizedReason: 'Confirm biometrics to enable quick login',
+          options: const AuthenticationOptions(
+            stickyAuth: true,
+            biometricOnly: true,
+          ),
+        );
+
+        if (!didAuthenticate) {
+          _showSnack(
+            context.t(
+              "Biometric setup was cancelled.",
+              "تم إلغاء إعداد البصمة.",
+            ),
+            isError: true,
+          );
+          return;
+        }
+
+        await _secureStorage.write(key: 'use_biometrics', value: 'true');
+      } else {
+        await _secureStorage.write(key: 'use_biometrics', value: 'false');
+      }
+
+      await _updatePreference('biometric_enabled', enabled);
+      _showSnack(
+        enabled
+            ? context.t("Biometric login enabled.", "تم تفعيل الدخول بالبصمة.")
+            : context.t(
+                "Biometric login disabled.",
+                "تم إيقاف الدخول بالبصمة.",
+              ),
+      );
+    } catch (e) {
+      debugPrint("Biometric setting error: $e");
+      _showSnack(
+        context.t(
+          "Could not update biometric setting.",
+          "تعذر تحديث إعداد البصمة.",
+        ),
+        isError: true,
+      );
+    } finally {
+      await _setBusy(null);
+    }
+  }
+
+  Future<void> _setSmsAutomationEnabled(bool enabled) async {
+    await _setBusy('sms');
+
+    try {
+      if (enabled) {
+        final permissionsGranted =
+            await Telephony.instance.requestPhoneAndSmsPermissions;
+
+        if (permissionsGranted != true) {
+          await _updatePreference('sms_automation_enabled', false);
+          _showSnack(
+            context.t(
+              "SMS permissions denied. Automation was not enabled.",
+              "تم رفض صلاحيات الرسائل. لم يتم تفعيل الأتمتة.",
+            ),
+            isError: true,
+          );
+          return;
+        }
+
+        await _updatePreference('sms_automation_enabled', true);
+        await SMSListenerService().startListening();
+        await SMSListenerService().syncNow(force: true);
+        _showSnack(
+          context.t(
+            "SMS automation is now active.",
+            "أتمتة الرسائل مفعلة الآن.",
+          ),
+        );
+      } else {
+        SMSListenerService().stopListening();
+        await _updatePreference('sms_automation_enabled', false);
+        _showSnack(
+          context.t("SMS automation stopped.", "تم إيقاف أتمتة الرسائل."),
+        );
+      }
+    } catch (e) {
+      debugPrint("SMS automation setting error: $e");
+      await _updatePreference('sms_automation_enabled', false);
+      _showSnack(
+        context.t(
+          "Could not update SMS automation.",
+          "تعذر تحديث أتمتة الرسائل.",
+        ),
+        isError: true,
+      );
+    } finally {
+      await _setBusy(null);
+    }
+  }
+
+  Future<void> _setNotificationsEnabled(bool enabled) async {
+    await _setBusy('notifications');
+
+    try {
+      await _updatePreference('notifications_enabled', enabled);
+
+      if (enabled) {
+        await NotificationService().initNotification();
+        final rescheduledCount = await _supabaseService
+            .reschedulePendingTaskReminders();
+
+        await NotificationService().showInstantNotification(
+          context.t("Alerts Enabled", "تم تفعيل التنبيهات"),
+          rescheduledCount == 0
+              ? context.t(
+                  "You will now receive automated financial updates.",
+                  "ستصلك الآن تحديثات مالية تلقائية.",
+                )
+              : context.t(
+                  "$rescheduledCount task reminders were refreshed.",
+                  "تم تحديث $rescheduledCount من تذكيرات المهام.",
+                ),
+        );
+
+        _showSnack(
+          context.t("Push notifications enabled.", "تم تفعيل الإشعارات."),
+        );
+      } else {
+        await NotificationService().cancelAllNotifications();
+        _showSnack(
+          context.t("Push notifications disabled.", "تم إيقاف الإشعارات."),
+        );
+      }
+    } catch (e) {
+      debugPrint("Notification setting error: $e");
+      _showSnack(
+        context.t(
+          "Could not update notification setting.",
+          "تعذر تحديث الإشعارات.",
+        ),
+        isError: true,
+      );
+    } finally {
+      await _setBusy(null);
+    }
+  }
+
+  Future<void> _enableEverything() async {
+    await _setNotificationsEnabled(true);
+    try {
+      await _supabaseService.setAllAutomatedWalletMonitoring(true);
+    } catch (e) {
+      debugPrint("Enable all bank monitoring error: $e");
+    }
+    await _setSmsAutomationEnabled(true);
+    await _setBiometricEnabled(true);
   }
 
   /// Logic: Signs out from Supabase and redirects to Login
   Future<void> _handleSignOut() async {
     try {
+      SMSListenerService().stopListening();
       await Supabase.instance.client.auth.signOut();
       if (!mounted) return;
 
@@ -93,19 +320,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "User Account Details",
-              style: TextStyle(
+            Text(
+              context.t("User Account Details", "تفاصيل حساب المستخدم"),
+              style: const TextStyle(
                 color: _accentGreen,
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const Divider(color: Colors.white10, height: 30),
-            _detailRow("Full Name", profile.fullName),
-            _detailRow("Phone Number", profile.phone ?? "Not provided"),
             _detailRow(
-              "Net Worth",
+              context.t("Full Name", "الاسم الكامل"),
+              profile.fullName,
+            ),
+            _detailRow(
+              context.t("Phone Number", "رقم الهاتف"),
+              profile.phone ?? context.t("Not provided", "غير متوفر"),
+            ),
+            _detailRow(
+              context.t("Net Worth", "صافي الثروة"),
               "JD ${profile.totalNetWorth.toStringAsFixed(2)}",
             ),
             const SizedBox(height: 20),
@@ -142,9 +375,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: _bgColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          "Settings",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          context.t("Settings", "الإعدادات"),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: SingleChildScrollView(
@@ -152,11 +388,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           children: [
             _buildProfileSection(),
+            const SizedBox(height: 18),
+            _buildEnableEverythingCard(),
             const SizedBox(height: 30),
-            _buildSettingsGroup("Account Security", [
+            _buildSettingsGroup(context.t("Account Security", "أمان الحساب"), [
               _buildSettingItem(
                 icon: Icons.lock_outline,
-                title: "Change Password",
+                title: context.t("Change Password", "تغيير كلمة المرور"),
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -166,11 +404,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               _buildSettingItem(
                 icon: Icons.fingerprint,
-                title: "Biometric Authentication",
+                title: context.t(
+                  "Biometric Authentication",
+                  "المصادقة بالبصمة",
+                ),
                 trailing: Switch(
                   value: _isBiometricEnabled,
-                  onChanged: (val) =>
-                      _updatePreference('biometric_enabled', val),
+                  onChanged: _busySettingKey == null
+                      ? _setBiometricEnabled
+                      : null,
                   activeThumbColor: _accentGreen,
                   activeTrackColor: _accentGreen.withOpacity(0.3),
                   inactiveThumbColor: Colors.grey,
@@ -178,92 +420,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ]),
             const SizedBox(height: 20),
-            _buildSettingsGroup("Automation & Privacy", [
-              _buildSettingItem(
-                icon: Icons.security_outlined,
-                title: "Bank SMS Monitoring",
-                subtitle: "Select banks to track transactions",
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const BankSelectionScreen(),
+            _buildSettingsGroup(
+              context.t("Automation & Privacy", "الأتمتة والخصوصية"),
+              [
+                _buildSettingItem(
+                  icon: Icons.security_outlined,
+                  title: context.t("Bank SMS Monitoring", "مراقبة رسائل البنك"),
+                  subtitle: context.t(
+                    "Select banks to track transactions",
+                    "اختر البنوك لتتبع الحركات",
+                  ),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const BankSelectionScreen(),
+                    ),
                   ),
                 ),
-              ),
-              _buildSettingItem(
-                icon: Icons.message_outlined,
-                title: "Enable SMS Automation",
-                subtitle: "Automatically log bank transactions",
-                trailing: IconButton(
-                  icon: const Icon(Icons.security, color: _accentGreen),
-                  onPressed: () async {
-                    // Logic: Request system permissions for SMS and Phone state
-                    bool? permissionsGranted =
-                        await Telephony.instance.requestPhoneAndSmsPermissions;
-
-                    if (!mounted) return;
-
-                    if (permissionsGranted == true) {
-                      // Activate the listener service immediately
-                      SMSListenerService().startListening();
-
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("SMS Automation Enabled Successfully!"),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            "Permissions denied. Cannot enable automation.",
-                          ),
-                          backgroundColor: Colors.redAccent,
-                        ),
-                      );
-                    }
-                  },
+                _buildSettingItem(
+                  icon: Icons.message_outlined,
+                  title: context.t(
+                    "Enable SMS Automation",
+                    "تفعيل أتمتة الرسائل",
+                  ),
+                  subtitle: context.t(
+                    "Automatically log bank transactions",
+                    "تسجيل حركات البنك تلقائيًا",
+                  ),
+                  trailing: Switch(
+                    value: _isSmsAutomationEnabled,
+                    onChanged: _busySettingKey == null
+                        ? _setSmsAutomationEnabled
+                        : null,
+                    activeThumbColor: _accentGreen,
+                  ),
                 ),
-              ),
-              _buildSettingItem(
-                icon: Icons.notifications_none,
-                title: "Push Notifications",
-                trailing: Switch(
-                  value: _isNotificationsEnabled,
-                  onChanged: (val) async {
-                    await _updatePreference('notifications_enabled', val);
-                    if (val) {
-                      // Trigger a verification alert to confirm setup
-                      await NotificationService().showInstantNotification(
-                        "Alerts Enabled",
-                        "You will now receive automated financial updates.",
-                      );
-                    }
-                  },
-                  activeThumbColor: _accentGreen,
+                _buildSettingItem(
+                  icon: Icons.notifications_none,
+                  title: context.t("Push Notifications", "الإشعارات"),
+                  trailing: Switch(
+                    value: _isNotificationsEnabled,
+                    onChanged: _busySettingKey == null
+                        ? _setNotificationsEnabled
+                        : null,
+                    activeThumbColor: _accentGreen,
+                  ),
                 ),
-              ),
-            ]),
+              ],
+            ),
             const SizedBox(height: 20),
-            _buildSettingsGroup("Preferences", [
+            _buildSettingsGroup(context.t("Preferences", "التفضيلات"), [
               _buildSettingItem(
                 icon: Icons.language,
-                title: "Language",
-                subtitle: _selectedLanguage,
-                onTap: () => _showSelectionDialog("Select Language", [
-                  "English",
-                  "Arabic",
-                ], 'language'),
+                title: context.t("Language", "اللغة"),
+                subtitle: AppText.languageLabel(_selectedLanguageCode),
+                onTap: _showLanguageDialog,
               ),
               _buildSettingItem(
                 icon: Icons.monetization_on_outlined,
-                title: "Default Currency",
+                title: context.t("Default Currency", "العملة الافتراضية"),
                 subtitle: _selectedCurrency,
-                onTap: () => _showSelectionDialog("Select Currency", [
-                  "JOD (JD)",
-                  "USD (\$)",
-                ], 'currency'),
+                onTap: () => _showSelectionDialog(
+                  context.t("Select Currency", "اختر العملة"),
+                  ["JOD (JD)", "USD (\$)"],
+                  'currency',
+                ),
               ),
             ]),
             const SizedBox(height: 40),
@@ -275,6 +496,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// UI Logic: Shows a generic selection dialog for Language/Currency
+  void _showLanguageDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: Text(
+          context.t("Select Language", "اختر اللغة"),
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [_languageOption('en'), _languageOption('ar')],
+        ),
+      ),
+    );
+  }
+
+  Widget _languageOption(String code) {
+    final isSelected = _selectedLanguageCode == code;
+
+    return ListTile(
+      title: Text(
+        AppText.languageLabel(code),
+        style: TextStyle(
+          color: isSelected ? _accentGreen : Colors.white70,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+      trailing: isSelected
+          ? const Icon(Icons.check, color: _accentGreen, size: 20)
+          : null,
+      onTap: () async {
+        await _setLanguage(code);
+        if (mounted) Navigator.pop(context);
+      },
+    );
+  }
+
   void _showSelectionDialog(String title, List<String> options, String key) {
     showDialog(
       context: context,
@@ -345,7 +604,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 5),
                       Text(
-                        profile.phone ?? "No phone number added",
+                        profile.phone ??
+                            context.t(
+                              "No phone number added",
+                              "لا يوجد رقم هاتف",
+                            ),
                         style: const TextStyle(
                           color: Colors.grey,
                           fontSize: 14,
@@ -364,6 +627,83 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildEnableEverythingCard() {
+    final isBusy = _busySettingKey != null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _accentGreen.withOpacity(0.18)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _accentGreen.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.auto_awesome, color: _accentGreen),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.t("Enable All Features", "تفعيل كل الميزات"),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  context.t(
+                    "Turns on notifications, SMS automation, and biometric login where available.",
+                    "يشغل الإشعارات وأتمتة الرسائل والدخول بالبصمة عند توفرها.",
+                  ),
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: isBusy ? null : _enableEverything,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _accentGreen,
+              disabledBackgroundColor: Colors.white12,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: isBusy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(
+                    context.t("Enable", "تفعيل"),
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -432,9 +772,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ElevatedButton.icon(
       onPressed: _handleSignOut,
       icon: const Icon(Icons.logout, color: Colors.black),
-      label: const Text(
-        "Logout",
-        style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+      label: Text(
+        context.t("Logout", "تسجيل الخروج"),
+        style: const TextStyle(
+          color: Colors.black,
+          fontWeight: FontWeight.bold,
+        ),
       ),
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.white,

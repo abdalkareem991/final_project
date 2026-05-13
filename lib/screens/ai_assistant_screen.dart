@@ -28,9 +28,9 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
 
   final List<String> _suggestions = [
     "Analyze my monthly spending",
-    "How can I save more money?",
-    "What is my biggest expense?",
-    "Give me a budget plan",
+    "Where does my income come from?",
+    "Summarize my debts",
+    "Give me a practical budget plan",
   ];
 
   bool _isLoading = false;

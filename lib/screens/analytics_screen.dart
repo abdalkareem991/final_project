@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_text.dart';
 import '../models/analytics_model.dart';
 import '../models/wallet_model.dart';
 import '../services/analytics_service.dart';
@@ -174,11 +175,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   String _selectedPeriodLabel() {
     switch (_selectedPeriod) {
       case _AnalyticsPeriod.thisMonth:
-        return "This Month";
+        return context.t("This Month", "هذا الشهر");
       case _AnalyticsPeriod.lastMonth:
-        return "Last Month";
+        return context.t("Last Month", "الشهر الماضي");
       case _AnalyticsPeriod.lastThreeMonths:
-        return "Last 3 Months";
+        return context.t("Last 3 Months", "آخر 3 أشهر");
       case _AnalyticsPeriod.custom:
         final range = _effectiveDateRange();
         return "${_formatDateShort(range.start)} - ${_formatDateShort(range.end)}";
@@ -248,9 +249,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         backgroundColor: _bgColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          "Analytics & Reports",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          context.t("Analytics & Reports", "التحليلات والتقارير"),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: FutureBuilder<AnalyticsReport>(
@@ -282,22 +286,37 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   _buildFilterSection(),
                   const SizedBox(height: 16),
                   _buildCategoryAnalyticsCard(
-                    title: "Income by Category",
+                    title: context.t("Income by Category", "الدخل حسب الفئة"),
                     totalAmount: report.summary.totalIncome,
                     items: report.incomeCategories,
                     baseColor: _accentGreen,
-                    emptyTitle: "No income data",
-                    emptySubtitle: "Income categories will appear here.",
+                    emptyTitle: context.t(
+                      "No income data",
+                      "لا توجد بيانات دخل",
+                    ),
+                    emptySubtitle: context.t(
+                      "Income categories will appear here.",
+                      "ستظهر فئات الدخل هنا.",
+                    ),
                     palette: _incomePalette,
                   ),
                   const SizedBox(height: 16),
                   _buildCategoryAnalyticsCard(
-                    title: "Expenses by Category",
+                    title: context.t(
+                      "Expenses by Category",
+                      "المصاريف حسب الفئة",
+                    ),
                     totalAmount: report.summary.totalExpenses,
                     items: report.expenseCategories,
                     baseColor: _expenseRed,
-                    emptyTitle: "No expense data",
-                    emptySubtitle: "Expense categories will appear here.",
+                    emptyTitle: context.t(
+                      "No expense data",
+                      "لا توجد بيانات مصاريف",
+                    ),
+                    emptySubtitle: context.t(
+                      "Expense categories will appear here.",
+                      "ستظهر فئات المصاريف هنا.",
+                    ),
                     palette: _expensePalette,
                   ),
                 ],
@@ -318,9 +337,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           children: [
             const Icon(Icons.error_outline, color: _expenseRed, size: 42),
             const SizedBox(height: 12),
-            const Text(
-              "Could not load analytics",
-              style: TextStyle(
+            Text(
+              context.t("Could not load analytics", "تعذر تحميل التحليلات"),
+              style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
                 fontSize: 18,
@@ -336,9 +355,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ElevatedButton.icon(
               onPressed: _reloadReport,
               icon: const Icon(Icons.refresh, color: Colors.black),
-              label: const Text(
-                "Retry",
-                style: TextStyle(
+              label: Text(
+                context.t("Retry", "إعادة المحاولة"),
+                style: const TextStyle(
                   color: Colors.black,
                   fontWeight: FontWeight.bold,
                 ),
@@ -357,25 +376,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     final cards = [
       _SummaryItem(
-        title: "TOTAL INCOME",
+        title: context.t("TOTAL INCOME", "إجمالي الدخل"),
         value: _formatAmount(report.summary.totalIncome),
         icon: Icons.trending_up,
         color: _accentGreen,
       ),
       _SummaryItem(
-        title: "TOTAL EXPENSES",
+        title: context.t("TOTAL EXPENSES", "إجمالي المصاريف"),
         value: _formatAmount(report.summary.totalExpenses),
         icon: Icons.trending_down,
         color: _expenseRed,
       ),
       _SummaryItem(
-        title: "NET BALANCE",
+        title: context.t("NET BALANCE", "صافي الرصيد"),
         value: _formatAmount(netBalance),
         icon: Icons.account_balance_wallet_outlined,
         color: netColor,
       ),
       _SummaryItem(
-        title: "SELECTED PERIOD",
+        title: context.t("SELECTED PERIOD", "الفترة المحددة"),
         value: _selectedPeriodLabel(),
         icon: Icons.calendar_month,
         color: _infoBlue,
@@ -469,9 +488,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            "Filters",
-            style: TextStyle(
+          Text(
+            context.t("Filters", "الفلاتر"),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -482,16 +501,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _buildPeriodChip("This Month", _AnalyticsPeriod.thisMonth),
-                const SizedBox(width: 10),
-                _buildPeriodChip("Last Month", _AnalyticsPeriod.lastMonth),
+                _buildPeriodChip(
+                  context.t("This Month", "هذا الشهر"),
+                  _AnalyticsPeriod.thisMonth,
+                ),
                 const SizedBox(width: 10),
                 _buildPeriodChip(
-                  "Last 3 Months",
+                  context.t("Last Month", "الشهر الماضي"),
+                  _AnalyticsPeriod.lastMonth,
+                ),
+                const SizedBox(width: 10),
+                _buildPeriodChip(
+                  context.t("Last 3 Months", "آخر 3 أشهر"),
                   _AnalyticsPeriod.lastThreeMonths,
                 ),
                 const SizedBox(width: 10),
-                _buildPeriodChip("Custom", _AnalyticsPeriod.custom),
+                _buildPeriodChip(
+                  context.t("Custom", "مخصص"),
+                  _AnalyticsPeriod.custom,
+                ),
               ],
             ),
           ),
@@ -538,7 +566,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           dropdownColor: _cardColor,
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
-            labelText: "Wallet",
+            labelText: context.t("Wallet", "المحفظة"),
             labelStyle: const TextStyle(color: Colors.white54),
             prefixIcon: const Icon(
               Icons.account_balance_wallet,
@@ -558,9 +586,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ),
           ),
           items: [
-            const DropdownMenuItem(
+            DropdownMenuItem(
               value: _allWalletsValue,
-              child: Text("All Wallets"),
+              child: Text(context.t("All Wallets", "كل المحافظ")),
             ),
             ...wallets.map(
               (wallet) =>

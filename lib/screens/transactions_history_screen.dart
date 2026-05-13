@@ -1,6 +1,8 @@
 // ignore_for_file: deprecated_member_use
 
 import 'package:flutter/material.dart';
+
+import '../core/app_text.dart';
 import '../services/supabase_service.dart';
 
 class TransactionsHistoryScreen extends StatefulWidget {
@@ -40,13 +42,15 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
 
       final search = _searchText.toLowerCase();
 
-      final matchesSearch = search.isEmpty ||
+      final matchesSearch =
+          search.isEmpty ||
           description.contains(search) ||
           walletName.contains(search) ||
           categoryName.contains(search) ||
           merchantName.contains(search);
 
-      final matchesType = _typeFilter == 'All' ||
+      final matchesType =
+          _typeFilter == 'All' ||
           (_typeFilter == 'Internal Transfer' &&
               tx['is_internal_transfer'] == true) ||
           type == _typeFilter;
@@ -79,32 +83,33 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     final String categoryName =
         tx['category_name']?.toString() ?? 'Uncategorized';
 
-    final String title =
-        isInternalTransfer ? "Internal Transfer" : tx['description'] ?? '';
+    final String title = isInternalTransfer
+        ? context.t("Internal Transfer", "تحويل داخلي")
+        : tx['description'] ?? '';
 
     final String subtitle = isInternalTransfer
         ? isExpense
-            ? "From: $walletName"
-            : "To: $walletName"
+              ? "${context.t("From", "من")}: $walletName"
+              : "${context.t("To", "إلى")}: $walletName"
         : "$walletName • $categoryName";
 
     final Color color = isInternalTransfer
         ? _transferBlue
         : isExpense
-            ? _expenseRed
-            : _accentGreen;
+        ? _expenseRed
+        : _accentGreen;
 
     final IconData icon = isInternalTransfer
         ? Icons.swap_horiz
         : isExpense
-            ? Icons.arrow_upward
-            : Icons.arrow_downward;
+        ? Icons.arrow_upward
+        : Icons.arrow_downward;
 
     final String sign = isInternalTransfer
         ? ''
         : isExpense
-            ? '-'
-            : '+';
+        ? '-'
+        : '+';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -125,7 +130,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title.isEmpty ? "Transaction" : title,
+                  title.isEmpty ? context.t("Transaction", "حركة") : title,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -150,10 +155,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
           ),
           Text(
             "$sign${_formatAmount((tx['amount'] as num).toDouble())}",
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -164,7 +166,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     final selected = _typeFilter == value;
 
     return ChoiceChip(
-      label: Text(value),
+      label: Text(_filterLabel(value)),
       selected: selected,
       selectedColor: _accentGreen,
       backgroundColor: _cardColor,
@@ -178,6 +180,13 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     );
   }
 
+  String _filterLabel(String value) {
+    return switch (value) {
+      'Internal Transfer' => context.t("Internal Transfer", "تحويل داخلي"),
+      _ => context.enumText(value),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -185,9 +194,12 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
       appBar: AppBar(
         backgroundColor: _bgColor,
         elevation: 0,
-        title: const Text(
-          "All Transactions",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          context.t("All Transactions", "كل الحركات"),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: Column(
@@ -198,7 +210,10 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
               controller: _searchController,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                hintText: "Search by account, category, merchant...",
+                hintText: context.t(
+                  "Search by account, category, merchant...",
+                  "ابحث حسب الحساب أو الفئة أو المتجر...",
+                ),
                 hintStyle: const TextStyle(color: Colors.grey),
                 prefixIcon: const Icon(Icons.search, color: _accentGreen),
                 filled: true,
@@ -242,10 +257,13 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                 final filtered = _applyFilters(snapshot.data!);
 
                 if (filtered.isEmpty) {
-                  return const Center(
+                  return Center(
                     child: Text(
-                      "No transactions found.",
-                      style: TextStyle(color: Colors.grey),
+                      context.t(
+                        "No transactions found.",
+                        "لم يتم العثور على حركات.",
+                      ),
+                      style: const TextStyle(color: Colors.grey),
                     ),
                   );
                 }

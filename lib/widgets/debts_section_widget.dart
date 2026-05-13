@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../core/app_text.dart';
 import '../models/debts_model.dart';
 import '../services/debts_service.dart';
 
@@ -108,28 +109,31 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
           child: const Icon(Icons.handshake, color: _accentBlue, size: 20),
         ),
         const SizedBox(width: 10),
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "Debt Tracking",
-                style: TextStyle(
+                context.t("Debt Tracking", "تتبع الديون"),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              SizedBox(height: 2),
+              const SizedBox(height: 2),
               Text(
-                "Separate from account balances",
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+                context.t(
+                  "Separate from account balances",
+                  "منفصلة عن أرصدة الحسابات",
+                ),
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
               ),
             ],
           ),
         ),
         IconButton(
-          tooltip: "Add Debt",
+          tooltip: context.t("Add Debt", "إضافة دين"),
           onPressed: () => _showDebtSheet(),
           icon: const Icon(Icons.add_circle, color: _accentGreen, size: 30),
         ),
@@ -145,10 +149,16 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         ? _expenseRed
         : Colors.white70;
     final netText = netDebt > 0
-        ? "You should receive ${_formatAmount(netDebt)}"
+        ? context.t(
+            "You should receive ${_formatAmount(netDebt)}",
+            "يجب أن تستلم ${_formatAmount(netDebt)}",
+          )
         : netDebt < 0
-        ? "You should pay ${_formatAmount(netDebt.abs())}"
-        : "No net debt";
+        ? context.t(
+            "You should pay ${_formatAmount(netDebt.abs())}",
+            "يجب أن تدفع ${_formatAmount(netDebt.abs())}",
+          )
+        : context.t("No net debt", "لا يوجد صافي دين");
 
     return Column(
       children: [
@@ -156,7 +166,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
           children: [
             Expanded(
               child: _buildSummaryCard(
-                title: "Money Owed To Me",
+                title: context.t("Money Owed To Me", "أموال مستحقة لي"),
                 amount: summary.totalDebtorAmount,
                 icon: Icons.south_west,
                 color: _accentGreen,
@@ -165,7 +175,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
             const SizedBox(width: 10),
             Expanded(
               child: _buildSummaryCard(
-                title: "Money I Owe",
+                title: context.t("Money I Owe", "أموال علي دفعها"),
                 amount: summary.totalCreditorAmount,
                 icon: Icons.north_east,
                 color: _expenseRed,
@@ -186,9 +196,9 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
             children: [
               Icon(Icons.balance, color: netColor, size: 20),
               const SizedBox(width: 10),
-              const Text(
-                "Net",
-                style: TextStyle(
+              Text(
+                context.t("Net", "الصافي"),
+                style: const TextStyle(
                   color: Colors.white70,
                   fontWeight: FontWeight.bold,
                 ),
@@ -271,10 +281,12 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
   Widget _buildDebtCard(DebtModel debt) {
     final isDebtor = debt.isDebtor;
     final color = isDebtor ? _accentGreen : _expenseRed;
-    final typeText = isDebtor ? "Debtor • Owes me" : "Creditor • I owe";
+    final typeText = isDebtor
+        ? context.t("Debtor • Owes me", "مدين • عليه لي")
+        : context.t("Creditor • I owe", "دائن • له علي");
     final dueText = debt.dueDate == null
-        ? "No due date"
-        : "Due: ${DateFormat.yMMMd().format(debt.dueDate!)}";
+        ? context.t("No due date", "لا يوجد تاريخ استحقاق")
+        : "${context.t("Due", "الاستحقاق")}: ${DateFormat.yMMMd().format(debt.dueDate!)}";
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -340,7 +352,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  "$dueText • ${debt.status}",
+                  "$dueText • ${context.enumText(debt.status)}",
                   style: const TextStyle(color: Colors.white54, fontSize: 12),
                 ),
                 if (debt.note != null && debt.note!.trim().isNotEmpty) ...[
@@ -367,21 +379,27 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                 _deleteDebt(debt);
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(
                 value: 'edit',
-                child: Text("Edit", style: TextStyle(color: Colors.white)),
+                child: Text(
+                  context.t("Edit", "تعديل"),
+                  style: const TextStyle(color: Colors.white),
+                ),
               ),
               PopupMenuItem(
                 value: 'paid',
                 child: Text(
-                  "Mark as Paid",
-                  style: TextStyle(color: _accentGreen),
+                  context.t("Mark as Paid", "تحديد كمدفوع"),
+                  style: const TextStyle(color: _accentGreen),
                 ),
               ),
               PopupMenuItem(
                 value: 'delete',
-                child: Text("Delete", style: TextStyle(color: _expenseRed)),
+                child: Text(
+                  context.t("Delete", "حذف"),
+                  style: const TextStyle(color: _expenseRed),
+                ),
               ),
             ],
           ),
@@ -398,23 +416,30 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         color: _fieldColor,
         borderRadius: BorderRadius.circular(15),
       ),
-      child: const Column(
+      child: Column(
         children: [
-          Icon(Icons.receipt_long_outlined, color: Colors.white38, size: 34),
-          SizedBox(height: 10),
+          const Icon(
+            Icons.receipt_long_outlined,
+            color: Colors.white38,
+            size: 34,
+          ),
+          const SizedBox(height: 10),
           Text(
-            "No active debts",
-            style: TextStyle(
+            context.t("No active debts", "لا توجد ديون نشطة"),
+            style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.bold,
               fontSize: 15,
             ),
           ),
-          SizedBox(height: 4),
+          const SizedBox(height: 4),
           Text(
-            "Track money owed to you or money you owe here.",
+            context.t(
+              "Track money owed to you or money you owe here.",
+              "تتبع الأموال المستحقة لك أو عليك هنا.",
+            ),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontSize: 12),
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
         ],
       ),
@@ -433,9 +458,12 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         children: [
           const Icon(Icons.error_outline, color: _expenseRed, size: 30),
           const SizedBox(height: 8),
-          const Text(
-            "Could not load debts",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          Text(
+            context.t("Could not load debts", "تعذر تحميل الديون"),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
@@ -447,7 +475,10 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
           TextButton.icon(
             onPressed: refreshDebts,
             icon: const Icon(Icons.refresh, color: _accentGreen),
-            label: const Text("Retry", style: TextStyle(color: _accentGreen)),
+            label: Text(
+              context.t("Retry", "إعادة المحاولة"),
+              style: const TextStyle(color: _accentGreen),
+            ),
           ),
         ],
       ),
@@ -502,7 +533,9 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    isEditing ? "Edit Debt" : "Add Debt",
+                    isEditing
+                        ? context.t("Edit Debt", "تعديل الدين")
+                        : context.t("Add Debt", "إضافة دين"),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 22,
@@ -514,8 +547,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     children: [
                       Expanded(
                         child: _buildTypeToggle(
-                          label: "Debtor",
-                          subtitle: "Owes me",
+                          label: context.t("Debtor", "مدين"),
+                          subtitle: context.t("Owes me", "عليه لي"),
                           icon: Icons.south_west,
                           color: _accentGreen,
                           isSelected: selectedType == 'debtor',
@@ -526,8 +559,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: _buildTypeToggle(
-                          label: "Creditor",
-                          subtitle: "I owe",
+                          label: context.t("Creditor", "دائن"),
+                          subtitle: context.t("I owe", "له علي"),
                           icon: Icons.north_east,
                           color: _expenseRed,
                           isSelected: selectedType == 'creditor',
@@ -542,7 +575,10 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     controller: personController,
                     textCapitalization: TextCapitalization.words,
                     style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration("Person Name", Icons.person),
+                    decoration: _inputDecoration(
+                      context.t("Person Name", "اسم الشخص"),
+                      Icons.person,
+                    ),
                   ),
                   const SizedBox(height: 14),
                   TextField(
@@ -557,7 +593,10 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                     ),
-                    decoration: _inputDecoration("Amount (JD)", Icons.payments),
+                    decoration: _inputDecoration(
+                      context.t("Amount (JD)", "المبلغ بالدينار"),
+                      Icons.payments,
+                    ),
                   ),
                   const SizedBox(height: 14),
                   InkWell(
@@ -588,7 +627,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     },
                     child: InputDecorator(
                       decoration: _inputDecoration(
-                        "Due Date",
+                        context.t("Due Date", "تاريخ الاستحقاق"),
                         Icons.event_outlined,
                       ),
                       child: Row(
@@ -596,7 +635,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                           Expanded(
                             child: Text(
                               selectedDueDate == null
-                                  ? "Optional"
+                                  ? context.t("Optional", "اختياري")
                                   : DateFormat.yMMMd().format(selectedDueDate!),
                               style: TextStyle(
                                 color: selectedDueDate == null
@@ -625,7 +664,10 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     minLines: 2,
                     maxLines: 3,
                     style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration("Note", Icons.notes),
+                    decoration: _inputDecoration(
+                      context.t("Note", "ملاحظة"),
+                      Icons.notes,
+                    ),
                   ),
                   const SizedBox(height: 22),
                   ElevatedButton(
@@ -642,18 +684,33 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                           double.tryParse(amountController.text.trim()) ?? 0.0;
 
                       if (personName.isEmpty) {
-                        _showSnack("Person name is required.");
+                        _showSnack(
+                          context.t(
+                            "Person name is required.",
+                            "اسم الشخص مطلوب.",
+                          ),
+                        );
                         return;
                       }
 
                       if (amount <= 0) {
-                        _showSnack("Amount must be greater than zero.");
+                        _showSnack(
+                          context.t(
+                            "Amount must be greater than zero.",
+                            "يجب أن يكون المبلغ أكبر من صفر.",
+                          ),
+                        );
                         return;
                       }
 
                       final userId = _debtsService.currentUserId;
                       if (userId == null) {
-                        _showSnack("User not logged in.");
+                        _showSnack(
+                          context.t(
+                            "User not logged in.",
+                            "المستخدم غير مسجل.",
+                          ),
+                        );
                         return;
                       }
 
@@ -680,11 +737,15 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                         Navigator.pop(sheetContext);
                         await refreshDebts();
                       } catch (e) {
-                        _showSnack("Save failed: $e");
+                        _showSnack(
+                          context.t("Save failed: $e", "فشل الحفظ: $e"),
+                        );
                       }
                     },
                     child: Text(
-                      isEditing ? "UPDATE DEBT" : "SAVE DEBT",
+                      isEditing
+                          ? context.t("UPDATE DEBT", "تحديث الدين")
+                          : context.t("SAVE DEBT", "حفظ الدين"),
                       style: const TextStyle(
                         color: Colors.black,
                         fontWeight: FontWeight.w900,
@@ -745,10 +806,12 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
 
   Future<void> _markAsPaid(DebtModel debt) async {
     final confirmed = await _confirmAction(
-      title: "Mark as Paid",
-      message:
-          "This will remove ${debt.personName} from active debt totals without changing any account balance.",
-      confirmText: "Mark Paid",
+      title: context.t("Mark as Paid", "تحديد كمدفوع"),
+      message: context.t(
+        "This will remove ${debt.personName} from active debt totals without changing any account balance.",
+        "سيتم إزالة ${debt.personName} من إجماليات الديون النشطة دون تغيير أي رصيد حساب.",
+      ),
+      confirmText: context.t("Mark Paid", "تحديد كمدفوع"),
       confirmColor: _accentGreen,
     );
 
@@ -758,16 +821,20 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
       await _debtsService.markDebtAsPaid(debt.id);
       await refreshDebts();
     } catch (e) {
-      _showSnack("Could not mark as paid: $e");
+      _showSnack(
+        context.t("Could not mark as paid: $e", "تعذر التحديد كمدفوع: $e"),
+      );
     }
   }
 
   Future<void> _deleteDebt(DebtModel debt) async {
     final confirmed = await _confirmAction(
-      title: "Delete Debt",
-      message:
-          "Delete this debt record? This will not change any account balance.",
-      confirmText: "Delete",
+      title: context.t("Delete Debt", "حذف الدين"),
+      message: context.t(
+        "Delete this debt record? This will not change any account balance.",
+        "هل تريد حذف سجل الدين؟ لن يغيّر ذلك أي رصيد حساب.",
+      ),
+      confirmText: context.t("Delete", "حذف"),
       confirmColor: _expenseRed,
     );
 
@@ -777,7 +844,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
       await _debtsService.deleteDebt(debt.id);
       await refreshDebts();
     } catch (e) {
-      _showSnack("Could not delete debt: $e");
+      _showSnack(context.t("Could not delete debt: $e", "تعذر حذف الدين: $e"));
     }
   }
 
@@ -803,7 +870,10 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            child: Text(
+              context.t("Cancel", "إلغاء"),
+              style: const TextStyle(color: Colors.grey),
+            ),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: confirmColor),

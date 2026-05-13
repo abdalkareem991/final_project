@@ -52,6 +52,14 @@ class NotificationService {
 
   static const int _maxRecentNotifications = 20;
 
+  static int taskReminderId(String taskId) {
+    var hash = 0;
+    for (final codeUnit in taskId.codeUnits) {
+      hash = (hash * 31 + codeUnit) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
+  }
+
   Future<bool> get isNotificationEnabled async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('notifications_enabled') ?? true;
@@ -132,6 +140,11 @@ class NotificationService {
   Future<void> cancelNotification(int id) async {
     await flutterLocalNotificationsPlugin.cancel(id);
     debugPrint("Notification with ID $id cancelled.");
+  }
+
+  Future<void> cancelTaskReminder(String taskId) async {
+    await cancelNotification(taskReminderId(taskId));
+    await cancelNotification(taskId.hashCode);
   }
 
   Future<void> cancelAllNotifications() async {
@@ -222,33 +235,60 @@ class NotificationService {
     await showInstantNotification(title, body, type: 'task');
   }
 
-  Future<void> scheduleNotification(
+  Future<bool> scheduleNotification(
     int id,
     String title,
     String body,
     DateTime scheduledDate,
-  ) async {
+  ) {
+    return scheduleTaskReminder(
+      id: id,
+      title: title,
+      body: body,
+      firstDateTime: scheduledDate,
+    );
+  }
+
+  Future<bool> scheduleTaskReminder({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime firstDateTime,
+    String recurrenceType = 'none',
+  }) async {
     final isEnabled = await isNotificationEnabled;
+    final normalizedRecurrenceType = recurrenceType.toLowerCase();
 
     debugPrint("Notifications enabled: $isEnabled");
-    debugPrint("Requested schedule time: $scheduledDate");
+    debugPrint("Requested schedule time: $firstDateTime");
+    debugPrint("Recurrence type: $normalizedRecurrenceType");
     debugPrint("Current time: ${DateTime.now()}");
 
     if (!isEnabled) {
       debugPrint(
         "Notification not scheduled because notifications are disabled.",
       );
-      return;
+      return false;
     }
 
-    if (!scheduledDate.isAfter(DateTime.now())) {
+    final nextDateTime = _nextReminderDateTime(
+      firstDateTime,
+      normalizedRecurrenceType,
+    );
+
+    if (nextDateTime == null) {
       debugPrint(
         "Notification not scheduled because selected time is in the past.",
       );
-      return;
+      return false;
     }
 
-    final scheduledTzDate = tz.TZDateTime.from(scheduledDate, tz.local);
+    final scheduledTzDate = tz.TZDateTime.from(nextDateTime, tz.local);
+    final matchComponents = switch (normalizedRecurrenceType) {
+      'daily' => DateTimeComponents.time,
+      'monthly' => DateTimeComponents.dayOfMonthAndTime,
+      _ => null,
+    };
 
     debugPrint("Notification scheduled TZ time: $scheduledTzDate");
 
@@ -271,8 +311,71 @@ class NotificationService {
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
+      matchDateTimeComponents: matchComponents,
     );
 
     debugPrint("Task notification scheduled successfully.");
+    return true;
+  }
+
+  DateTime? _nextReminderDateTime(
+    DateTime firstDateTime,
+    String recurrenceType,
+  ) {
+    final now = DateTime.now();
+
+    if (firstDateTime.isAfter(now)) {
+      return firstDateTime;
+    }
+
+    if (recurrenceType == 'daily') {
+      var next = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        firstDateTime.hour,
+        firstDateTime.minute,
+      );
+      if (!next.isAfter(now)) {
+        next = next.add(const Duration(days: 1));
+      }
+      return next;
+    }
+
+    if (recurrenceType == 'monthly') {
+      return _nextMonthlyDateTime(firstDateTime, now);
+    }
+
+    return null;
+  }
+
+  DateTime _nextMonthlyDateTime(DateTime firstDateTime, DateTime now) {
+    var year = now.year;
+    var month = now.month;
+
+    for (var i = 0; i < 24; i++) {
+      final lastDay = DateTime(year, month + 1, 0).day;
+      if (firstDateTime.day <= lastDay) {
+        final candidate = DateTime(
+          year,
+          month,
+          firstDateTime.day,
+          firstDateTime.hour,
+          firstDateTime.minute,
+        );
+
+        if (candidate.isAfter(now)) {
+          return candidate;
+        }
+      }
+
+      month++;
+      if (month > 12) {
+        month = 1;
+        year++;
+      }
+    }
+
+    return now.add(const Duration(days: 1));
   }
 }

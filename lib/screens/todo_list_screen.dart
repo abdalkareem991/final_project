@@ -4,6 +4,7 @@ import 'package:easy_date_timeline/easy_date_timeline.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../core/app_text.dart';
 import '../models/task_model.dart';
 import '../models/wallet_model.dart';
 import '../services/notification_service.dart';
@@ -159,7 +160,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
         elevation: 0,
         centerTitle: false,
         title: Text(
-          _isDeleteMode ? "${_selectedTaskIds.length} Selected" : "My Agenda",
+          _isDeleteMode
+              ? context.t(
+                  "${_selectedTaskIds.length} Selected",
+                  "تم تحديد ${_selectedTaskIds.length}",
+                )
+              : context.t("My Agenda", "مهامي"),
           style: const TextStyle(
             fontWeight: FontWeight.bold,
             color: Colors.white,
@@ -464,7 +470,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: ChoiceChip(
-                label: Center(child: Text(status)),
+                label: Center(child: Text(context.enumText(status))),
                 selected: isSelected,
                 onSelected: (val) {
                   setState(() => _filterStatus = status);
@@ -496,6 +502,10 @@ class _TodoListScreenState extends State<TodoListScreen> {
           return const Center(
             child: CircularProgressIndicator(color: _accentGreen),
           );
+        }
+
+        if (snapshot.hasError) {
+          return _buildErrorState();
         }
 
         var tasks = snapshot.data ?? [];
@@ -550,8 +560,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
           const SizedBox(height: 20),
           Text(
             _filterStatus == "Completed"
-                ? "No completed tasks yet"
-                : "You're all caught up!",
+                ? context.t("No completed tasks yet", "لا توجد مهام مكتملة بعد")
+                : context.t("You're all caught up!", "كل شيء منجز!"),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 18,
@@ -559,11 +569,58 @@ class _TodoListScreenState extends State<TodoListScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            "Tap the + button to add a new task.",
-            style: TextStyle(color: Colors.grey, fontSize: 14),
+          Text(
+            context.t(
+              "Tap the + button to add a new task.",
+              "اضغط زر + لإضافة مهمة جديدة.",
+            ),
+            style: const TextStyle(color: Colors.grey, fontSize: 14),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      key: const ValueKey('error'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 72,
+              color: _accentRed.withValues(alpha: 0.7),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              "Could not load tasks",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "Pull the latest data again in a moment.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey, fontSize: 14),
+            ),
+            const SizedBox(height: 18),
+            OutlinedButton.icon(
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text("Retry"),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _accentGreen,
+                side: const BorderSide(color: _accentGreen),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -652,48 +709,26 @@ class _TodoListScreenState extends State<TodoListScreen> {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
-                    Icon(
-                      Icons.calendar_today,
-                      size: 12,
-                      color: Colors.white.withValues(alpha: 0.4),
+                    _buildTaskMetaPill(
+                      icon: Icons.calendar_today,
+                      label: DateFormat.MMMd().format(_displayDate(task)),
+                      color: Colors.white54,
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      DateFormat.MMMd().format(task.dueDate),
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.5),
-                        fontSize: 12,
-                      ),
+                    _buildTaskMetaPill(
+                      icon: Icons.flag,
+                      label: task.priority,
+                      color: _getPriorityColor(task.priority),
                     ),
-                    const SizedBox(width: 10),
-                    // Visual Priority Badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                    if (task.isRecurring)
+                      _buildTaskMetaPill(
+                        icon: _getRecurrenceIcon(task.recurrenceType),
+                        label: _getRecurrenceLabel(task.recurrenceType),
+                        color: _accentGreen,
                       ),
-                      decoration: BoxDecoration(
-                        color: _getPriorityColor(
-                          task.priority,
-                        ).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(5),
-                        border: Border.all(
-                          color: _getPriorityColor(
-                            task.priority,
-                          ).withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Text(
-                        task.priority,
-                        style: TextStyle(
-                          color: _getPriorityColor(task.priority),
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ],
@@ -829,9 +864,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
     final titleController = TextEditingController();
     final amountController = TextEditingController();
     DateTime startDate = _selectedDate;
-    DateTime endDate = _selectedDate.add(const Duration(days: 1));
+    DateTime endDate = _selectedDate;
     String priority = 'Medium';
-    bool isRecurring = false;
+    String recurrenceType = TaskModel.recurrenceNone;
     String? selectedWalletId;
     bool enableNotification = false;
     TimeOfDay? notificationTime;
@@ -868,9 +903,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                "Create New Task",
-                style: TextStyle(
+              Text(
+                context.t("Create New Task", "إنشاء مهمة جديدة"),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
@@ -880,7 +915,10 @@ class _TodoListScreenState extends State<TodoListScreen> {
               TextField(
                 controller: titleController,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputStyle("What do you need to do?", Icons.title),
+                decoration: _inputStyle(
+                  context.t("What do you need to do?", "ماذا تريد أن تفعل؟"),
+                  Icons.title,
+                ),
               ),
               const SizedBox(height: 15),
               GestureDetector(
@@ -941,49 +979,26 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 ),
               ),
               const SizedBox(height: 15),
-              Row(
+              Column(
                 children: [
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _cardColor,
-                        borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.white10),
-                      ),
-                      child: CheckboxListTile(
-                        title: const Text(
-                          "Daily",
-                          style: TextStyle(color: Colors.white, fontSize: 14),
-                        ),
-                        value: isRecurring,
-                        activeColor: _accentGreen,
-                        checkColor: Colors.black,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                        ),
-                        onChanged: (v) =>
-                            setModalState(() => isRecurring = v ?? false),
-                      ),
-                    ),
+                  _buildRecurrenceSelector(
+                    recurrenceType,
+                    (value) => setModalState(() => recurrenceType = value),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: priority,
-                      dropdownColor: _cardColor,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      decoration: _inputStyle("Priority", Icons.flag),
-                      items: ['Low', 'Medium', 'High']
-                          .map(
-                            (p) => DropdownMenuItem(value: p, child: Text(p)),
-                          )
-                          .toList(),
-                      onChanged: (val) => setModalState(() => priority = val!),
+                  const SizedBox(height: 15),
+                  DropdownButtonFormField<String>(
+                    initialValue: priority,
+                    dropdownColor: _cardColor,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
+                    decoration: _inputStyle("Priority", Icons.flag),
+                    items: ['Low', 'Medium', 'High']
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
+                    onChanged: (val) => setModalState(() => priority = val!),
                   ),
                 ],
               ),
@@ -1064,9 +1079,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 padding: EdgeInsets.symmetric(vertical: 20),
                 child: Divider(color: Colors.white10),
               ),
-              const Text(
-                "Link to Wallet (Optional)",
-                style: TextStyle(color: Colors.white70, fontSize: 14),
+              Text(
+                context.t("Link to Wallet (Optional)", "ربط بمحفظة (اختياري)"),
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
               ),
               const SizedBox(height: 10),
               Row(
@@ -1146,7 +1161,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
                       endDate: endDate,
                       priority: priority,
                       userId: user.id,
-                      isRecurring: isRecurring,
+                      isRecurring: recurrenceType != TaskModel.recurrenceNone,
+                      recurrenceType: recurrenceType,
                       linkedWalletId: selectedWalletId,
                       amount: double.tryParse(amountController.text) ?? 0.0,
                       hasNotification:
@@ -1158,27 +1174,23 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     );
 
                     if (enableNotification && notificationTime != null) {
-                      if (taskDueDate.isAfter(DateTime.now())) {
-                        await NotificationService().scheduleNotification(
-                          insertedTask.id.hashCode,
-                          'FinMind Task Reminder',
-                          insertedTask.title,
-                          taskDueDate,
-                        );
+                      final scheduled = await NotificationService()
+                          .scheduleTaskReminder(
+                            id: NotificationService.taskReminderId(
+                              insertedTask.id,
+                            ),
+                            title: 'FinMind Task Reminder',
+                            body: insertedTask.title,
+                            firstDateTime: taskDueDate,
+                            recurrenceType: recurrenceType,
+                          );
 
-                        debugPrint(
-                          "Task notification scheduled at: $taskDueDate",
-                        );
+                      debugPrint("Task notification scheduled: $scheduled");
 
-                        await _supabaseService.updateTaskNotificationStatus(
-                          insertedTask.id,
-                          true,
-                        );
-                      } else {
-                        debugPrint(
-                          "Task notification not scheduled because time is in the past.",
-                        );
-                      }
+                      await _supabaseService.updateTaskNotificationStatus(
+                        insertedTask.id,
+                        scheduled,
+                      );
                     }
 
                     if (!mounted) return;
@@ -1195,9 +1207,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                   elevation: 5,
                   shadowColor: _accentGreen.withValues(alpha: 0.5),
                 ),
-                child: const Text(
-                  "CREATE TASK",
-                  style: TextStyle(
+                child: Text(
+                  context.t("CREATE TASK", "إنشاء المهمة"),
+                  style: const TextStyle(
                     color: Colors.black,
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
@@ -1230,7 +1242,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
       existingTask.endDate.day,
     );
     String priority = existingTask.priority;
-    bool isRecurring = existingTask.isRecurring;
+    String recurrenceType = existingTask.recurrenceType;
     String? selectedWalletId = existingTask.linkedWalletId;
 
     bool enableNotification = existingTask.hasNotification;
@@ -1270,9 +1282,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                "Edit Task",
-                style: TextStyle(
+              Text(
+                context.t("Edit Task", "تعديل المهمة"),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
@@ -1282,7 +1294,10 @@ class _TodoListScreenState extends State<TodoListScreen> {
               TextField(
                 controller: titleController,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputStyle("Task Title", Icons.edit),
+                decoration: _inputStyle(
+                  context.t("Task Title", "عنوان المهمة"),
+                  Icons.edit,
+                ),
               ),
               const SizedBox(height: 15),
               GestureDetector(
@@ -1328,46 +1343,26 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 ),
               ),
               const SizedBox(height: 15),
-              Row(
+              Column(
                 children: [
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _cardColor,
-                        borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.white10),
-                      ),
-                      child: CheckboxListTile(
-                        title: const Text(
-                          "Daily",
-                          style: TextStyle(color: Colors.white, fontSize: 14),
-                        ),
-                        value: isRecurring,
-                        activeColor: _accentGreen,
-                        checkColor: Colors.black,
-                        onChanged: (v) =>
-                            setModalState(() => isRecurring = v ?? false),
-                      ),
-                    ),
+                  _buildRecurrenceSelector(
+                    recurrenceType,
+                    (value) => setModalState(() => recurrenceType = value),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: priority,
-                      dropdownColor: _cardColor,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      decoration: _inputStyle("Priority", Icons.flag),
-                      items: ['Low', 'Medium', 'High']
-                          .map(
-                            (p) => DropdownMenuItem(value: p, child: Text(p)),
-                          )
-                          .toList(),
-                      onChanged: (val) => setModalState(() => priority = val!),
+                  const SizedBox(height: 15),
+                  DropdownButtonFormField<String>(
+                    initialValue: priority,
+                    dropdownColor: _cardColor,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
+                    decoration: _inputStyle("Priority", Icons.flag),
+                    items: ['Low', 'Medium', 'High']
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
+                    onChanged: (val) => setModalState(() => priority = val!),
                   ),
                 ],
               ),
@@ -1515,7 +1510,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
                       priority: priority,
                       isCompleted: existingTask.isCompleted,
                       userId: existingTask.userId,
-                      isRecurring: isRecurring,
+                      isRecurring: recurrenceType != TaskModel.recurrenceNone,
+                      recurrenceType: recurrenceType,
                       linkedWalletId: selectedWalletId,
                       amount: double.tryParse(amountController.text) ?? 0.0,
                       hasNotification:
@@ -1532,11 +1528,6 @@ class _TodoListScreenState extends State<TodoListScreen> {
                           : null,
                     );
 
-                    await _supabaseService.updateTaskNotificationStatus(
-                      existingTask.id,
-                      enableNotification && notificationTime != null,
-                    );
-
                     if (!mounted) return;
                     Navigator.pop(context);
                     _refresh();
@@ -1549,9 +1540,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     borderRadius: BorderRadius.circular(15),
                   ),
                 ),
-                child: const Text(
-                  "UPDATE TASK",
-                  style: TextStyle(
+                child: Text(
+                  context.t("UPDATE TASK", "تحديث المهمة"),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
@@ -1565,6 +1556,129 @@ class _TodoListScreenState extends State<TodoListScreen> {
         ),
       ),
     );
+  }
+
+  DateTime _displayDate(TaskModel task) => task.occurrenceDate ?? task.dueDate;
+
+  Widget _buildTaskMetaPill({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecurrenceSelector(
+    String selectedValue,
+    ValueChanged<String> onChanged,
+  ) {
+    final options = [
+      (
+        value: TaskModel.recurrenceNone,
+        label: context.t('None', 'بدون'),
+        icon: Icons.event_available,
+      ),
+      (
+        value: TaskModel.recurrenceDaily,
+        label: context.t('Daily', 'يومي'),
+        icon: Icons.repeat,
+      ),
+      (
+        value: TaskModel.recurrenceMonthly,
+        label: context.t('Monthly', 'شهري'),
+        icon: Icons.calendar_month,
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: options.map((option) {
+          final isSelected = selectedValue == option.value;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => onChanged(option.value),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _accentGreen : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        option.icon,
+                        size: 18,
+                        color: isSelected ? Colors.black : Colors.white54,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        option.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isSelected ? Colors.black : Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  String _getRecurrenceLabel(String recurrenceType) {
+    return switch (recurrenceType) {
+      TaskModel.recurrenceDaily => context.t('Daily', 'يومي'),
+      TaskModel.recurrenceMonthly => context.t('Monthly', 'شهري'),
+      _ => context.t('Once', 'مرة واحدة'),
+    };
+  }
+
+  IconData _getRecurrenceIcon(String recurrenceType) {
+    return switch (recurrenceType) {
+      TaskModel.recurrenceDaily => Icons.repeat,
+      TaskModel.recurrenceMonthly => Icons.calendar_month,
+      _ => Icons.event_available,
+    };
   }
 
   InputDecoration _inputStyle(String label, IconData icon) => InputDecoration(
