@@ -1219,14 +1219,24 @@ class _TodoListScreenState extends State<TodoListScreen> {
     final amountController = TextEditingController(
       text: existingTask.amount > 0 ? existingTask.amount.toString() : '',
     );
-    DateTime startDate = existingTask.dueDate;
-    DateTime endDate = existingTask.endDate;
+    DateTime startDate = DateTime(
+      existingTask.dueDate.year,
+      existingTask.dueDate.month,
+      existingTask.dueDate.day,
+    );
+    DateTime endDate = DateTime(
+      existingTask.endDate.year,
+      existingTask.endDate.month,
+      existingTask.endDate.day,
+    );
     String priority = existingTask.priority;
     bool isRecurring = existingTask.isRecurring;
     String? selectedWalletId = existingTask.linkedWalletId;
 
     bool enableNotification = existingTask.hasNotification;
-    TimeOfDay? notificationTime;
+    TimeOfDay? notificationTime = existingTask.hasNotification
+        ? TimeOfDay.fromDateTime(existingTask.dueDate)
+        : null;
 
     final walletsFuture = _supabaseService.getWallets();
 

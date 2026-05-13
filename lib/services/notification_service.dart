@@ -82,6 +82,7 @@ class NotificationService {
         >();
 
     await androidImplementation?.requestNotificationsPermission();
+    await androidImplementation?.requestExactAlarmsPermission();
 
     tz.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation('Asia/Amman'));
@@ -159,19 +160,11 @@ class NotificationService {
           enableVibration: true,
           styleInformation: BigTextStyleInformation(body),
         );
-    await NotificationService().showInstantNotification(
-      "Test Notification",
-      "If you see this, instant notifications work.",
-    );
+
     final NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
     );
-    await NotificationService().scheduleNotification(
-      999999,
-      "FinMind Task Reminder",
-      "Test reminder after one minute",
-      DateTime.now().add(const Duration(minutes: 1)),
-    );
+
     await flutterLocalNotificationsPlugin.show(
       _generateNotificationId(),
       title,

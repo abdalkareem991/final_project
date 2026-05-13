@@ -26,6 +26,7 @@ class SMSListenerService {
 
   bool _isStarted = false;
   bool _isSyncing = false;
+  DateTime? _lastSyncAttemptAt;
   DateTime? _lastNetworkErrorAt;
 
   static DateTime? lastSyncTime;
@@ -33,13 +34,21 @@ class SMSListenerService {
   static String lastSyncStatus = "Not started";
 
   static const Duration _syncInterval = Duration(minutes: 2);
+  static const Duration _minSyncGap = Duration(seconds: 20);
   static const Duration _networkCooldown = Duration(minutes: 2);
   static const int _recentMessagesLimit = 10;
 
   Future<void> startListening() async {
     if (_isStarted && _smsSyncTimer != null) {
+      debugPrint("SMS Auto Sync already running.");
       return;
     }
+
+    if (_isStarted) {
+      debugPrint("SMS Auto Sync is already starting.");
+      return;
+    }
+
     _isStarted = true;
 
     final bool? permission = await telephony.requestPhoneAndSmsPermissions;
@@ -53,14 +62,29 @@ class SMSListenerService {
 
     _smsSyncTimer?.cancel();
 
-    await syncNow();
+    Future.delayed(const Duration(seconds: 3), () {
+      if (_isStarted) {
+        syncNow();
+      }
+    });
 
     _smsSyncTimer = Timer.periodic(_syncInterval, (_) async {
       await syncNow();
     });
   }
 
-  Future<void> syncNow() async {
+  Future<void> syncNow({bool force = false}) async {
+    final now = DateTime.now();
+
+    if (!force && _lastSyncAttemptAt != null) {
+      final diff = now.difference(_lastSyncAttemptAt!);
+      if (diff < _minSyncGap) {
+        debugPrint("SMS sync skipped: too soon.");
+        return;
+      }
+    }
+
+    _lastSyncAttemptAt = now;
     await _syncLatestBankSms();
   }
 
@@ -115,9 +139,7 @@ class SMSListenerService {
           uniqueMessages[key] = message;
         }
 
-        if (messages.isNotEmpty) {
-          debugPrint("Messages found using sender candidate: $candidate");
-        }
+        // Keep release logging quiet; only errors are printed below.
       } catch (e) {
         debugPrint("Sender candidate failed: $candidate => $e");
       }
@@ -165,19 +187,13 @@ class SMSListenerService {
             wallet.smsSenderId!.trim().isNotEmpty;
       }).toList();
 
-      debugPrint("Automated wallets count: ${automatedWallets.length}");
-
       for (final wallet in automatedWallets) {
         final String sender = wallet.smsSenderId!.trim();
 
         try {
-          debugPrint("Checking SMS sender: $sender");
-
           final messages = await _getMessagesForSender(
             sender,
           ); // This method now handles multiple sender candidates and deduplicates messages
-
-          debugPrint("Messages found for $sender: ${messages.length}");
 
           if (messages.isEmpty) continue;
 
@@ -220,8 +236,6 @@ class SMSListenerService {
             final Map<String, dynamic>? parsedData = _aiService
                 .parseBankSmsLocally(normalizedBody, sender: sender);
 
-            debugPrint("Local parser result for $sender: $parsedData");
-
             if (parsedData == null) {
               _ignoredInMemory.add(smsHash);
               continue;
@@ -237,8 +251,6 @@ class SMSListenerService {
 
             _processedInMemory.add(smsHash);
             processedCount++;
-
-            debugPrint("SMS synced into dashboard.");
           }
         } catch (walletError) {
           debugPrint("SMS sync error for sender $sender: $walletError");
@@ -277,6 +289,7 @@ class SMSListenerService {
     _smsSyncTimer = null;
     _isStarted = false;
     _isSyncing = false;
+    _lastSyncAttemptAt = null;
     lastSyncStatus = "Stopped";
     // debugPrint("SMS Auto Sync stopped.");
   }

@@ -40,7 +40,7 @@ class TransactionModel {
   Map<String, dynamic> toJson() => {
     'amount': amount,
     'description': description,
-    'date': date.toIso8601String(),
+    'date': date.toUtc().toIso8601String(),
     'type': type,
     'category_id': categoryId,
     'wallet_id': walletId,

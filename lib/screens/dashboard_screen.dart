@@ -248,7 +248,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           SMSListenerService.lastSyncStatus = "Syncing";
         });
 
-        await SMSListenerService().syncNow();
+        await SMSListenerService().syncNow(force: true);
 
         if (mounted) {
           setState(() {});

@@ -313,7 +313,8 @@ class AIService {
 
   // Detects Orange Money-specific SMS kind.
   String _detectOrangeMoneySmsKind(String text) {
-    if (text.contains('تم استقبال حواله ماليه')) {
+    if (text.contains('تم استقبال حواله ماليه') ||
+        text.contains('الى محفظتك')) {
       return 'Orange Money Transfer In';
     }
 

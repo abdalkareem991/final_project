@@ -516,6 +516,8 @@ class SupabaseService {
         );
       }
 
+      await updateProfileNetWorth();
+
       debugPrint("Transaction created successfully: $transactionId");
       debugPrint("Wallet balance updated: $newBalance");
 
@@ -582,6 +584,8 @@ class SupabaseService {
             'description': newTx['description'],
           })
           .eq('id', oldTx['id']);
+
+      await updateProfileNetWorth();
 
       debugPrint('Transaction successfully updated and balanced restored.');
     } catch (error) {
@@ -708,6 +712,8 @@ class SupabaseService {
           .from('wallets')
           .update({'balance': correctedBalance})
           .eq('id', walletId);
+
+      await updateProfileNetWorth();
     } catch (error) {
       debugPrint('Delete Transaction Error: $error');
       rethrow;
@@ -793,6 +799,8 @@ class SupabaseService {
         .from('wallets')
         .update({'balance': newBalance})
         .eq('id', walletId);
+
+    await updateProfileNetWorth();
 
     debugPrint("Wallet reversed: $walletId => $newBalance");
   }
@@ -1015,6 +1023,8 @@ class SupabaseService {
           .update({'balance': newBalance})
           .eq('id', task.linkedWalletId!);
 
+      await updateProfileNetWorth();
+
       await client.from('transactions').insert({
         'user_id': task.userId,
         'wallet_id': task.linkedWalletId,
@@ -1060,7 +1070,7 @@ class SupabaseService {
           .select('amount, type')
           .eq('user_id', user.id)
           .eq('is_internal_transfer', false)
-          .gte('date', startDate.toIso8601String());
+          .gte('date', startDate.toUtc().toIso8601String());
 
       Map<String, double> summary = {'Income': 0.0, 'Expense': 0.0};
 
