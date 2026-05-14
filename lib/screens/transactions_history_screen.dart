@@ -1,10 +1,14 @@
 // ignore_for_file: deprecated_member_use
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/app_text.dart';
+import '../models/category_model.dart';
+import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
 
+/// Full transaction history view with search, filters, and row-level actions.
 class TransactionsHistoryScreen extends StatefulWidget {
   const TransactionsHistoryScreen({super.key});
 
@@ -14,6 +18,7 @@ class TransactionsHistoryScreen extends StatefulWidget {
 }
 
 class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
+  // Local UI state for filtering the live transaction stream.
   final SupabaseService _supabaseService = SupabaseService();
   final TextEditingController _searchController = TextEditingController();
 
@@ -25,6 +30,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
 
   String _searchText = '';
   String _typeFilter = 'All';
+  bool _showHidden = false;
 
   @override
   void dispose() {
@@ -32,6 +38,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     super.dispose();
   }
 
+  /// Applies text search, type filters, and internal transfer filtering.
   List<Map<String, dynamic>> _applyFilters(List<Map<String, dynamic>> data) {
     return data.where((tx) {
       final description = (tx['description'] ?? '').toString().toLowerCase();
@@ -74,9 +81,14 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} $hour:$minute";
   }
 
+  // ---------------------------------------------------------------------------
+  // Transaction rows and row actions
+  // ---------------------------------------------------------------------------
+
   Widget _buildTransactionTile(Map<String, dynamic> tx) {
     final bool isInternalTransfer = tx['is_internal_transfer'] == true;
     final bool isExpense = tx['type'] == 'Expense';
+    final bool isHidden = tx['is_hidden'] == true;
 
     final String walletName =
         tx['wallet_name']?.toString() ?? 'Unknown Account';
@@ -111,56 +123,557 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
         ? '-'
         : '+';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _cardColor,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: color.withOpacity(0.12),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title.isEmpty ? context.t("Transaction", "حركة") : title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+    return Opacity(
+      opacity: isHidden ? 0.5 : 1,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: _cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: isHidden
+              ? Border.all(color: Colors.white.withOpacity(0.12))
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => _showTransactionDetailsDialog(tx),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: color.withOpacity(0.12),
+                    child: Icon(icon, color: color),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _formatDateTime(tx['created_at']),
-                  style: const TextStyle(color: Colors.grey, fontSize: 11),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title.isEmpty
+                              ? context.t("Transaction", "حركة")
+                              : title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatDateTime(tx['date'] ?? tx['created_at']),
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    "$sign${_formatAmount((tx['amount'] as num).toDouble())}",
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                  ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(
+                      Icons.more_vert,
+                      color: Colors.grey,
+                      size: 20,
+                    ),
+                    color: _bgColor,
+                    onSelected: (value) async {
+                      if (value == 'details') {
+                        _showTransactionDetailsDialog(tx);
+                      } else if (value == 'edit') {
+                        _showTransactionEditModal(tx);
+                      } else if (value == 'hide') {
+                        await _supabaseService.hideTransaction(
+                          tx['id'].toString(),
+                        );
+                        if (mounted) setState(() {});
+                      } else if (value == 'unhide') {
+                        await _supabaseService.unhideTransaction(
+                          tx['id'].toString(),
+                        );
+                        if (mounted) setState(() {});
+                      } else if (value == 'delete') {
+                        await _deleteTransactionWithConfirm(tx);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'details',
+                        child: _menuRow(
+                          Icons.info_outline,
+                          Colors.blueAccent,
+                          context.t("Details", "التفاصيل"),
+                        ),
+                      ),
+                      if (!isInternalTransfer)
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: _menuRow(
+                            Icons.edit,
+                            Colors.orangeAccent,
+                            context.t("Edit", "تعديل"),
+                          ),
+                        ),
+                      PopupMenuItem(
+                        value: isHidden ? 'unhide' : 'hide',
+                        child: _menuRow(
+                          isHidden ? Icons.visibility : Icons.visibility_off,
+                          Colors.grey,
+                          isHidden
+                              ? context.t("Unhide", "إظهار")
+                              : context.t("Hide", "إخفاء"),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: _menuRow(
+                          Icons.delete,
+                          Colors.redAccent,
+                          context.t("Delete", "حذف"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
-          Text(
-            "$sign${_formatAmount((tx['amount'] as num).toDouble())}",
-            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  Widget _menuRow(IconData icon, Color color, String label) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: Colors.white)),
+      ],
+    );
+  }
+
+  /// Displays all persisted transaction metadata in a compact dialog.
+  void _showTransactionDetailsDialog(Map<String, dynamic> tx) {
+    final bool isInternalTransfer = tx['is_internal_transfer'] == true;
+    final bool isExpense = tx['type'] == 'Expense';
+    final walletName = tx['wallet_name']?.toString() ?? 'Unknown Account';
+    final categoryName = tx['category_name']?.toString() ?? 'Uncategorized';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          context.t("Transaction Details", "تفاصيل الحركة"),
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _detailRow(
+              context.t("Description", "الوصف"),
+              tx['description']?.toString() ?? '',
+            ),
+            _detailRow(
+              context.t("Amount", "المبلغ"),
+              _formatAmount((tx['amount'] as num).toDouble()),
+              valueColor: isInternalTransfer
+                  ? _transferBlue
+                  : isExpense
+                  ? _expenseRed
+                  : _accentGreen,
+            ),
+            _detailRow(
+              context.t("Type", "النوع"),
+              isInternalTransfer
+                  ? context.t("Internal Transfer", "تحويل داخلي")
+                  : context.enumText(tx['type']?.toString() ?? ''),
+            ),
+            _detailRow(context.t("Account", "الحساب"), walletName),
+            _detailRow(context.t("Category", "الفئة"), categoryName),
+            _detailRow(
+              context.t("Date", "التاريخ"),
+              _formatDateTime(tx['date'] ?? tx['created_at']),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(context.t("Close", "إغلاق")),
           ),
         ],
       ),
     );
   }
+
+  Widget _detailRow(
+    String label,
+    String value, {
+    Color valueColor = Colors.white,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey)),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              value.isEmpty ? '-' : value,
+              textAlign: TextAlign.end,
+              style: TextStyle(color: valueColor, fontWeight: FontWeight.bold),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Deletes a transaction after confirmation and lets the service reverse it.
+  Future<void> _deleteTransactionWithConfirm(Map<String, dynamic> tx) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: Text(
+          context.t("Delete Transaction", "حذف الحركة"),
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          context.t(
+            "This will reverse the account balance. Continue?",
+            "سيؤدي ذلك إلى عكس رصيد الحساب. هل تريد المتابعة؟",
+          ),
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(context.t("Cancel", "إلغاء")),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(context.t("Delete", "حذف")),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await _supabaseService.deleteTransactionSmart(tx);
+      if (mounted) setState(() {});
+    } catch (e) {
+      _showSnack(context.t("Delete failed: $e", "فشل الحذف: $e"));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transaction editing
+  // ---------------------------------------------------------------------------
+
+  /// Edits an existing transaction in place; automated SMS hashes are preserved.
+  void _showTransactionEditModal(Map<String, dynamic> existingTx) {
+    final amountController = TextEditingController(
+      text: existingTx['amount'].toString(),
+    );
+    final descController = TextEditingController(
+      text: existingTx['description']?.toString() ?? '',
+    );
+
+    String selectedType = existingTx['type']?.toString() ?? 'Expense';
+    String? selectedWalletId = existingTx['wallet_id']?.toString();
+    int? selectedCategoryId = existingTx['category_id'] is int
+        ? existingTx['category_id'] as int
+        : int.tryParse(existingTx['category_id']?.toString() ?? '');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _bgColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+                left: 20,
+                right: 20,
+                top: 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.t("Edit Transaction", "تعديل الحركة"),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        _typeChip(
+                          context.t("Expense", "مصروف"),
+                          selectedType == 'Expense',
+                          _expenseRed,
+                          () => setModalState(() => selectedType = 'Expense'),
+                        ),
+                        const SizedBox(width: 10),
+                        _typeChip(
+                          context.t("Income", "دخل"),
+                          selectedType == 'Income',
+                          _accentGreen,
+                          () => setModalState(() => selectedType = 'Income'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: amountController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'^\d+\.?\d*'),
+                        ),
+                      ],
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputStyle(
+                        context.t("Amount (JD)", "المبلغ بالدينار"),
+                        Icons.payments,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    FutureBuilder<List<WalletModel>>(
+                      future: _supabaseService.getWallets(),
+                      builder: (context, snapshot) {
+                        final wallets = snapshot.data ?? [];
+                        final currentValue =
+                            wallets.any(
+                              (wallet) => wallet.id == selectedWalletId,
+                            )
+                            ? selectedWalletId
+                            : null;
+
+                        return DropdownButtonFormField<String>(
+                          initialValue: currentValue,
+                          dropdownColor: _cardColor,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputStyle(
+                            context.t("Account", "الحساب"),
+                            Icons.account_balance_wallet,
+                          ),
+                          items: wallets
+                              .map(
+                                (wallet) => DropdownMenuItem(
+                                  value: wallet.id,
+                                  child: Text(wallet.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (val) => selectedWalletId = val,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    FutureBuilder<List<CategoryModel>>(
+                      future: _supabaseService.getCategories(),
+                      builder: (context, snapshot) {
+                        final categories = snapshot.data ?? [];
+                        final currentValue =
+                            categories.any(
+                              (category) => category.id == selectedCategoryId,
+                            )
+                            ? selectedCategoryId
+                            : null;
+
+                        return DropdownButtonFormField<int>(
+                          initialValue: currentValue,
+                          dropdownColor: _cardColor,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputStyle(
+                            context.t("Category", "الفئة"),
+                            Icons.category,
+                          ),
+                          items: categories
+                              .map(
+                                (category) => DropdownMenuItem<int>(
+                                  value: category.id,
+                                  child: Text(category.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (val) => selectedCategoryId = val,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: descController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputStyle(
+                        context.t("Description", "الوصف"),
+                        Icons.edit,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _accentGreen,
+                        minimumSize: const Size(double.infinity, 54),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () async {
+                        final amount =
+                            double.tryParse(amountController.text.trim()) ?? 0;
+
+                        if (amount <= 0 ||
+                            selectedWalletId == null ||
+                            selectedCategoryId == null) {
+                          _showSnack(
+                            context.t(
+                              "Fill required fields with valid values.",
+                              "املأ الحقول المطلوبة بقيم صحيحة.",
+                            ),
+                          );
+                          return;
+                        }
+
+                        try {
+                          await _supabaseService.updateTransaction(
+                            oldTx: existingTx,
+                            newTx: {
+                              'wallet_id': selectedWalletId,
+                              'category_id': selectedCategoryId,
+                              'amount': amount,
+                              'type': selectedType,
+                              'description': descController.text.trim().isEmpty
+                                  ? selectedType
+                                  : descController.text.trim(),
+                            },
+                          );
+
+                          if (sheetContext.mounted) {
+                            Navigator.pop(sheetContext);
+                          }
+                          if (mounted) setState(() {});
+                        } catch (e) {
+                          _showSnack(
+                            context.t("Update failed: $e", "فشل التحديث: $e"),
+                          );
+                        }
+                      },
+                      child: Text(
+                        context.t("UPDATE TRANSACTION", "تحديث الحركة"),
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared form widgets
+  // ---------------------------------------------------------------------------
+
+  Widget _typeChip(
+    String label,
+    bool selected,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? color : _cardColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withOpacity(0.5)),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.black : Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _inputStyle(String hint, IconData icon) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.grey),
+      prefixIcon: Icon(icon, color: _accentGreen),
+      filled: true,
+      fillColor: _cardColor,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filters and screen layout
+  // ---------------------------------------------------------------------------
 
   Widget _buildFilterChip(String value) {
     final selected = _typeFilter == value;
@@ -201,6 +714,18 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
+        actions: [
+          IconButton(
+            icon: Icon(
+              _showHidden ? Icons.visibility : Icons.visibility_off,
+              color: _showHidden ? _accentGreen : Colors.grey,
+            ),
+            tooltip: _showHidden
+                ? context.t("Hide hidden", "إخفاء المخفية")
+                : context.t("Show hidden", "إظهار المخفية"),
+            onPressed: () => setState(() => _showHidden = !_showHidden),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -246,7 +771,9 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
           const SizedBox(height: 12),
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _supabaseService.getTransactionsStream(),
+              stream: _supabaseService.getTransactionsStream(
+                includeHidden: _showHidden,
+              ),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
                   return const Center(

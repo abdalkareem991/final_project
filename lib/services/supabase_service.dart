@@ -467,6 +467,12 @@ class SupabaseService {
     try {
       final user = client.auth.currentUser;
       if (user == null) throw Exception("User not logged in");
+
+      if (smsHash != null && await isSmsAlreadyProcessed(smsHash)) {
+        debugPrint("Create transaction skipped: SMS hash already exists.");
+        return null;
+      }
+
       final DateTime effectiveDate = transactionDate ?? DateTime.now();
       // 1. Insert transaction and return its ID
       final inserted = await client
@@ -1369,11 +1375,14 @@ class SupabaseService {
         merchantName: merchantName,
       );
 
-      final String description = isCliq
-          ? type == 'Income'
-                ? "CliQ transfer from ${counterparty ?? 'Unknown sender'}"
-                : "CliQ transfer to ${counterparty ?? 'Unknown receiver'}"
-          : "$smsKind - $bank";
+      final String description = _buildAutomatedTransactionDescription(
+        type: type,
+        bank: bank,
+        smsKind: smsKind,
+        merchantName: merchantName,
+        counterparty: counterparty,
+        isCliq: isCliq,
+      );
 
       final String? transactionId = await createTransaction(
         walletId: walletId,
@@ -1423,6 +1432,56 @@ class SupabaseService {
     } catch (e) {
       debugPrint("SMS automation error: $e");
     }
+  }
+
+  String _buildAutomatedTransactionDescription({
+    required String type,
+    required String bank,
+    required String smsKind,
+    required String? merchantName,
+    required String? counterparty,
+    required bool isCliq,
+  }) {
+    final cleanMerchant = _cleanDescriptionPart(merchantName);
+    final cleanCounterparty = _cleanDescriptionPart(counterparty);
+    final cleanBank = _cleanDescriptionPart(bank) ?? 'Bank';
+    final cleanKind = _cleanDescriptionPart(smsKind) ?? 'Bank Transaction';
+
+    if (isCliq) {
+      final party = cleanCounterparty ?? cleanMerchant;
+      if (party != null) {
+        return type == 'Income' ? "CliQ from $party" : "CliQ to $party";
+      }
+      return type == 'Income' ? "CliQ Transfer In" : "CliQ Transfer Out";
+    }
+
+    if (cleanMerchant != null && cleanMerchant != cleanBank) {
+      return "$cleanKind - $cleanMerchant";
+    }
+
+    return "$cleanKind - $cleanBank";
+  }
+
+  String? _cleanDescriptionPart(String? value) {
+    if (value == null) return null;
+
+    final cleaned = value
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(
+          RegExp(r'\bavailable balance\b.*', caseSensitive: false),
+          '',
+        )
+        .replaceAll(RegExp(r'\bbalance\b.*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\bauthorization\b.*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\baccount\b.*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'الرصيد.*'), '')
+        .replaceAll(RegExp(r'الحساب.*'), '')
+        .trim();
+
+    if (cleaned.isEmpty) return null;
+
+    if (cleaned.length <= 42) return cleaned;
+    return "${cleaned.substring(0, 39).trim()}...";
   }
 
   Future<bool> isSmsAlreadyProcessed(String smsHash) async {
@@ -1632,7 +1691,9 @@ $recentTransactionsText
   }
 
   /// Real-time stream for transactions
-  Stream<List<Map<String, dynamic>>> getTransactionsStream() {
+  Stream<List<Map<String, dynamic>>> getTransactionsStream({
+    bool includeHidden = false,
+  }) {
     final userId = client.auth.currentUser?.id;
     if (userId == null) return Stream.value([]);
 
@@ -1661,9 +1722,9 @@ $recentTransactionsText
             for (final category in categoriesResponse)
               category['id'].toString(): category['name'].toString(),
           };
-          final visibleTransactions = transactions
-              .where((tx) => tx['is_hidden'] != true)
-              .toList();
+          final visibleTransactions = includeHidden
+              ? transactions
+              : transactions.where((tx) => tx['is_hidden'] != true).toList();
 
           return visibleTransactions.map((tx) {
             final walletId = tx['wallet_id']?.toString();

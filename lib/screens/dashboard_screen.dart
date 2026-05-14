@@ -19,6 +19,7 @@ import 'my_account_screen.dart';
 import 'todo_list_screen.dart';
 import 'transactions_history_screen.dart';
 
+/// Root dashboard shell that owns the bottom navigation and page switching.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -27,6 +28,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  // Navigation state is kept here so each tab can refresh itself when revisited.
   int _selectedIndex = 0;
   final PageController _pageController = PageController();
 
@@ -63,6 +65,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
+  /// Refreshes tab-specific data whenever a page becomes visible again.
   void _handlePageVisible(int index) {
     if (index == 0) {
       _mainContentKey.currentState?.refreshDashboard();
@@ -148,15 +151,16 @@ class _DashboardMainContent extends StatefulWidget {
 
 class _DashboardMainContentState extends State<_DashboardMainContent>
     with WidgetsBindingObserver {
+  // Services and streams are owned by the dashboard content area.
   final _supabaseService = SupabaseService();
   final NotificationService _notificationService = NotificationService();
-  // STREAMS INTEGRATION: Replaced Futures with Streams for real-time reactivity
   late Stream<Map<String, double>> _balancesStream;
   late Stream<List<Map<String, dynamic>>> _transactionsStream;
 
-  final Set<String> _hiddenTransactions = {};
+  // UI-only preferences for the current dashboard session.
   bool _showHidden = false;
 
+  // Currency preference is applied at render time without changing stored data.
   String _currencySymbol = "JD";
   double _exchangeRate = 1.0;
 
@@ -170,9 +174,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Initialize streams for live updates on balances and transactions
+
+    // Keep balance and transaction cards reactive to Supabase changes.
     _balancesStream = _supabaseService.getBalancesStream();
-    _transactionsStream = _supabaseService.getTransactionsStream();
+    _transactionsStream = _supabaseService.getTransactionsStream(
+      includeHidden: true,
+    );
     loadCurrencyPreference();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(
@@ -201,6 +208,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     }
   }
 
+  /// Starts or stops SMS automation according to the persisted settings toggle.
   Future<void> _syncSmsAutomationFromSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final isEnabled = prefs.getBool('sms_automation_enabled') ?? false;
@@ -212,14 +220,18 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     }
   }
 
+  /// Rebuilds live streams after a manual refresh or a transaction mutation.
   void refreshDashboard() {
     loadCurrencyPreference();
     setState(() {
       _balancesStream = _supabaseService.getBalancesStream();
-      _transactionsStream = _supabaseService.getTransactionsStream();
+      _transactionsStream = _supabaseService.getTransactionsStream(
+        includeHidden: true,
+      );
     });
   }
 
+  /// Loads the preferred display currency used by dashboard totals.
   Future<void> loadCurrencyPreference() async {
     final prefs = await SharedPreferences.getInstance();
     String savedCurrency = prefs.getString('currency') ?? "JOD (JD)";
@@ -234,6 +246,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       }
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Formatting helpers
+  // ---------------------------------------------------------------------------
 
   String _formatAmount(double amount) {
     double converted = amount * _exchangeRate;
@@ -280,6 +296,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
 
     return "$hour12:$minute $period";
   }
+
+  // ---------------------------------------------------------------------------
+  // SMS sync status
+  // ---------------------------------------------------------------------------
 
   Widget _buildSmsSyncStatusLine() {
     final lastSync = SMSListenerService.lastSyncTime;
@@ -342,6 +362,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Main layout
+  // ---------------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -391,7 +415,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
-  // UPDATED: Now uses StreamBuilder for live balance updates[cite: 14]
+  // ---------------------------------------------------------------------------
+  // Balance and analytics summaries
+  // ---------------------------------------------------------------------------
+
   Widget _buildLiveTotalBalanceCard() {
     return StreamBuilder<Map<String, double>>(
       stream: _balancesStream,
@@ -493,7 +520,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
-  // UPDATED: StreamBuilder for automatic transaction logging display[cite: 14]
+  // ---------------------------------------------------------------------------
+  // Transactions list and item actions
+  // ---------------------------------------------------------------------------
+
   Widget _buildLiveTransactionsList() {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _transactionsStream,
@@ -508,11 +538,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         }
 
         final visibleTransactions = snapshot.data
-            ?.where(
-              (tx) =>
-                  _showHidden ||
-                  !_hiddenTransactions.contains(tx['id'].toString()),
-            )
+            ?.where((tx) => _showHidden || tx['is_hidden'] != true)
             .toList();
 
         if (visibleTransactions == null || visibleTransactions.isEmpty) {
@@ -529,15 +555,17 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
 
         return Column(
           children: recentTransactions.map((tx) {
-            final bool isHidden = _hiddenTransactions.contains(
-              tx['id'].toString(),
-            );
+            final bool isHidden = tx['is_hidden'] == true;
             return _buildTransactionItem(tx, isHidden: isHidden);
           }).toList(),
         );
       },
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // App bar actions
+  // ---------------------------------------------------------------------------
 
   Widget _buildLeadingIcon() => Padding(
     padding: const EdgeInsets.all(8.0),
@@ -768,6 +796,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Recent transaction cards
+  // ---------------------------------------------------------------------------
+
   Widget _buildRecentTransactionsHeader() => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
@@ -781,22 +813,21 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       ),
       Row(
         children: [
-          if (_hiddenTransactions.isNotEmpty)
-            IconButton(
-              icon: Icon(
-                _showHidden ? Icons.visibility : Icons.visibility_off,
-                color: Colors.grey,
-                size: 20,
-              ),
-              tooltip: _showHidden
-                  ? context.t("Hide invisible", "إخفاء المخفية")
-                  : context.t("Show hidden", "إظهار المخفية"),
-              onPressed: () {
-                setState(() {
-                  _showHidden = !_showHidden;
-                });
-              },
+          IconButton(
+            icon: Icon(
+              _showHidden ? Icons.visibility : Icons.visibility_off,
+              color: _showHidden ? _accentGreen : Colors.grey,
+              size: 20,
             ),
+            tooltip: _showHidden
+                ? context.t("Hide hidden", "إخفاء المخفية")
+                : context.t("Show hidden", "إظهار المخفية"),
+            onPressed: () {
+              setState(() {
+                _showHidden = !_showHidden;
+              });
+            },
+          ),
           TextButton(
             onPressed: () {
               Navigator.push(
@@ -1068,6 +1099,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  /// Shows a read-only summary for a transaction without mutating any state.
   void _showTransactionDetailsDialog(Map<String, dynamic> tx) {
     final String walletName =
         tx['wallet_name']?.toString() ??
@@ -1176,6 +1208,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  /// Confirms deletion before reversing balances and removing the transaction.
   Future<void> _deleteTransactionWithConfirm(Map<String, dynamic> tx) async {
     bool? confirm = await showDialog(
       context: context,
@@ -1217,6 +1250,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Transaction form
+  // ---------------------------------------------------------------------------
+
+  /// Handles both new manual transactions and edits to existing records.
   void _showTransactionModal({Map<String, dynamic>? existingTx}) {
     final isEditing = existingTx != null;
     final amountController = TextEditingController(
@@ -1523,6 +1561,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Form helpers
+  // ---------------------------------------------------------------------------
+
   void _showError(BuildContext context, String message) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1530,6 +1572,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  /// Adds a lightweight custom expense category without leaving the modal.
   void _showAddNewCategoryDialog(
     BuildContext context,
     StateSetter setModalState,

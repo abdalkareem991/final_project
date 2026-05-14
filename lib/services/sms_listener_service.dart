@@ -1,12 +1,34 @@
 // lib/services/sms_listener_service.dart
 
 import 'dart:async';
+import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telephony/telephony.dart';
 
+import '../core/supabase_config.dart';
 import 'ai_service.dart';
+import 'notification_service.dart';
 import 'supabase_service.dart';
+
+@pragma('vm:entry-point')
+Future<void> finmindBackgroundSmsHandler(SmsMessage message) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+
+  final prefs = await SharedPreferences.getInstance();
+  final isEnabled = prefs.getBool('sms_automation_enabled') ?? false;
+  if (!isEnabled) return;
+
+  try {
+    await SupabaseConfig.ensureInitialized();
+    await NotificationService().initNotification(requestPermissions: false);
+    await SMSListenerService().processIncomingMessage(message);
+  } catch (e) {
+    debugPrint("Background SMS sync failed: $e");
+  }
+}
 
 class SMSListenerService {
   static final SMSListenerService _instance = SMSListenerService._internal();
@@ -93,16 +115,63 @@ class SMSListenerService {
 
     try {
       telephony.listenIncomingSms(
-        listenInBackground: false,
-        onNewMessage: (_) {
+        listenInBackground: true,
+        onBackgroundMessage: finmindBackgroundSmsHandler,
+        onNewMessage: (message) {
           if (!_isStarted) return;
-          unawaited(syncNow(force: true));
+          unawaited(processIncomingMessage(message));
         },
       );
       _incomingSmsListenerRegistered = true;
     } catch (e) {
       debugPrint("Incoming SMS listener setup failed: $e");
     }
+  }
+
+  Future<bool> processIncomingMessage(SmsMessage message) async {
+    final address = message.address?.trim();
+    if (address == null || address.isEmpty) return false;
+
+    try {
+      final wallets = await _supabaseService.getWallets();
+      final automatedWallets = wallets.where((wallet) {
+        return wallet.accountMode == 'AUTOMATED' &&
+            wallet.isActiveMonitoring == true &&
+            wallet.smsSenderId != null &&
+            wallet.smsSenderId!.trim().isNotEmpty;
+      });
+
+      for (final wallet in automatedWallets) {
+        final sender = wallet.smsSenderId!.trim();
+        if (!_senderMatches(sender, address)) continue;
+
+        lastSyncStatus = "Syncing";
+        final processed = await _processSmsMessageForSender(
+          message: message,
+          sender: sender,
+        );
+
+        _lastNetworkErrorAt = null;
+        lastSyncTime = DateTime.now();
+        lastProcessedCount = processed ? 1 : 0;
+        lastSyncStatus = "Active";
+
+        return processed;
+      }
+    } catch (e) {
+      final errorText = e.toString();
+      if (errorText.contains("Failed host lookup") ||
+          errorText.contains("SocketException") ||
+          errorText.contains("Connection timed out")) {
+        _lastNetworkErrorAt = DateTime.now();
+        lastSyncStatus = "Offline";
+      } else {
+        lastSyncStatus = "Error";
+      }
+      debugPrint("Incoming SMS sync error: $e");
+    }
+
+    return false;
   }
 
   Future<void> syncNow({bool force = false}) async {
@@ -152,6 +221,72 @@ class SMSListenerService {
       trimmed.toUpperCase(),
       noSpaces.toUpperCase(),
     }.where((value) => value.isNotEmpty).toList();
+  }
+
+  bool _senderMatches(String savedSender, String incomingSender) {
+    final normalizedIncoming = incomingSender.replaceAll(' ', '').toLowerCase();
+
+    return _senderCandidates(savedSender).any(
+      (candidate) =>
+          candidate.replaceAll(' ', '').toLowerCase() == normalizedIncoming,
+    );
+  }
+
+  Future<bool> _processSmsMessageForSender({
+    required SmsMessage message,
+    required String sender,
+  }) async {
+    final String? normalizedBody = message.body
+        ?.replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .toLowerCase();
+
+    final int smsDate = message.date ?? 0;
+
+    if (normalizedBody == null || normalizedBody.isEmpty) {
+      return false;
+    }
+
+    final String smsHash = _stableSmsHash(
+      sender: sender,
+      smsDate: smsDate,
+      body: normalizedBody,
+    );
+
+    if (_processedInMemory.contains(smsHash) ||
+        _ignoredInMemory.contains(smsHash)) {
+      return false;
+    }
+
+    final bool alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
+      smsHash,
+    );
+
+    if (alreadyProcessed) {
+      _processedInMemory.add(smsHash);
+      return false;
+    }
+
+    final Map<String, dynamic>? parsedData = _aiService.parseBankSmsLocally(
+      normalizedBody,
+      sender: sender,
+    );
+
+    if (parsedData == null) {
+      _ignoredInMemory.add(smsHash);
+      return false;
+    }
+
+    parsedData['sms_timestamp'] = smsDate;
+
+    await _supabaseService.processAutomatedTransaction(
+      parsedData,
+      sender,
+      smsHash: smsHash,
+    );
+
+    _processedInMemory.add(smsHash);
+    return true;
   }
 
   Future<List<SmsMessage>> _getMessagesForSender(String sender) async {
@@ -235,54 +370,11 @@ class SMSListenerService {
               .reversed;
 
           for (final message in recentMessages) {
-            final String? normalizedBody = message.body
-                ?.replaceAll(RegExp(r'\s+'), ' ')
-                .trim()
-                .toLowerCase();
-
-            final int smsDate = message.date ?? 0;
-
-            if (normalizedBody == null || normalizedBody.isEmpty) {
-              continue;
-            }
-
-            final String smsHash = _stableSmsHash(
+            final processed = await _processSmsMessageForSender(
+              message: message,
               sender: sender,
-              smsDate: smsDate,
-              body: normalizedBody,
             );
-
-            if (_processedInMemory.contains(smsHash) ||
-                _ignoredInMemory.contains(smsHash)) {
-              continue;
-            }
-
-            final bool alreadyProcessed = await _supabaseService
-                .isSmsAlreadyProcessed(smsHash);
-
-            if (alreadyProcessed) {
-              _processedInMemory.add(smsHash);
-              continue;
-            }
-
-            final Map<String, dynamic>? parsedData = _aiService
-                .parseBankSmsLocally(normalizedBody, sender: sender);
-
-            if (parsedData == null) {
-              _ignoredInMemory.add(smsHash);
-              continue;
-            }
-
-            parsedData['sms_timestamp'] = smsDate;
-
-            await _supabaseService.processAutomatedTransaction(
-              parsedData,
-              sender,
-              smsHash: smsHash,
-            );
-
-            _processedInMemory.add(smsHash);
-            processedCount++;
+            if (processed) processedCount++;
           }
         } catch (walletError) {
           debugPrint("SMS sync error for sender $sender: $walletError");
@@ -323,6 +415,15 @@ class SMSListenerService {
     _isStarted = false;
     _isSyncing = false;
     _lastSyncAttemptAt = null;
+    try {
+      telephony.listenIncomingSms(
+        listenInBackground: false,
+        onNewMessage: (_) {},
+      );
+      _incomingSmsListenerRegistered = false;
+    } catch (e) {
+      debugPrint("Incoming SMS listener stop failed: $e");
+    }
     lastSyncStatus = "Stopped";
     // debugPrint("SMS Auto Sync stopped.");
   }

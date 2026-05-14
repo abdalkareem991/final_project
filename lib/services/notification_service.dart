@@ -65,7 +65,7 @@ class NotificationService {
     return prefs.getBool('notifications_enabled') ?? true;
   }
 
-  Future<void> initNotification() async {
+  Future<void> initNotification({bool requestPermissions = true}) async {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/launcher_icon');
 
@@ -89,8 +89,10 @@ class NotificationService {
           AndroidFlutterLocalNotificationsPlugin
         >();
 
-    await androidImplementation?.requestNotificationsPermission();
-    await androidImplementation?.requestExactAlarmsPermission();
+    if (requestPermissions) {
+      await androidImplementation?.requestNotificationsPermission();
+      await androidImplementation?.requestExactAlarmsPermission();
+    }
 
     tz.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation('Asia/Amman'));

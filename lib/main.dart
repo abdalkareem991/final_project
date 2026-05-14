@@ -3,9 +3,9 @@
 import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/app_text.dart';
+import 'core/supabase_config.dart';
 import 'core/app_theme.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
@@ -22,10 +22,7 @@ void main() async {
 
   // 3. Initialize Supabase before the app starts with your credentials
   // Ensure that these credentials remain valid in your Supabase project settings
-  await Supabase.initialize(
-    url: 'https://nkzcmxuthxwpgmhvnxcb.supabase.co',
-    anonKey: 'sb_publishable_GaooL_VcN7UWg2HgPC2z9g_7v3Zb_en',
-  );
+  await SupabaseConfig.ensureInitialized();
 
   // 4. Load saved language before the first frame. The UI stays LTR globally.
   await AppText.init();
