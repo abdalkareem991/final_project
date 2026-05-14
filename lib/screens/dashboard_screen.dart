@@ -206,7 +206,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     final isEnabled = prefs.getBool('sms_automation_enabled') ?? false;
 
     if (isEnabled) {
-      await SMSListenerService().startListening();
+      await SMSListenerService().startListening(syncImmediately: true);
     } else {
       SMSListenerService().stopListening();
     }

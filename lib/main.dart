@@ -2,6 +2,7 @@
 
 import 'package:final_project/services/notification_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/app_text.dart';
@@ -46,6 +47,11 @@ class FinancialMindApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           locale: Locale(languageCode),
           supportedLocales: const [Locale('en'), Locale('ar')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           builder: (context, child) {
             return AppLanguageScope(
               child: Directionality(

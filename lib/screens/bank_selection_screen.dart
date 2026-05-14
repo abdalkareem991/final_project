@@ -3,9 +3,11 @@
 // ignore_for_file: deprecated_member_use
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_text.dart';
 import '../models/wallet_model.dart';
+import '../services/sms_listener_service.dart';
 import '../services/supabase_service.dart';
 
 class BankSelectionScreen extends StatefulWidget {
@@ -38,9 +40,36 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
   /// Logic: Toggles the active monitoring status for an automated account
   Future<void> _toggleMonitoring(WalletModel wallet, bool status) async {
     try {
+      if (status) {
+        final started = await SMSListenerService().startListening(
+          syncImmediately: false,
+        );
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('sms_automation_enabled', started);
+
+        if (!started && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.t(
+                  "SMS permissions denied. Automatic sync was not enabled.",
+                  "تم رفض صلاحيات الرسائل. لم يتم تفعيل المزامنة التلقائية.",
+                ),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+
       await _supabaseService.updateWallet(
         wallet.copyWith(isActiveMonitoring: status),
       );
+
+      if (status) {
+        await SMSListenerService().syncNow(force: true);
+      }
 
       if (mounted) setState(() {});
 

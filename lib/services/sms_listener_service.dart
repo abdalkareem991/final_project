@@ -26,6 +26,7 @@ class SMSListenerService {
 
   bool _isStarted = false;
   bool _isSyncing = false;
+  bool _incomingSmsListenerRegistered = false;
   DateTime? _lastSyncAttemptAt;
   DateTime? _lastNetworkErrorAt;
 
@@ -38,18 +39,22 @@ class SMSListenerService {
   static const Duration _networkCooldown = Duration(minutes: 2);
   static const int _recentMessagesLimit = 10;
 
-  Future<void> startListening() async {
+  Future<bool> startListening({bool syncImmediately = false}) async {
     if (_isStarted && _smsSyncTimer != null) {
       debugPrint("SMS Auto Sync already running.");
-      return;
+      if (syncImmediately) {
+        await syncNow(force: true);
+      }
+      return true;
     }
 
     if (_isStarted) {
       debugPrint("SMS Auto Sync is already starting.");
-      return;
+      return true;
     }
 
     _isStarted = true;
+    lastSyncStatus = "Starting";
 
     final bool? permission = await telephony.requestPhoneAndSmsPermissions;
     // debugPrint("SMS permission: $permission");
@@ -57,20 +62,47 @@ class SMSListenerService {
     if (permission != true) {
       _isStarted = false;
       lastSyncStatus = "Permission denied";
-      return;
+      return false;
     }
 
     _smsSyncTimer?.cancel();
 
-    Future.delayed(const Duration(seconds: 3), () {
-      if (_isStarted) {
-        syncNow();
-      }
-    });
+    _startForegroundIncomingSmsListener();
 
     _smsSyncTimer = Timer.periodic(_syncInterval, (_) async {
       await syncNow();
     });
+
+    if (syncImmediately) {
+      await syncNow(force: true);
+    } else {
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 3), () async {
+          if (_isStarted) {
+            await syncNow(force: true);
+          }
+        }),
+      );
+    }
+
+    return true;
+  }
+
+  void _startForegroundIncomingSmsListener() {
+    if (_incomingSmsListenerRegistered) return;
+
+    try {
+      telephony.listenIncomingSms(
+        listenInBackground: false,
+        onNewMessage: (_) {
+          if (!_isStarted) return;
+          unawaited(syncNow(force: true));
+        },
+      );
+      _incomingSmsListenerRegistered = true;
+    } catch (e) {
+      debugPrint("Incoming SMS listener setup failed: $e");
+    }
   }
 
   Future<void> syncNow({bool force = false}) async {
@@ -258,6 +290,7 @@ class SMSListenerService {
         }
       }
 
+      _lastNetworkErrorAt = null;
       lastSyncTime = DateTime.now();
       lastProcessedCount = processedCount;
       lastSyncStatus = "Active";

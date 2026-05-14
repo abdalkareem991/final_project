@@ -3,11 +3,13 @@
 // ignore_for_file: deprecated_member_use
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telephony/telephony.dart';
 
 import '../core/app_text.dart';
 import '../models/wallet_model.dart';
 import '../services/ai_service.dart';
+import '../services/sms_listener_service.dart';
 import '../services/supabase_service.dart';
 import '../widgets/debts_section_widget.dart';
 
@@ -90,6 +92,23 @@ class MyAccountScreenState extends State<MyAccountScreen>
     if (!mounted) return;
     setState(() => _initStreams());
     await _debtsSectionKey.currentState?.refreshDebts();
+  }
+
+  Future<void> _enableSmsAutomationForAutomatedWallet() async {
+    final started = await SMSListenerService().startListening(
+      syncImmediately: true,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('sms_automation_enabled', started);
+
+    if (!started && mounted) {
+      _showSnack(
+        context.t(
+          "SMS permissions denied. Automatic sync was not enabled.",
+          "تم رفض صلاحيات الرسائل. لم يتم تفعيل المزامنة التلقائية.",
+        ),
+      );
+    }
   }
 
   Future<void> _deleteWallet(String walletId) async {
@@ -611,6 +630,10 @@ class MyAccountScreenState extends State<MyAccountScreen>
                         await _supabaseService.updateWallet(walletData);
                       } else {
                         await _supabaseService.addWallet(walletData);
+                      }
+
+                      if (walletData.accountMode == 'AUTOMATED') {
+                        await _enableSmsAutomationForAutomatedWallet();
                       }
 
                       debugPrint(

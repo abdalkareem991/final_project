@@ -260,6 +260,18 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             children: [
               const SizedBox(height: 40),
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  tooltip: context.t(
+                    'Switch to Arabic',
+                    'التبديل إلى الإنجليزية',
+                  ),
+                  onPressed: AppText.toggle,
+                  icon: const Icon(Icons.language, color: Color(0xFF00E676)),
+                ),
+              ),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

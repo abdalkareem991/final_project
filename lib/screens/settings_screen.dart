@@ -201,8 +201,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
 
         await _updatePreference('sms_automation_enabled', true);
-        await SMSListenerService().startListening();
-        await SMSListenerService().syncNow(force: true);
+        final started = await SMSListenerService().startListening(
+          syncImmediately: true,
+        );
+        if (!started) {
+          await _updatePreference('sms_automation_enabled', false);
+          _showSnack(
+            context.t(
+              "SMS permissions denied. Automation was not enabled.",
+              "تم رفض صلاحيات الرسائل. لم يتم تفعيل الأتمتة.",
+            ),
+            isError: true,
+          );
+          return;
+        }
         _showSnack(
           context.t(
             "SMS automation is now active.",
