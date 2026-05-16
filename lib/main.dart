@@ -31,6 +31,7 @@ void main() async {
   runApp(const FinancialMindApp());
 }
 
+// The FinancialMindApp is the root widget of the application, responsible for setting up localization, theming, and routing.
 class FinancialMindApp extends StatelessWidget {
   const FinancialMindApp({super.key});
 
