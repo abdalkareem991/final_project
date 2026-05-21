@@ -5,7 +5,6 @@ import 'package:google_generative_ai/google_generative_ai.dart';
 
 class AIService {
   // Stores the Gemini API key used for the AI assistant only.
-  // Keep your real key here or move it later to a secure environment/config file.
   final String _apiKey = "AIzaSyB3o37ExwfLr8dcI-KeJzU007-3h1IkBOE";
 
   late final GenerativeModel _model;

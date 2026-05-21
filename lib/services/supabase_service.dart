@@ -56,14 +56,14 @@ class SupabaseService {
   }) async {
     try {
       final existing = await client
-          .from('profiles')
+          .from('users')
           .select('id')
           .eq('id', userId)
           .maybeSingle();
 
       if (existing != null) return;
 
-      await client.from('profiles').insert({
+      await client.from('users').insert({
         'id': userId,
         'full_name': (fullName == null || fullName.trim().isEmpty)
             ? 'Financial Mind User'
@@ -108,7 +108,7 @@ class SupabaseService {
     String phone,
   ) async {
     try {
-      await client.from('profiles').insert({
+      await client.from('users').insert({
         'id': id,
         'full_name': userName,
         'phone': phone,
@@ -126,7 +126,7 @@ class SupabaseService {
       if (user == null) throw Exception("User not logged in");
 
       final response = await client
-          .from('profiles')
+          .from('users')
           .select()
           .eq('id', user.id)
           .single();
@@ -145,7 +145,7 @@ class SupabaseService {
       final total = await calculateTotalNetWorth();
 
       await client
-          .from('profiles')
+          .from('users')
           .update({'total_net_worth': total})
           .eq('id', user.id);
 
