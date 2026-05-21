@@ -98,16 +98,16 @@ class AppTheme {
   );
 
   static const AppThemeColors lightColors = AppThemeColors(
-    background: Color(0xFFBDFFDD),
-    surface: Color(0xFFF6FFF9),
-    field: Color(0xFFE4F9EC),
-    primary: Color(0xFF008E73),
+    background: Color(0xFFF4F8FF),
+    surface: Colors.white,
+    field: Color(0xFFEAF2FF),
+    primary: Color(0xFF2563EB),
     onPrimary: Colors.white,
-    textPrimary: Color(0xFF12211F),
-    textSecondary: Color(0xFF415451),
-    textMuted: Color(0xFF6A7A77),
-    subtleBorder: Color(0x1F12211F),
-    expense: Color(0xFFD94B4B),
+    textPrimary: Color(0xFF0F172A),
+    textSecondary: Color(0xFF334155),
+    textMuted: Color(0xFF64748B),
+    subtleBorder: Color(0x1F2563EB),
+    expense: Color(0xFFDC2626),
     transfer: Color(0xFF2563EB),
   );
 
@@ -176,6 +176,34 @@ class AppTheme {
       cardTheme: CardThemeData(
         color: colors.surface,
         surfaceTintColor: Colors.transparent,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: colors.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: colors.surface,
+        contentTextStyle: TextStyle(color: colors.textPrimary),
+        actionTextColor: colors.primary,
+      ),
+      dividerTheme: DividerThemeData(color: colors.subtleBorder),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: colors.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: colors.primary,
+        foregroundColor: colors.onPrimary,
+      ),
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return colors.primary;
+          }
+          return colors.field;
+        }),
+        checkColor: WidgetStateProperty.all(colors.onPrimary),
+        side: BorderSide(color: colors.subtleBorder),
       ),
       popupMenuTheme: PopupMenuThemeData(
         color: colors.surface,

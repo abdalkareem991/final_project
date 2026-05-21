@@ -39,11 +39,11 @@ class MyAccountScreenState extends State<MyAccountScreen>
   Color get _bgColor => _colors.background;
   Color get _cardColor => _colors.surface;
   Color get _accentGreen => _colors.primary;
+  Color get _accentBlue => _colors.transfer;
+  Color get _expenseRed => _colors.expense;
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
   Color get _mutedTextColor => _colors.textMuted;
-  static const Color _accentBlue = Color(0xFF3B82F6);
-  static const Color _expenseRed = Color(0xFFFF5252);
 
   @override
   void initState() {
@@ -195,8 +195,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 ),
                 child: Text(
                   context.t("Your Wallets", "محافظك"),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
@@ -215,11 +215,11 @@ class MyAccountScreenState extends State<MyAccountScreen>
         child: FloatingActionButton.extended(
           heroTag: 'account_add_btn',
           backgroundColor: _accentGreen,
-          icon: const Icon(Icons.add, color: Colors.black),
+          icon: Icon(Icons.add, color: _colors.onPrimary),
           label: Text(
             context.t("Add New Account", "إضافة حساب جديد"),
-            style: const TextStyle(
-              color: Colors.black,
+            style: TextStyle(
+              color: _colors.onPrimary,
               fontWeight: FontWeight.bold,
               fontSize: 16,
             ),
@@ -254,7 +254,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
               Text(
                 context.t("CREDIT TOTAL", "إجمالي الرصيد"),
                 style: TextStyle(
-                  color: Colors.black.withOpacity(0.5),
+                  color: _colors.onPrimary.withOpacity(0.72),
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 1.5,
@@ -348,8 +348,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
               children: [
                 Text(
                   account.name,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                   ),
@@ -366,15 +366,15 @@ class MyAccountScreenState extends State<MyAccountScreen>
           ),
           Text(
             "JD ${account.balance.toStringAsFixed(2)}",
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textColor,
               fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
           const SizedBox(width: 5),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
+            icon: Icon(Icons.more_vert, color: _mutedTextColor, size: 20),
             color: _cardColor,
             onSelected: (value) {
               if (value == 'edit') {
@@ -396,7 +396,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 value: 'delete',
                 child: Text(
                   context.t("Delete", "حذف"),
-                  style: const TextStyle(color: _expenseRed),
+                  style: TextStyle(color: _expenseRed),
                 ),
               ),
             ],
@@ -447,7 +447,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     width: 40,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: Colors.white24,
+                      color: _mutedTextColor.withValues(alpha: 0.35),
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
@@ -457,8 +457,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                   isEditing
                       ? context.t("Edit Account", "تعديل الحساب")
                       : context.t("Add New Account", "إضافة حساب جديد"),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
                   ),
@@ -554,8 +554,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontWeight: FontWeight.bold,
                   ),
                   decoration: _inputDecoration(
@@ -664,8 +664,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     isEditing
                         ? context.t("UPDATE ACCOUNT", "تحديث الحساب")
                         : context.t("SAVE ACCOUNT", "حفظ الحساب"),
-                    style: const TextStyle(
-                      color: Colors.black,
+                    style: TextStyle(
+                      color: _colors.onPrimary,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -833,13 +833,13 @@ class MyAccountScreenState extends State<MyAccountScreen>
   InputDecoration _inputDecoration(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+      labelStyle: TextStyle(color: _mutedTextColor, fontSize: 14),
       prefixIcon: Icon(icon, color: _accentGreen, size: 22),
       filled: true,
       fillColor: _cardColor,
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
-        borderSide: const BorderSide(color: Colors.white10),
+        borderSide: BorderSide(color: _colors.subtleBorder),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),

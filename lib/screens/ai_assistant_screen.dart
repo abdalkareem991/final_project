@@ -353,11 +353,11 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
               child: Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       "Chat History",
                       style: TextStyle(
-                        color: Colors.white,
+                        color: _textColor,
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
@@ -374,7 +374,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                 ],
               ),
             ),
-            const Divider(color: Colors.white10),
+            Divider(color: _colors.subtleBorder),
             ListTile(
               leading: Icon(Icons.add_comment, color: _accentGreen),
               title: Text("New Chat", style: TextStyle(color: _textColor)),
@@ -383,7 +383,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                 _startNewChatLocally();
               },
             ),
-            const Divider(color: Colors.white10),
+            Divider(color: _colors.subtleBorder),
             Expanded(
               child: _isLoadingChats
                   ? Center(
@@ -418,13 +418,15 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                             dense: true,
                             leading: Icon(
                               Icons.chat_bubble_outline,
-                              color: isSelected ? _accentGreen : Colors.grey,
+                              color: isSelected
+                                  ? _accentGreen
+                                  : _mutedTextColor,
                               size: 20,
                             ),
                             title: Text(
                               chat['title']?.toString() ?? "New Chat",
                               style: TextStyle(
-                                color: isSelected ? _accentGreen : Colors.white,
+                                color: isSelected ? _accentGreen : _textColor,
                                 fontWeight: isSelected
                                     ? FontWeight.bold
                                     : FontWeight.normal,
@@ -433,9 +435,9 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                               overflow: TextOverflow.ellipsis,
                             ),
                             trailing: IconButton(
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.delete_outline,
-                                color: Colors.redAccent,
+                                color: _colors.expense,
                                 size: 19,
                               ),
                               onPressed: () async {
@@ -502,7 +504,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
         child: Text(
           text,
           style: TextStyle(
-            color: isAI ? Colors.white : Colors.black,
+            color: isAI ? _textColor : _colors.onPrimary,
             fontSize: 15,
             fontStyle: text == "Thinking..."
                 ? FontStyle.italic

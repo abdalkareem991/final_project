@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/debts_model.dart';
 import '../services/debts_service.dart';
 
@@ -18,11 +19,15 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
 
   late Future<List<DebtModel>> _debtsFuture;
 
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _fieldColor = Color(0xFF0B1818);
-  static const Color _accentGreen = Color(0xFF34EAB9);
-  static const Color _expenseRed = Color(0xFFFF5252);
-  static const Color _accentBlue = Color(0xFF3B82F6);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _cardColor => _colors.surface;
+  Color get _fieldColor => _colors.field;
+  Color get _accentGreen => _colors.primary;
+  Color get _expenseRed => _colors.expense;
+  Color get _accentBlue => _colors.transfer;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
 
   @override
   void initState() {
@@ -52,7 +57,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         decoration: BoxDecoration(
           color: _cardColor,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          border: Border.all(color: _colors.subtleBorder),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,7 +68,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
               future: _debtsFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Padding(
+                  return Padding(
                     padding: EdgeInsets.symmetric(vertical: 28),
                     child: Center(
                       child: CircularProgressIndicator(color: _accentGreen),
@@ -106,7 +111,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
             color: _accentBlue.withValues(alpha: 0.14),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Icon(Icons.handshake, color: _accentBlue, size: 20),
+          child: Icon(Icons.handshake, color: _accentBlue, size: 20),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -115,8 +120,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
             children: [
               Text(
                 context.t("Debt Tracking", "تتبع الديون"),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textColor,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
@@ -127,7 +132,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                   "Separate from account balances",
                   "منفصلة عن أرصدة الحسابات",
                 ),
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                style: TextStyle(color: _mutedTextColor, fontSize: 12),
               ),
             ],
           ),
@@ -135,7 +140,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         IconButton(
           tooltip: context.t("Add Debt", "إضافة دين"),
           onPressed: () => _showDebtSheet(),
-          icon: const Icon(Icons.add_circle, color: _accentGreen, size: 30),
+          icon: Icon(Icons.add_circle, color: _accentGreen, size: 30),
         ),
       ],
     );
@@ -147,7 +152,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         ? _accentGreen
         : netDebt < 0
         ? _expenseRed
-        : Colors.white70;
+        : _secondaryTextColor;
     final netText = netDebt > 0
         ? context.t(
             "You should receive ${_formatAmount(netDebt)}",
@@ -198,8 +203,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
               const SizedBox(width: 10),
               Text(
                 context.t("Net", "الصافي"),
-                style: const TextStyle(
-                  color: Colors.white70,
+                style: TextStyle(
+                  color: _secondaryTextColor,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -245,8 +250,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
-                    color: Colors.white54,
+                  style: TextStyle(
+                    color: _mutedTextColor,
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
@@ -322,8 +327,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     Expanded(
                       child: Text(
                         debt.personName,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textColor,
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
                         ),
@@ -353,13 +358,13 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                 const SizedBox(height: 4),
                 Text(
                   "$dueText • ${context.enumText(debt.status)}",
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  style: TextStyle(color: _mutedTextColor, fontSize: 12),
                 ),
                 if (debt.note != null && debt.note!.trim().isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
                     debt.note!,
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(color: _secondaryTextColor, fontSize: 12),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -368,7 +373,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
             ),
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.grey, size: 20),
+            icon: Icon(Icons.more_vert, color: _mutedTextColor, size: 20),
             color: _cardColor,
             onSelected: (value) {
               if (value == 'edit') {
@@ -384,21 +389,21 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                 value: 'edit',
                 child: Text(
                   context.t("Edit", "تعديل"),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textColor),
                 ),
               ),
               PopupMenuItem(
                 value: 'paid',
                 child: Text(
                   context.t("Mark as Paid", "تحديد كمدفوع"),
-                  style: const TextStyle(color: _accentGreen),
+                  style: TextStyle(color: _accentGreen),
                 ),
               ),
               PopupMenuItem(
                 value: 'delete',
                 child: Text(
                   context.t("Delete", "حذف"),
-                  style: const TextStyle(color: _expenseRed),
+                  style: TextStyle(color: _expenseRed),
                 ),
               ),
             ],
@@ -418,16 +423,16 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
       ),
       child: Column(
         children: [
-          const Icon(
+          Icon(
             Icons.receipt_long_outlined,
-            color: Colors.white38,
+            color: _mutedTextColor.withValues(alpha: 0.6),
             size: 34,
           ),
           const SizedBox(height: 10),
           Text(
             context.t("No active debts", "لا توجد ديون نشطة"),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textColor,
               fontWeight: FontWeight.bold,
               fontSize: 15,
             ),
@@ -439,7 +444,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
               "تتبع الأموال المستحقة لك أو عليك هنا.",
             ),
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(color: _mutedTextColor, fontSize: 12),
           ),
         ],
       ),
@@ -456,28 +461,25 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
       ),
       child: Column(
         children: [
-          const Icon(Icons.error_outline, color: _expenseRed, size: 30),
+          Icon(Icons.error_outline, color: _expenseRed, size: 30),
           const SizedBox(height: 8),
           Text(
             context.t("Could not load debts", "تعذر تحميل الديون"),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 6),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(color: _mutedTextColor, fontSize: 12),
           ),
           const SizedBox(height: 12),
           TextButton.icon(
             onPressed: refreshDebts,
-            icon: const Icon(Icons.refresh, color: _accentGreen),
+            icon: Icon(Icons.refresh, color: _accentGreen),
             label: Text(
               context.t("Retry", "إعادة المحاولة"),
-              style: const TextStyle(color: _accentGreen),
+              style: TextStyle(color: _accentGreen),
             ),
           ),
         ],
@@ -503,7 +505,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF061414),
+      backgroundColor: _cardColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
@@ -526,7 +528,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                       width: 44,
                       height: 5,
                       decoration: BoxDecoration(
-                        color: Colors.white24,
+                        color: _mutedTextColor.withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
@@ -536,8 +538,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     isEditing
                         ? context.t("Edit Debt", "تعديل الدين")
                         : context.t("Add Debt", "إضافة دين"),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textColor,
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
                     ),
@@ -574,7 +576,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                   TextField(
                     controller: personController,
                     textCapitalization: TextCapitalization.words,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _textColor),
                     decoration: _inputDecoration(
                       context.t("Person Name", "اسم الشخص"),
                       Icons.person,
@@ -589,8 +591,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                     ],
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textColor,
                       fontWeight: FontWeight.bold,
                     ),
                     decoration: _inputDecoration(
@@ -610,10 +612,10 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                         builder: (context, child) {
                           return Theme(
                             data: Theme.of(context).copyWith(
-                              colorScheme: const ColorScheme.dark(
+                              colorScheme: ColorScheme.dark(
                                 primary: _accentGreen,
                                 surface: _cardColor,
-                                onSurface: Colors.white,
+                                onSurface: _textColor,
                               ),
                             ),
                             child: child!,
@@ -639,8 +641,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                                   : DateFormat.yMMMd().format(selectedDueDate!),
                               style: TextStyle(
                                 color: selectedDueDate == null
-                                    ? Colors.grey
-                                    : Colors.white,
+                                    ? _mutedTextColor
+                                    : _textColor,
                               ),
                             ),
                           ),
@@ -648,9 +650,9 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                             GestureDetector(
                               onTap: () =>
                                   setModalState(() => selectedDueDate = null),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.close,
-                                color: Colors.grey,
+                                color: _mutedTextColor,
                                 size: 18,
                               ),
                             ),
@@ -663,7 +665,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                     controller: noteController,
                     minLines: 2,
                     maxLines: 3,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _textColor),
                     decoration: _inputDecoration(
                       context.t("Note", "ملاحظة"),
                       Icons.notes,
@@ -746,8 +748,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
                       isEditing
                           ? context.t("UPDATE DEBT", "تحديث الدين")
                           : context.t("SAVE DEBT", "حفظ الدين"),
-                      style: const TextStyle(
-                        color: Colors.black,
+                      style: TextStyle(
+                        color: _colors.onPrimary,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -777,9 +779,7 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         decoration: BoxDecoration(
           color: isSelected ? color.withValues(alpha: 0.14) : _fieldColor,
           borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: isSelected ? color : Colors.white.withValues(alpha: 0.07),
-          ),
+          border: Border.all(color: isSelected ? color : _colors.subtleBorder),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -789,14 +789,14 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
             Text(
               label,
               style: TextStyle(
-                color: isSelected ? color : Colors.white,
+                color: isSelected ? color : _textColor,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 2),
             Text(
               subtitle,
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              style: TextStyle(color: _mutedTextColor, fontSize: 11),
             ),
           ],
         ),
@@ -861,18 +861,15 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
         ),
-        content: Text(message, style: const TextStyle(color: Colors.white70)),
+        content: Text(message, style: TextStyle(color: _secondaryTextColor)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text(
               context.t("Cancel", "إلغاء"),
-              style: const TextStyle(color: Colors.grey),
+              style: TextStyle(color: _mutedTextColor),
             ),
           ),
           ElevatedButton(
@@ -882,8 +879,8 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
               confirmText,
               style: TextStyle(
                 color: confirmColor == _accentGreen
-                    ? Colors.black
-                    : Colors.white,
+                    ? _colors.onPrimary
+                    : _textColor,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -896,17 +893,17 @@ class DebtsSectionWidgetState extends State<DebtsSectionWidget> {
   InputDecoration _inputDecoration(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+      labelStyle: TextStyle(color: _mutedTextColor, fontSize: 14),
       prefixIcon: Icon(icon, color: _accentGreen, size: 21),
       filled: true,
       fillColor: _cardColor,
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
-        borderSide: const BorderSide(color: Colors.white10),
+        borderSide: BorderSide(color: _colors.subtleBorder),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
-        borderSide: const BorderSide(color: _accentGreen, width: 2),
+        borderSide: BorderSide(color: _accentGreen, width: 2),
       ),
     );
   }

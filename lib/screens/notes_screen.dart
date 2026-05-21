@@ -56,8 +56,7 @@ class _NotesScreenState extends State<NotesScreen> {
   AppThemeColors get _colors => context.themeColors;
   Color get _bgColor => _colors.background;
   Color get _cardColor => _colors.surface;
-  Color get _fieldColor => _colors.field;
-  Color get _accentGreen => _colors.primary;
+  Color get _accentColor => _colors.primary;
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
   Color get _mutedTextColor => _colors.textMuted;
@@ -103,151 +102,51 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   Future<void> _upsertNote({LocalNote? existing}) async {
-    final titleController = TextEditingController(text: existing?.title ?? '');
-    final bodyController = TextEditingController(text: existing?.body ?? '');
-
-    final savedNote = await showModalBottomSheet<LocalNote?>(
+    final savedNote = await showModalBottomSheet<LocalNote>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: _cardColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (sheetContext) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            18,
-            20,
-            MediaQuery.of(sheetContext).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: _mutedTextColor.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                existing == null
-                    ? context.t("New Note", "ملاحظة جديدة")
-                    : context.t("Edit Note", "تعديل الملاحظة"),
-                style: TextStyle(
-                  color: _textColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: titleController,
-                style: TextStyle(color: _textColor),
-                decoration: _inputDecoration(
-                  context.t("Title", "العنوان"),
-                  Icons.title,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: bodyController,
-                minLines: 5,
-                maxLines: 8,
-                style: TextStyle(color: _textColor),
-                decoration: _inputDecoration(
-                  context.t("Write your note", "اكتب ملاحظتك"),
-                  Icons.notes,
-                ),
-              ),
-              const SizedBox(height: 18),
-              ElevatedButton.icon(
-                onPressed: () {
-                  final title = titleController.text.trim();
-                  final body = bodyController.text.trim();
-                  if (title.isEmpty && body.isEmpty) {
-                    Navigator.pop(sheetContext, null);
-                    return;
-                  }
-
-                  final note = LocalNote(
-                    id:
-                        existing?.id ??
-                        DateTime.now().microsecondsSinceEpoch.toString(),
-                    title: title.isEmpty
-                        ? context.t("Untitled Note", "ملاحظة بدون عنوان")
-                        : title,
-                    body: body,
-                    updatedAt: DateTime.now(),
-                  );
-
-                  Navigator.pop(sheetContext, note);
-                },
-                icon: Icon(Icons.save_outlined, color: _colors.onPrimary),
-                label: Text(
-                  context.t("Save Note", "حفظ الملاحظة"),
-                  style: TextStyle(
-                    color: _colors.onPrimary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _accentGreen,
-                  minimumSize: const Size(double.infinity, 52),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (_) => _NoteEditorSheet(existing: existing),
     );
 
-    titleController.dispose();
-    bodyController.dispose();
+    if (savedNote == null || !mounted) return;
 
-    if (savedNote != null) {
-      if (!mounted) return;
-
-      setState(() {
-        final index = _notes.indexWhere((item) => item.id == savedNote.id);
-        if (index == -1) {
-          _notes.insert(0, savedNote);
-        } else {
-          _notes[index] = savedNote;
-        }
-        _notes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      });
-
-      try {
-        await _saveNotes();
-      } catch (error) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.t(
-                "Could not save the note locally.",
-                "تعذر حفظ الملاحظة على الجهاز.",
-              ),
-            ),
-            backgroundColor: _colors.expense,
-          ),
-        );
+    final previousNotes = List<LocalNote>.from(_notes);
+    setState(() {
+      final index = _notes.indexWhere((item) => item.id == savedNote.id);
+      if (index == -1) {
+        _notes.insert(0, savedNote);
+      } else {
+        _notes[index] = savedNote;
       }
+      _notes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    });
+
+    try {
+      await _saveNotes();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _notes = previousNotes);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.t(
+              "Could not save the note locally.",
+              "تعذر حفظ الملاحظة على الجهاز.",
+            ),
+          ),
+          backgroundColor: _colors.expense,
+        ),
+      );
     }
   }
 
   Future<void> _deleteNote(LocalNote note) async {
-    final previous = List<LocalNote>.from(_notes);
+    final previousNotes = List<LocalNote>.from(_notes);
     setState(() {
       _notes.removeWhere((item) => item.id == note.id);
     });
@@ -256,26 +155,8 @@ class _NotesScreenState extends State<NotesScreen> {
       await _saveNotes();
     } catch (_) {
       if (!mounted) return;
-      setState(() => _notes = previous);
+      setState(() => _notes = previousNotes);
     }
-  }
-
-  InputDecoration _inputDecoration(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: TextStyle(color: _mutedTextColor),
-      prefixIcon: Icon(icon, color: _accentGreen),
-      filled: true,
-      fillColor: _fieldColor,
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: _colors.subtleBorder),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: _accentGreen),
-      ),
-    );
   }
 
   String _formatUpdatedAt(DateTime date) {
@@ -298,19 +179,19 @@ class _NotesScreenState extends State<NotesScreen> {
         ),
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: _accentGreen))
+          ? Center(child: CircularProgressIndicator(color: _accentColor))
           : _notes.isEmpty
           ? _buildEmptyState()
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
               itemBuilder: (context, index) => _buildNoteCard(_notes[index]),
-              separatorBuilder: (context, index) => const SizedBox(height: 12),
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemCount: _notes.length,
             ),
       floatingActionButton: FloatingActionButton(
         heroTag: 'notes_add_btn',
-        backgroundColor: _accentGreen,
-        onPressed: () => _upsertNote(),
+        backgroundColor: _accentColor,
+        onPressed: _upsertNote,
         child: Icon(Icons.add, color: _colors.onPrimary),
       ),
     );
@@ -323,7 +204,7 @@ class _NotesScreenState extends State<NotesScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.note_alt_outlined, color: _accentGreen, size: 46),
+            Icon(Icons.note_alt_outlined, color: _accentColor, size: 46),
             const SizedBox(height: 12),
             Text(
               context.t("No notes yet", "لا توجد ملاحظات بعد"),
@@ -392,6 +273,166 @@ class _NotesScreenState extends State<NotesScreen> {
           tooltip: context.t("Delete", "حذف"),
           onPressed: () => _deleteNote(note),
           icon: Icon(Icons.delete_outline, color: _colors.expense),
+        ),
+      ),
+    );
+  }
+}
+
+class _NoteEditorSheet extends StatefulWidget {
+  final LocalNote? existing;
+
+  const _NoteEditorSheet({this.existing});
+
+  @override
+  State<_NoteEditorSheet> createState() => _NoteEditorSheetState();
+}
+
+class _NoteEditorSheetState extends State<_NoteEditorSheet> {
+  late final TextEditingController _titleController;
+  late final TextEditingController _bodyController;
+
+  AppThemeColors get _colors => context.themeColors;
+  Color get _fieldColor => _colors.field;
+  Color get _accentColor => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _mutedTextColor => _colors.textMuted;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(
+      text: widget.existing?.title ?? '',
+    );
+    _bodyController = TextEditingController(text: widget.existing?.body ?? '');
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _bodyController.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: TextStyle(color: _mutedTextColor),
+      prefixIcon: Icon(icon, color: _accentColor),
+      filled: true,
+      fillColor: _fieldColor,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _colors.subtleBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _accentColor),
+      ),
+    );
+  }
+
+  void _save() {
+    final title = _titleController.text.trim();
+    final body = _bodyController.text.trim();
+
+    if (title.isEmpty && body.isEmpty) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    Navigator.of(context).pop(
+      LocalNote(
+        id:
+            widget.existing?.id ??
+            DateTime.now().microsecondsSinceEpoch.toString(),
+        title: title.isEmpty
+            ? context.t("Untitled Note", "ملاحظة بدون عنوان")
+            : title,
+        body: body,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.fromLTRB(
+        20,
+        18,
+        20,
+        MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _mutedTextColor.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              widget.existing == null
+                  ? context.t("New Note", "ملاحظة جديدة")
+                  : context.t("Edit Note", "تعديل الملاحظة"),
+              style: TextStyle(
+                color: _textColor,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _titleController,
+              style: TextStyle(color: _textColor),
+              textInputAction: TextInputAction.next,
+              decoration: _inputDecoration(
+                context.t("Title", "العنوان"),
+                Icons.title,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _bodyController,
+              minLines: 5,
+              maxLines: 8,
+              style: TextStyle(color: _textColor),
+              decoration: _inputDecoration(
+                context.t("Write your note", "اكتب ملاحظتك"),
+                Icons.notes,
+              ),
+            ),
+            const SizedBox(height: 18),
+            ElevatedButton.icon(
+              onPressed: _save,
+              icon: Icon(Icons.save_outlined, color: _colors.onPrimary),
+              label: Text(
+                context.t("Save Note", "حفظ الملاحظة"),
+                style: TextStyle(
+                  color: _colors.onPrimary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accentColor,
+                minimumSize: const Size(double.infinity, 52),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

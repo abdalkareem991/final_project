@@ -49,6 +49,34 @@ class SupabaseService {
     }
   }
 
+  Future<void> ensureUserProfile({
+    required String userId,
+    String? fullName,
+    String? phone,
+  }) async {
+    try {
+      final existing = await client
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (existing != null) return;
+
+      await client.from('profiles').insert({
+        'id': userId,
+        'full_name': (fullName == null || fullName.trim().isEmpty)
+            ? 'Financial Mind User'
+            : fullName.trim(),
+        'phone': phone?.trim() ?? '',
+        'total_net_worth': 0.0,
+      });
+    } catch (error) {
+      debugPrint('Ensure Profile Error: $error');
+      rethrow;
+    }
+  }
+
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await client.auth.resetPasswordForEmail(

@@ -47,7 +47,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
   Color get _mutedTextColor => _colors.textMuted;
-  static const Color _infoBlue = Color(0xFF3B82F6);
+  Color get _infoBlue => _colors.transfer;
 
   late final List<Color> _incomePalette = [
     _accentGreen,
@@ -205,7 +205,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         builder: (context, child) {
           return Theme(
             data: Theme.of(context).copyWith(
-              colorScheme: ColorScheme.dark(
+              colorScheme: ColorScheme.light(
                 primary: _accentGreen,
                 surface: _cardColor,
                 onSurface: _textColor,
@@ -356,11 +356,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             const SizedBox(height: 18),
             ElevatedButton.icon(
               onPressed: _reloadReport,
-              icon: const Icon(Icons.refresh, color: Colors.black),
+              icon: Icon(Icons.refresh, color: _colors.onPrimary),
               label: Text(
                 context.t("Retry", "إعادة المحاولة"),
-                style: const TextStyle(
-                  color: Colors.black,
+                style: TextStyle(
+                  color: _colors.onPrimary,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -449,8 +449,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: Text(
                   item.title,
-                  style: const TextStyle(
-                    color: Colors.white54,
+                  style: TextStyle(
+                    color: _mutedTextColor,
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.8,
@@ -485,15 +485,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       decoration: BoxDecoration(
         color: _cardColor,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(color: _colors.subtleBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             context.t("Filters", "الفلاتر"),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textColor,
               fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
@@ -541,13 +541,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       selectedColor: _accentGreen,
       backgroundColor: _fieldColor,
       labelStyle: TextStyle(
-        color: isSelected ? Colors.black : Colors.white70,
+        color: isSelected ? _colors.onPrimary : _secondaryTextColor,
         fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      side: BorderSide(
-        color: isSelected ? _accentGreen : Colors.white.withValues(alpha: 0.08),
-      ),
+      side: BorderSide(color: isSelected ? _accentGreen : _colors.subtleBorder),
     );
   }
 
@@ -575,9 +573,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             fillColor: _fieldColor,
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide(
-                color: Colors.white.withValues(alpha: 0.08),
-              ),
+              borderSide: BorderSide(color: _colors.subtleBorder),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
@@ -652,8 +648,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontSize: 17,
                     fontWeight: FontWeight.bold,
                   ),
@@ -696,8 +692,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           const SizedBox(height: 10),
           Text(
             title,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: _textColor,
               fontWeight: FontWeight.bold,
               fontSize: 15,
             ),
@@ -759,10 +755,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const Text(
+              Text(
                 "Categories",
                 style: TextStyle(
-                  color: Colors.white54,
+                  color: _mutedTextColor,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
@@ -791,7 +787,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           decoration: BoxDecoration(
             color: _fieldColor,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            border: Border.all(color: _colors.subtleBorder),
           ),
           child: Row(
             children: [
@@ -808,8 +804,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: Text(
                   item.categoryName,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontWeight: FontWeight.w700,
                     fontSize: 14,
                   ),
@@ -823,8 +819,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 children: [
                   Text(
                     _formatAmount(item.totalAmount),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textColor,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),

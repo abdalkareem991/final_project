@@ -1,8 +1,7 @@
-// lib/screens/register_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../core/app_text.dart';
 import '../core/app_theme.dart';
 import '../services/supabase_service.dart';
 
@@ -14,12 +13,6 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  static const Color _inputColor = Color(0xFF000000);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _textGrey = Color(
-    0xFF8B92A5,
-  ); // Soft grey for labels and subtitles
-
   final _userNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -32,12 +25,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isLoading = false;
   bool _agreeToTerms = false;
   bool _enableBiometrics = false;
+  bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
 
   AppThemeColors get _colors => context.themeColors;
   Color get _bgColor => _colors.background;
-  Color get _accentGreen => _colors.primary;
+  Color get _accentColor => _colors.primary;
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
+  Color get _panelColor => Theme.of(context).brightness == Brightness.dark
+      ? const Color(0xFF111D1D)
+      : _colors.surface;
+  Color get _inputColor => Theme.of(context).brightness == Brightness.dark
+      ? const Color(0xFF000000)
+      : _colors.field;
 
   @override
   void dispose() {
@@ -49,50 +51,126 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  /// Logic: Validates inputs and handles user registration
+  bool _isValidEmail(String email) {
+    return RegExp(
+      r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
+      caseSensitive: false,
+    ).hasMatch(email);
+  }
+
+  void _showMessage(String message, {bool isError = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? _colors.expense : _colors.surface,
+      ),
+    );
+  }
+
   Future<void> _handleRegister() async {
+    if (_isLoading) return;
+
+    final fullName = _userNameController.text.trim();
+    final email = _emailController.text.trim();
+    final phone = _phoneController.text.trim();
+    final password = _passwordController.text;
+    final confirmPassword = _confirmPasswordController.text;
+
+    if (fullName.isEmpty || email.isEmpty || phone.isEmpty) {
+      _showMessage(
+        context.t(
+          'Please complete all required fields.',
+          'يرجى تعبئة جميع الحقول المطلوبة.',
+        ),
+      );
+      return;
+    }
+
+    if (!_isValidEmail(email)) {
+      _showMessage(
+        context.t(
+          'Please enter a valid email address.',
+          'يرجى إدخال بريد إلكتروني صحيح.',
+        ),
+      );
+      return;
+    }
+
+    if (password.length < 6) {
+      _showMessage(
+        context.t(
+          'Password must be at least 6 characters.',
+          'يجب أن تكون كلمة المرور 6 أحرف على الأقل.',
+        ),
+      );
+      return;
+    }
+
+    if (password != confirmPassword) {
+      _showMessage(
+        context.t(
+          'Password confirmation does not match.',
+          'تأكيد كلمة المرور غير مطابق.',
+        ),
+      );
+      return;
+    }
+
+    if (!_agreeToTerms) {
+      _showMessage(
+        context.t(
+          'Please agree to the terms first.',
+          'يرجى الموافقة على الشروط أولاً.',
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
-      final response = await _supabaseService.signUp(
-        _emailController.text.trim(),
-        _passwordController.text.trim(),
+      final response = await _supabaseService.signUp(email, password);
+      final user = response.user;
+
+      if (user == null) {
+        throw Exception('User creation failed');
+      }
+
+      await _supabaseService.ensureUserProfile(
+        userId: user.id,
+        fullName: fullName,
+        phone: phone,
       );
 
-      if (response.user != null) {
-        // 1. Save credentials to Secure Storage
-        await _storage.write(key: 'email', value: _emailController.text.trim());
-        await _storage.write(
-          key: 'password',
-          value: _passwordController.text.trim(),
-        );
+      await _storage.write(key: 'email', value: email);
+      await _storage.write(key: 'password', value: password);
+      await _storage.write(
+        key: 'use_biometrics',
+        value: _enableBiometrics ? 'true' : 'false',
+      );
 
-        if (_enableBiometrics) {
-          await _storage.write(key: 'use_biometrics', value: 'true');
-        }
-
-        // 2. THE FIX: Wait 1 second for the Supabase Auth session to stabilize
-        await Future.delayed(const Duration(seconds: 1));
-
-        // 3. Now create the user profile
-        await _supabaseService.createUserProfile(
-          response.user!.id,
-          _userNameController.text.trim(),
-          _phoneController.text.trim(),
-        );
-
+      if (response.session != null) {
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
+      } else {
+        _showMessage(
+          context.t(
+            'Account created. Please verify your email, then log in.',
+            'تم إنشاء الحساب. يرجى تأكيد البريد الإلكتروني ثم تسجيل الدخول.',
+          ),
+          isError: false,
+        );
+        if (mounted) Navigator.pop(context);
       }
     } catch (e) {
-      debugPrint("Registration Error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('An unexpected error occurred. Please try again.'),
-          ),
-        );
-      }
+      debugPrint('Registration error: $e');
+      _showMessage(
+        context.t(
+          'Could not create the account right now.',
+          'تعذر إنشاء الحساب الآن.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -104,29 +182,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
       backgroundColor: _bgColor,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 30.0),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Top Logo & Brand Name
               Row(
                 children: [
-                  Icon(Icons.lock, color: _accentGreen, size: 20),
+                  Icon(Icons.lock, color: _accentColor, size: 20),
                   const SizedBox(width: 8),
                   Text(
-                    'Financial Mind',
+                    context.t('Financial Mind', 'فايننشال مايند'),
                     style: TextStyle(
-                      color: _accentGreen,
+                      color: _accentColor,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
                     ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: context.t('Switch language', 'تبديل اللغة'),
+                    onPressed: AppText.toggle,
+                    icon: Icon(Icons.language, color: _accentColor),
                   ),
                 ],
               ),
               const SizedBox(height: 40),
-
-              // 2. Main Title (RichText for mixed colors)
               RichText(
                 text: TextSpan(
                   style: TextStyle(
@@ -136,19 +216,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     height: 1.2,
                   ),
                   children: [
-                    const TextSpan(text: 'Join '),
+                    TextSpan(text: context.t('Join ', 'انضم إلى ')),
                     TextSpan(
-                      text: 'Financial\nMind',
-                      style: TextStyle(color: _accentGreen),
+                      text: context.t('Financial\nMind', 'فايننشال\nمايند'),
+                      style: TextStyle(color: _accentColor),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 15),
-
-              // 3. Subtitle
               Text(
-                'Secure your future with the sovereign\npulse of wealth management.',
+                context.t(
+                  'Create your account and keep your money flow organized.',
+                  'أنشئ حسابك ونظّم تدفقك المالي بشكل واضح وآمن.',
+                ),
                 style: TextStyle(
                   color: _secondaryTextColor,
                   fontSize: 14,
@@ -156,192 +237,198 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 40),
-
-              // 4. Form Fields (No icons inside, simple and dark)
-              _buildInputField(
-                label: 'USER NAME',
-                controller: _userNameController,
-                hint: 'John Doe',
-              ),
-              const SizedBox(height: 20),
-
-              _buildInputField(
-                label: 'EMAIL ADDRESS',
-                controller: _emailController,
-                hint: 'example@email.com',
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 20),
-
-              _buildInputField(
-                label: 'PHONE NUMBER',
-                controller: _phoneController,
-                hint: '07 XXXX XXXX',
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 20),
-
-              _buildInputField(
-                label: 'PASSWORD',
-                controller: _passwordController,
-                hint: '••••••••',
-                isPassword: true,
-              ),
-              const SizedBox(height: 20),
-
-              _buildInputField(
-                label: 'CONFIRM PASSWORD',
-                controller: _confirmPasswordController,
-                hint: '••••••••',
-                isPassword: true,
-              ),
-              const SizedBox(height: 30),
-
-              // 5. Terms and Conditions
-              Row(
-                children: [
-                  SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: Checkbox(
-                      value: _agreeToTerms,
-                      activeColor: _accentGreen,
-                      checkColor: Colors.black,
-                      side: const BorderSide(color: _textGrey),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      onChanged: (value) =>
-                          setState(() => _agreeToTerms = value ?? false),
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: _panelColor,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: _colors.subtleBorder),
+                  boxShadow: Theme.of(context).brightness == Brightness.light
+                      ? [
+                          BoxShadow(
+                            color: _accentColor.withValues(alpha: 0.07),
+                            blurRadius: 22,
+                            offset: const Offset(0, 10),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildInputField(
+                      label: context.t('USER NAME', 'اسم المستخدم'),
+                      controller: _userNameController,
+                      hint: 'John Doe',
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        text: 'I agree to the ',
-                        style: TextStyle(color: _textGrey, fontSize: 13),
-                        children: [
-                          TextSpan(
-                            text: 'Terms and Privacy Policy',
-                            style: TextStyle(
-                              color: _accentGreen,
-                              decoration: TextDecoration.underline,
+                    const SizedBox(height: 20),
+                    _buildInputField(
+                      label: context.t('EMAIL ADDRESS', 'البريد الإلكتروني'),
+                      controller: _emailController,
+                      hint: 'example@email.com',
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 20),
+                    _buildInputField(
+                      label: context.t('PHONE NUMBER', 'رقم الهاتف'),
+                      controller: _phoneController,
+                      hint: '07XXXXXXXX',
+                      keyboardType: TextInputType.phone,
+                    ),
+                    const SizedBox(height: 20),
+                    _buildInputField(
+                      label: context.t('PASSWORD', 'كلمة المرور'),
+                      controller: _passwordController,
+                      hint: '••••••••',
+                      isPassword: true,
+                      isVisible: _isPasswordVisible,
+                      onToggleVisibility: () => setState(
+                        () => _isPasswordVisible = !_isPasswordVisible,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildInputField(
+                      label: context.t('CONFIRM PASSWORD', 'تأكيد كلمة المرور'),
+                      controller: _confirmPasswordController,
+                      hint: '••••••••',
+                      isPassword: true,
+                      isVisible: _isConfirmPasswordVisible,
+                      onToggleVisibility: () => setState(
+                        () => _isConfirmPasswordVisible =
+                            !_isConfirmPasswordVisible,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: Checkbox(
+                            value: _agreeToTerms,
+                            onChanged: (value) =>
+                                setState(() => _agreeToTerms = value ?? false),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text.rich(
+                            TextSpan(
+                              text: context.t('I agree to the ', 'أوافق على '),
+                              style: TextStyle(
+                                color: _mutedTextColor,
+                                fontSize: 13,
+                              ),
+                              children: [
+                                TextSpan(
+                                  text: context.t(
+                                    'Terms and Privacy Policy',
+                                    'الشروط وسياسة الخصوصية',
+                                  ),
+                                  style: TextStyle(
+                                    color: _accentColor,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ],
                             ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 25),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _inputColor,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _colors.subtleBorder),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: _accentColor.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.fingerprint,
+                              color: _accentColor,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 15),
+                          Expanded(
+                            child: Text(
+                              context.t(
+                                'Enable biometrics for future logins',
+                                'فعّل البصمة لتسجيل الدخول لاحقًا',
+                              ),
+                              style: TextStyle(
+                                color: _textColor,
+                                fontSize: 13,
+                                height: 1.3,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          Switch(
+                            value: _enableBiometrics,
+                            onChanged: (value) =>
+                                setState(() => _enableBiometrics = value),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 25),
-
-              // 6. Biometrics Toggle Card
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: _cardColor,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.05),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.blueAccent.withValues(alpha: 0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.fingerprint,
-                        color: Colors.blueAccent,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(width: 15),
-                    Expanded(
-                      child: Text(
-                        'Enable Biometrics for future\nlogins',
-                        style: TextStyle(
-                          color: _textColor,
-                          fontSize: 13,
-                          height: 1.3,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    Switch(
-                      value: _enableBiometrics,
-                      activeThumbColor: _accentGreen,
-                      inactiveTrackColor: Colors.black,
-                      onChanged: (value) =>
-                          setState(() => _enableBiometrics = value),
-                    ),
+                    const SizedBox(height: 35),
+                    _isLoading
+                        ? Center(
+                            child: CircularProgressIndicator(
+                              color: _accentColor,
+                            ),
+                          )
+                        : ElevatedButton(
+                            onPressed: _handleRegister,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _accentColor,
+                              minimumSize: const Size(double.infinity, 60),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: Text(
+                              context.t('Create Account', 'إنشاء الحساب'),
+                              style: TextStyle(
+                                color: _colors.onPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                   ],
                 ),
               ),
-              const SizedBox(height: 35),
-
-              // 7. Submit Button (With glowing effect)
-              _isLoading
-                  ? Center(
-                      child: CircularProgressIndicator(color: _accentGreen),
-                    )
-                  : Container(
-                      decoration: BoxDecoration(
-                        boxShadow: [
-                          BoxShadow(
-                            color: _accentGreen.withValues(alpha: 0.3),
-                            blurRadius: 15,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: ElevatedButton(
-                        onPressed: _handleRegister,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _accentGreen,
-                          minimumSize: const Size(double.infinity, 60),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          elevation: 0, // Handled by container shadow
-                        ),
-                        child: Text(
-                          'Create Account',
-                          style: TextStyle(
-                            color: _colors.onPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ),
-                    ),
-
               const SizedBox(height: 30),
-
-              // 8. Login Navigation
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
-                    'Already have an account? ',
-                    style: TextStyle(color: _textGrey, fontSize: 14),
+                  Text(
+                    context.t(
+                      'Already have an account? ',
+                      'لديك حساب بالفعل؟ ',
+                    ),
+                    style: TextStyle(color: _mutedTextColor, fontSize: 14),
                   ),
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Text(
-                      'Log In',
+                      context.t('Log In', 'تسجيل الدخول'),
                       style: TextStyle(
-                        color: _accentGreen,
+                        color: _accentColor,
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
                       ),
@@ -357,12 +444,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// UI Helper: Custom input field exactly matching the image
   Widget _buildInputField({
     required String label,
     required TextEditingController controller,
     required String hint,
     bool isPassword = false,
+    bool isVisible = false,
+    VoidCallback? onToggleVisibility,
     TextInputType keyboardType = TextInputType.text,
   }) {
     return Column(
@@ -370,35 +458,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: _textGrey,
+          style: TextStyle(
+            color: _mutedTextColor,
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            letterSpacing: 1.5,
+            letterSpacing: 1.2,
           ),
         ),
         const SizedBox(height: 8),
         TextField(
           controller: controller,
-          obscureText: isPassword,
+          obscureText: isPassword && !isVisible,
           keyboardType: keyboardType,
-          style: const TextStyle(color: Colors.white, fontSize: 15),
+          style: TextStyle(color: _textColor, fontSize: 15),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.15)),
+            hintStyle: TextStyle(color: _mutedTextColor),
             filled: true,
-            fillColor: _inputColor, // Pure black background
+            fillColor: _inputColor,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 20,
               vertical: 18,
             ),
+            suffixIcon: isPassword
+                ? IconButton(
+                    onPressed: onToggleVisibility,
+                    icon: Icon(
+                      isVisible ? Icons.visibility : Icons.visibility_off,
+                      color: _mutedTextColor,
+                    ),
+                  )
+                : null,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: _accentGreen, width: 1.5),
             ),
           ),
         ),

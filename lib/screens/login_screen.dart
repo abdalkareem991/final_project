@@ -30,44 +30,41 @@ class _LoginScreenState extends State<LoginScreen> {
 
   AppThemeColors get _colors => context.themeColors;
   Color get _bgColor => _colors.background;
-  Color get _accentGreen => _colors.primary;
+  Color get _accentColor => _colors.primary;
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
-  Color get _panelColor => const Color(0xFF1E293B);
-  Color get _inputColor => const Color(0xFF000000);
+  Color get _mutedTextColor => _colors.textMuted;
+  Color get _panelColor => Theme.of(context).brightness == Brightness.dark
+      ? const Color(0xFF1E293B)
+      : _colors.surface;
+  Color get _inputColor => Theme.of(context).brightness == Brightness.dark
+      ? const Color(0xFF000000)
+      : _colors.field;
 
   @override
   void initState() {
     super.initState();
 
-    // 1. Listen for password recovery events
     _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
         .listen((data) {
-          final AuthChangeEvent event = data.event;
-          if (event == AuthChangeEvent.passwordRecovery) {
-            if (mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const UpdatePasswordScreen(),
-                ),
-              );
-            }
+          if (data.event == AuthChangeEvent.passwordRecovery && mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const UpdatePasswordScreen(),
+              ),
+            );
           }
         });
 
-    // 2. AUTO-TRIGGER: Check for biometrics as soon as the screen is ready
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAutoBiometricLogin();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final currentUser = Supabase.instance.client.auth.currentUser;
+      if (currentUser != null && mounted) {
+        Navigator.pushReplacementNamed(context, '/dashboard');
+        return;
+      }
+      await _checkAutoBiometricLogin();
     });
-  }
-
-  // New helper to trigger the popup automatically
-  Future<void> _checkAutoBiometricLogin() async {
-    final useBio = await _storage.read(key: 'use_biometrics');
-    if (useBio == 'true') {
-      await _handleBiometricLogin();
-    }
   }
 
   @override
@@ -78,16 +75,61 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  bool _isValidEmail(String email) {
+    return RegExp(
+      r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
+      caseSensitive: false,
+    ).hasMatch(email);
+  }
+
+  void _showMessage(String message, {bool isError = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? _colors.expense : _colors.surface,
+      ),
+    );
+  }
+
+  Future<void> _checkAutoBiometricLogin() async {
+    final useBio = await _storage.read(key: 'use_biometrics');
+    if (useBio == 'true') {
+      await _handleBiometricLogin();
+    }
+  }
+
   Future<void> _handleLogin() async {
-    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.t(
-              'Please enter email and password',
-              'يرجى إدخال البريد الإلكتروني وكلمة المرور',
-            ),
-          ),
+    if (_isLoading) return;
+
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      _showMessage(
+        context.t(
+          'Please enter email and password.',
+          'يرجى إدخال البريد الإلكتروني وكلمة المرور.',
+        ),
+      );
+      return;
+    }
+
+    if (!_isValidEmail(email)) {
+      _showMessage(
+        context.t(
+          'Please enter a valid email address.',
+          'يرجى إدخال بريد إلكتروني صحيح.',
+        ),
+      );
+      return;
+    }
+
+    if (password.length < 6) {
+      _showMessage(
+        context.t(
+          'Password must be at least 6 characters.',
+          'يجب أن تكون كلمة المرور 6 أحرف على الأقل.',
         ),
       );
       return;
@@ -95,12 +137,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final email = _emailController.text.trim();
-      final password = _passwordController.text.trim();
+      final response = await _supabaseService.signIn(email, password);
+      final user = response.user ?? Supabase.instance.client.auth.currentUser;
 
-      await _supabaseService.signIn(email, password);
+      if (user == null) {
+        throw Exception(
+          context.t(
+            'Login failed. Please try again.',
+            'فشل تسجيل الدخول. حاول مرة أخرى.',
+          ),
+        );
+      }
 
-      // Save credentials for future biometric use
+      await _supabaseService.ensureUserProfile(userId: user.id);
       await _storage.write(key: 'email', value: email);
       await _storage.write(key: 'password', value: password);
 
@@ -108,82 +157,83 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.pushReplacementNamed(context, '/dashboard');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Login Failed: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _showMessage(
+        context.t(
+          'Login failed. Check your email and password.',
+          'فشل تسجيل الدخول. تحقق من البريد الإلكتروني وكلمة المرور.',
+        ),
+      );
+      debugPrint('Login error: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _handleBiometricLogin() async {
+    if (_isLoading) return;
+
     try {
-      final bool canAuthenticateWithBiometrics = await _auth.canCheckBiometrics;
-      final bool canAuthenticate =
+      final canAuthenticateWithBiometrics = await _auth.canCheckBiometrics;
+      final canAuthenticate =
           canAuthenticateWithBiometrics || await _auth.isDeviceSupported();
 
-      if (!canAuthenticate) {
-        // Only show error if triggered by the manual button, not auto-start
-        return;
-      }
+      if (!canAuthenticate) return;
 
-      final bool didAuthenticate = await _auth.authenticate(
-        localizedReason: 'Please authenticate to access your financial vault',
+      final didAuthenticate = await _auth.authenticate(
+        localizedReason: context.t(
+          'Please authenticate to access your account.',
+          'يرجى التحقق للوصول إلى حسابك.',
+        ),
         options: const AuthenticationOptions(
           stickyAuth: true,
           biometricOnly: true,
         ),
       );
 
-      if (didAuthenticate && mounted) {
-        String? savedEmail = await _storage.read(key: 'email');
-        String? savedPw = await _storage.read(key: 'password');
+      if (!didAuthenticate) return;
 
-        if (savedEmail != null && savedPw != null) {
-          setState(() => _isLoading = true);
+      final savedEmail = await _storage.read(key: 'email');
+      final savedPassword = await _storage.read(key: 'password');
 
-          await _supabaseService.signIn(savedEmail, savedPw);
+      if (savedEmail == null || savedPassword == null) {
+        _showMessage(
+          context.t(
+            'Please log in with password first to enable biometrics.',
+            'يرجى تسجيل الدخول بكلمة المرور أولاً لتفعيل البصمة.',
+          ),
+        );
+        return;
+      }
 
-          if (mounted) {
-            Navigator.pushReplacementNamed(context, '/dashboard');
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                context.t(
-                  'Please log in with password first to enable biometrics.',
-                  'يرجى تسجيل الدخول بكلمة المرور أولًا لتفعيل البصمة.',
-                ),
-              ),
-            ),
-          );
-        }
+      setState(() => _isLoading = true);
+      final response = await _supabaseService.signIn(savedEmail, savedPassword);
+      final user = response.user ?? Supabase.instance.client.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('Biometric login failed');
+      }
+
+      await _supabaseService.ensureUserProfile(userId: user.id);
+
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/dashboard');
       }
     } catch (e) {
-      debugPrint("Biometric error: $e");
+      debugPrint('Biometric error: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Note: Keep your _showForgotPasswordDialog, build, and _buildTextField methods below this
-
   Future<void> _showForgotPasswordDialog() async {
-    final TextEditingController resetEmailController = TextEditingController();
+    final resetEmailController = TextEditingController();
 
     return showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
+      builder: (dialogContext) => AlertDialog(
         title: Text(
           context.t('Reset Password', 'إعادة تعيين كلمة المرور'),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -193,66 +243,58 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Enter your email to receive a password reset link.',
                 'أدخل بريدك الإلكتروني لاستلام رابط إعادة التعيين.',
               ),
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
+              style: TextStyle(color: _secondaryTextColor, fontSize: 14),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: resetEmailController,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: _textColor),
               decoration: InputDecoration(
-                filled: true,
-                fillColor: Colors.black,
                 hintText: 'name@domain.com',
-                hintStyle: const TextStyle(color: Colors.white24),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                hintStyle: TextStyle(color: _mutedTextColor),
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              context.t('Cancel', 'إلغاء'),
-              style: const TextStyle(color: Colors.white38),
-            ),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(context.t('Cancel', 'إلغاء')),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00E676),
-            ),
             onPressed: () async {
-              try {
-                await _supabaseService.sendPasswordResetEmail(
-                  resetEmailController.text.trim(),
+              final email = resetEmailController.text.trim();
+              if (!_isValidEmail(email)) {
+                _showMessage(
+                  context.t(
+                    'Please enter a valid email address.',
+                    'يرجى إدخال بريد إلكتروني صحيح.',
+                  ),
                 );
-                if (context.mounted) Navigator.pop(context);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Reset link sent! Please check your email.',
-                      ),
-                    ),
-                  );
-                }
+                return;
+              }
+
+              try {
+                await _supabaseService.sendPasswordResetEmail(email);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _showMessage(
+                  context.t(
+                    'Reset link sent. Please check your email.',
+                    'تم إرسال رابط إعادة التعيين. تحقق من بريدك.',
+                  ),
+                  isError: false,
+                );
               } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
+                _showMessage(
+                  context.t(
+                    'Could not send reset email right now.',
+                    'تعذر إرسال بريد إعادة التعيين الآن.',
+                  ),
+                );
+                debugPrint('Reset password error: $e');
               }
             },
-            child: Text(
-              context.t('Send', 'إرسال'),
-              style: const TextStyle(color: Colors.black),
-            ),
+            child: Text(context.t('Send', 'إرسال')),
           ),
         ],
       ),
@@ -265,31 +307,52 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: _bgColor,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             children: [
               const SizedBox(height: 40),
               Align(
                 alignment: Alignment.centerRight,
-                child: IconButton(
-                  tooltip: context.t(
-                    'Switch to Arabic',
-                    'التبديل إلى الإنجليزية',
-                  ),
-                  onPressed: AppText.toggle,
-                  icon: Icon(Icons.language, color: _accentGreen),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: AppTheme.isLightMode
+                          ? context.t(
+                              'Switch to dark mode',
+                              'التبديل إلى الوضع الداكن',
+                            )
+                          : context.t(
+                              'Switch to light mode',
+                              'التبديل إلى الوضع الفاتح',
+                            ),
+                      onPressed: () =>
+                          AppTheme.setLightMode(!AppTheme.isLightMode),
+                      icon: Icon(
+                        AppTheme.isLightMode
+                            ? Icons.dark_mode
+                            : Icons.light_mode,
+                        color: _accentColor,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: context.t('Switch language', 'تبديل اللغة'),
+                      onPressed: AppText.toggle,
+                      icon: Icon(Icons.language, color: _accentColor),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.lock_outline, color: _accentGreen, size: 30),
+                  Icon(Icons.lock_outline, color: _accentColor, size: 30),
                   const SizedBox(width: 10),
                   Text(
                     context.t('Financial Mind', 'فايننشال مايند'),
                     style: TextStyle(
-                      color: _accentGreen,
+                      color: _accentColor,
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                     ),
@@ -319,12 +382,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 decoration: BoxDecoration(
                   color: _panelColor,
                   borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: _colors.subtleBorder),
+                  boxShadow: Theme.of(context).brightness == Brightness.light
+                      ? [
+                          BoxShadow(
+                            color: _accentColor.withValues(alpha: 0.08),
+                            blurRadius: 24,
+                            offset: const Offset(0, 10),
+                          ),
+                        ]
+                      : null,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      context.t(' EMAIL', ' البريد الإلكتروني'),
+                      context.t('EMAIL', 'البريد الإلكتروني'),
                       style: TextStyle(
                         color: _secondaryTextColor,
                         fontSize: 12,
@@ -336,6 +409,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       controller: _emailController,
                       hint: 'name@domain.com',
                       icon: Icons.person,
+                      keyboardType: TextInputType.emailAddress,
                     ),
                     const SizedBox(height: 20),
                     Row(
@@ -353,7 +427,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           onPressed: _showForgotPasswordDialog,
                           child: Text(
                             context.t('Forgot Password?', 'نسيت كلمة المرور؟'),
-                            style: TextStyle(color: _accentGreen, fontSize: 12),
+                            style: TextStyle(color: _accentColor, fontSize: 12),
                           ),
                         ),
                       ],
@@ -364,14 +438,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       icon: Icons.lock,
                       isPassword: true,
                       suffixIcon: IconButton(
+                        onPressed: () => setState(
+                          () => _isPasswordVisible = !_isPasswordVisible,
+                        ),
                         icon: Icon(
                           _isPasswordVisible
                               ? Icons.visibility
                               : Icons.visibility_off,
-                          color: Colors.white38,
-                        ),
-                        onPressed: () => setState(
-                          () => _isPasswordVisible = !_isPasswordVisible,
+                          color: _mutedTextColor,
                         ),
                       ),
                     ),
@@ -379,13 +453,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     _isLoading
                         ? Center(
                             child: CircularProgressIndicator(
-                              color: _accentGreen,
+                              color: _accentColor,
                             ),
                           )
                         : ElevatedButton(
                             onPressed: _handleLogin,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF00E676),
+                              backgroundColor: _accentColor,
                               minimumSize: const Size(double.infinity, 56),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
@@ -403,18 +477,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 50),
-              // NEW CODE:
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  GestureDetector(
-                    onTap:
-                        _handleBiometricLogin, // This links the icon to your fingerprint logic
-                    child: _buildQuickLoginIcon(Icons.fingerprint),
-                  ),
-                ],
+              GestureDetector(
+                onTap: _handleBiometricLogin,
+                child: _buildQuickLoginIcon(Icons.fingerprint),
               ),
             ],
           ),
@@ -428,19 +494,21 @@ class _LoginScreenState extends State<LoginScreen> {
     required TextEditingController controller,
     required String hint,
     required IconData icon,
+    TextInputType keyboardType = TextInputType.text,
     bool isPassword = false,
     Widget? suffixIcon,
   }) {
     return TextField(
       controller: controller,
+      keyboardType: keyboardType,
       obscureText: isPassword && !_isPasswordVisible,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: _textColor),
       decoration: InputDecoration(
         filled: true,
         fillColor: _inputColor,
         hintText: hint,
-        hintStyle: const TextStyle(color: Colors.white24),
-        prefixIcon: Icon(icon, color: Colors.white38),
+        hintStyle: TextStyle(color: _mutedTextColor),
+        prefixIcon: Icon(icon, color: _mutedTextColor),
         suffixIcon: suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -456,8 +524,18 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: BoxDecoration(
         color: _panelColor,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _colors.subtleBorder),
+        boxShadow: Theme.of(context).brightness == Brightness.light
+            ? [
+                BoxShadow(
+                  color: _accentColor.withValues(alpha: 0.06),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ]
+            : null,
       ),
-      child: Icon(icon, color: Colors.white, size: 30),
+      child: Icon(icon, color: _accentColor, size: 30),
     );
   }
 
@@ -470,9 +548,7 @@ class _LoginScreenState extends State<LoginScreen> {
         children: [
           _buildNavItem(Icons.login, context.t('LOGIN', 'الدخول'), true),
           GestureDetector(
-            onTap: () {
-              Navigator.pushNamed(context, '/register');
-            },
+            onTap: () => Navigator.pushNamed(context, '/register'),
             child: _buildNavItem(
               Icons.person_add_outlined,
               context.t('REGISTER', 'التسجيل'),
@@ -485,17 +561,12 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildNavItem(IconData icon, String label, bool isActive) {
+    final color = isActive ? _accentColor : _mutedTextColor;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: isActive ? _accentGreen : Colors.white38),
-        Text(
-          label,
-          style: TextStyle(
-            color: isActive ? _accentGreen : Colors.white38,
-            fontSize: 10,
-          ),
-        ),
+        Icon(icon, color: color),
+        Text(label, style: TextStyle(color: color, fontSize: 10)),
       ],
     );
   }
