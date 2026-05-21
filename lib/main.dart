@@ -27,7 +27,10 @@ void main() async {
   // 4. Load saved language before the first frame. The UI stays LTR globally.
   await AppText.init();
 
-  // 5. SMS automation is started after login from Dashboard or Settings.
+  // 5. Load saved theme. Dark mode remains the default.
+  await AppTheme.init();
+
+  // 6. SMS automation is started after login from Dashboard or Settings.
   runApp(const FinancialMindApp());
 }
 
@@ -40,38 +43,44 @@ class FinancialMindApp extends StatelessWidget {
     return ValueListenableBuilder<String>(
       valueListenable: AppText.languageCode,
       builder: (context, languageCode, _) {
-        return MaterialApp(
-          title: 'Financial Mind',
-          debugShowCheckedModeBanner: false,
-          locale: Locale(languageCode),
-          supportedLocales: const [Locale('en'), Locale('ar')],
-          localizationsDelegates: const [
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
-          builder: (context, child) {
-            return AppLanguageScope(
-              child: Directionality(
-                textDirection: TextDirection.ltr,
-                child: child ?? const SizedBox.shrink(),
-              ),
+        return ValueListenableBuilder<ThemeMode>(
+          valueListenable: AppTheme.themeMode,
+          builder: (context, themeMode, _) {
+            return MaterialApp(
+              title: 'Financial Mind',
+              debugShowCheckedModeBanner: false,
+              locale: Locale(languageCode),
+              supportedLocales: const [Locale('en'), Locale('ar')],
+              localizationsDelegates: const [
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              builder: (context, child) {
+                return AppLanguageScope(
+                  child: Directionality(
+                    textDirection: TextDirection.ltr,
+                    child: child ?? const SizedBox.shrink(),
+                  ),
+                );
+              },
+
+              theme: AppTheme.lightTheme,
+              darkTheme: AppTheme.darkTheme,
+              themeMode: themeMode,
+
+              // Initial route shown to the user upon app launch
+              home: const LoginScreen(),
+
+              // Defining the app routes for structured navigation
+              // These routes are crucial for moving between authentication and dashboard
+              routes: {
+                '/login': (context) => const LoginScreen(),
+                '/register': (context) => const RegisterScreen(),
+                '/dashboard': (context) => const DashboardScreen(),
+                '/update-password': (context) => const UpdatePasswordScreen(),
+              },
             );
-          },
-
-          // Applying the professional dark theme (Neon Design System)
-          theme: AppTheme.darkTheme,
-
-          // Initial route shown to the user upon app launch
-          home: const LoginScreen(),
-
-          // Defining the app routes for structured navigation
-          // These routes are crucial for moving between authentication and dashboard
-          routes: {
-            '/login': (context) => const LoginScreen(),
-            '/register': (context) => const RegisterScreen(),
-            '/dashboard': (context) => const DashboardScreen(),
-            '/update-password': (context) => const UpdatePasswordScreen(),
           },
         );
       },

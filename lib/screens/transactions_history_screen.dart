@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/category_model.dart';
 import '../models/wallet_model.dart';
 import '../services/supabase_service.dart';
@@ -22,9 +23,13 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
   final SupabaseService _supabaseService = SupabaseService();
   final TextEditingController _searchController = TextEditingController();
 
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _accentGreen = Color(0xFF34EAB9);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _cardColor => _colors.surface;
+  Color get _accentGreen => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
   static const Color _expenseRed = Color(0xFFFF5252);
   static const Color _transferBlue = Color(0xFF3B82F6);
 
@@ -266,7 +271,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
       children: [
         Icon(icon, color: color, size: 18),
         const SizedBox(width: 10),
-        Text(label, style: const TextStyle(color: Colors.white)),
+        Text(label, style: TextStyle(color: _textColor)),
       ],
     );
   }
@@ -285,7 +290,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           context.t("Transaction Details", "تفاصيل الحركة"),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -336,7 +341,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
-          Text(label, style: const TextStyle(color: Colors.grey)),
+          Text(label, style: TextStyle(color: _mutedTextColor)),
           const SizedBox(width: 16),
           Expanded(
             child: Text(
@@ -360,14 +365,14 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
         backgroundColor: _cardColor,
         title: Text(
           context.t("Delete Transaction", "حذف الحركة"),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
         ),
         content: Text(
           context.t(
             "This will reverse the account balance. Continue?",
             "سيؤدي ذلك إلى عكس رصيد الحساب. هل تريد المتابعة؟",
           ),
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: _secondaryTextColor),
         ),
         actions: [
           TextButton(
@@ -471,7 +476,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                           RegExp(r'^\d+\.?\d*'),
                         ),
                       ],
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: _textColor),
                       decoration: _inputStyle(
                         context.t("Amount (JD)", "المبلغ بالدينار"),
                         Icons.payments,
@@ -492,7 +497,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         return DropdownButtonFormField<String>(
                           initialValue: currentValue,
                           dropdownColor: _cardColor,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: _textColor),
                           decoration: _inputStyle(
                             context.t("Account", "الحساب"),
                             Icons.account_balance_wallet,
@@ -524,7 +529,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         return DropdownButtonFormField<int>(
                           initialValue: currentValue,
                           dropdownColor: _cardColor,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: _textColor),
                           decoration: _inputStyle(
                             context.t("Category", "الفئة"),
                             Icons.category,
@@ -544,7 +549,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                     const SizedBox(height: 14),
                     TextField(
                       controller: descController,
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: _textColor),
                       decoration: _inputStyle(
                         context.t("Description", "الوصف"),
                         Icons.edit,
@@ -709,16 +714,13 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
         elevation: 0,
         title: Text(
           context.t("All Transactions", "كل الحركات"),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
             icon: Icon(
               _showHidden ? Icons.visibility : Icons.visibility_off,
-              color: _showHidden ? _accentGreen : Colors.grey,
+              color: _showHidden ? _accentGreen : _mutedTextColor,
             ),
             tooltip: _showHidden
                 ? context.t("Hide hidden", "إخفاء المخفية")
@@ -733,14 +735,14 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
             padding: const EdgeInsets.all(16),
             child: TextField(
               controller: _searchController,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: _textColor),
               decoration: InputDecoration(
                 hintText: context.t(
                   "Search by account, category, merchant...",
                   "ابحث حسب الحساب أو الفئة أو المتجر...",
                 ),
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: _accentGreen),
+                hintStyle: TextStyle(color: _mutedTextColor),
+                prefixIcon: Icon(Icons.search, color: _accentGreen),
                 filled: true,
                 fillColor: _cardColor,
                 border: OutlineInputBorder(
@@ -776,7 +778,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
               ),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
-                  return const Center(
+                  return Center(
                     child: CircularProgressIndicator(color: _accentGreen),
                   );
                 }
@@ -790,7 +792,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         "No transactions found.",
                         "لم يتم العثور على حركات.",
                       ),
-                      style: const TextStyle(color: Colors.grey),
+                      style: TextStyle(color: _mutedTextColor),
                     ),
                   );
                 }

@@ -10,12 +10,14 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/category_model.dart';
 import '../models/wallet_model.dart';
 import '../services/notification_service.dart';
 import '../services/sms_listener_service.dart';
 import '../services/supabase_service.dart';
 import 'my_account_screen.dart';
+import 'notes_screen.dart';
 import 'todo_list_screen.dart';
 import 'transactions_history_screen.dart';
 
@@ -32,8 +34,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   final PageController _pageController = PageController();
 
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _accentGreen = Color(0xFF34EAB9);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _accentGreen => _colors.primary;
 
   final GlobalKey<_DashboardMainContentState> _mainContentKey = GlobalKey();
   final GlobalKey<MyAccountScreenState> _accountsKey = GlobalKey();
@@ -110,7 +113,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return BottomNavigationBar(
       backgroundColor: _bgColor,
       selectedItemColor: _accentGreen,
-      unselectedItemColor: Colors.grey,
+      unselectedItemColor: _colors.textMuted,
       type: BottomNavigationBarType.fixed,
       currentIndex: _selectedIndex,
       onTap: _onBottomNavTap,
@@ -164,11 +167,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   String _currencySymbol = "JD";
   double _exchangeRate = 1.0;
 
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _accentGreen = Color(0xFF34EAB9);
-  static const Color _expenseRed = Color(0xFFFF6B6B);
-  static const Color _transferBlue = Color(0xFF3B82F6);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _cardColor => _colors.surface;
+  Color get _fieldColor => _colors.field;
+  Color get _accentGreen => _colors.primary;
+  Color get _expenseRed => _colors.expense;
+  Color get _transferBlue => _colors.transfer;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
 
   @override
   void initState() {
@@ -346,8 +354,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                   "SMS Sync: $status • $lastSyncText • $count new",
                   "مزامنة الرسائل: $status • $lastSyncText • $count جديد",
                 ),
-                style: const TextStyle(
-                  color: Colors.white70,
+                style: TextStyle(
+                  color: _secondaryTextColor,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -355,7 +363,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const Icon(Icons.touch_app, color: Colors.grey, size: 15),
+            Icon(Icons.touch_app, color: _mutedTextColor, size: 15),
           ],
         ),
       ),
@@ -374,12 +382,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         backgroundColor: _bgColor,
         elevation: 0,
         leading: _buildLeadingIcon(),
-        title: const Text(
+        title: Text(
           "FinMind",
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+          style: TextStyle(fontWeight: FontWeight.bold, color: _textColor),
         ),
         actions: [
           _buildNotificationButton(),
+          const SizedBox(width: 8),
+          _buildNotesButton(context),
           const SizedBox(width: 8),
           _buildAIChip(context),
           const SizedBox(width: 15),
@@ -410,7 +420,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         heroTag: 'dashboard_add_btn',
         onPressed: () => _showTransactionModal(),
         backgroundColor: _accentGreen,
-        child: const Icon(Icons.add, color: Colors.black, size: 30),
+        child: Icon(Icons.add, color: _colors.onPrimary, size: 30),
       ),
     );
   }
@@ -438,8 +448,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
             children: [
               Text(
                 context.t("TOTAL BALANCE", "إجمالي الرصيد"),
-                style: const TextStyle(
-                  color: Colors.black54,
+                style: TextStyle(
+                  color: _colors.onPrimary.withOpacity(0.72),
                   fontWeight: FontWeight.bold,
                   fontSize: 12,
                   letterSpacing: 1.5,
@@ -448,8 +458,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
               const SizedBox(height: 8),
               Text(
                 _formatAmount(total),
-                style: const TextStyle(
-                  color: Colors.black,
+                style: TextStyle(
+                  color: _colors.onPrimary,
                   fontSize: 36,
                   fontWeight: FontWeight.bold,
                 ),
@@ -461,18 +471,22 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.1),
+                  color: _colors.onPrimary.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.money, color: Colors.black54, size: 16),
+                    Icon(
+                      Icons.money,
+                      color: _colors.onPrimary.withOpacity(0.72),
+                      size: 16,
+                    ),
                     const SizedBox(width: 5),
                     Text(
                       "${context.t("Cash", "نقد")}: ${_formatAmount(cash)}",
-                      style: const TextStyle(
-                        color: Colors.black87,
+                      style: TextStyle(
+                        color: _colors.onPrimary,
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
                       ),
@@ -488,26 +502,24 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   }
 
   Widget _buildAnalyticsSection() {
-    // Note: Monthly summary still fetches using Future to save bandwidth on every update,
-    // but you can refresh it via the pull-to-refresh.
-    return FutureBuilder<Map<String, double>>(
-      future: _supabaseService.getFilteredSummary('Month'),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _transactionsStream,
       builder: (context, snapshot) {
-        double income = snapshot.data?['Income'] ?? 0.0;
-        double expense = snapshot.data?['Expense'] ?? 0.0;
-
-        double incomeProgress = (income > 0) ? 1.0 : 0.0;
-        double expenseProgress = (expense > 0) ? 1.0 : 0.0;
+        final summary = _monthlySummaryFromTransactions(snapshot.data ?? []);
+        final income = summary['Income'] ?? 0.0;
+        final expense = summary['Expense'] ?? 0.0;
+        final incomeProgress = 1.0;
+        final expenseProgress = -1.0;
 
         return Column(
           children: [
             _buildProgressCard(
               context.t("Monthly Income", "الدخل الشهري"),
-              "${_formatAmount(income)} ",
+              "$income|$expense",
               incomeProgress,
               _accentGreen,
             ),
-            const SizedBox(height: 12),
+            const SizedBox.shrink(),
             _buildProgressCard(
               context.t("Monthly Expenses", "المصاريف الشهرية"),
               _formatAmount(expense),
@@ -529,9 +541,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       stream: _transactionsStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(20),
+              padding: const EdgeInsets.all(20),
               child: CircularProgressIndicator(color: _accentGreen),
             ),
           );
@@ -546,7 +558,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
             padding: const EdgeInsets.all(20),
             child: Text(
               context.t("No transactions yet.", "لا توجد حركات بعد."),
-              style: const TextStyle(color: Colors.grey),
+              style: TextStyle(color: _mutedTextColor),
             ),
           );
         }
@@ -574,7 +586,38 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         color: _accentGreen,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: const Icon(Icons.account_balance_wallet, color: Colors.black),
+      child: Icon(Icons.account_balance_wallet, color: _colors.onPrimary),
+    ),
+  );
+
+  Widget _buildNotesButton(BuildContext context) => InkWell(
+    onTap: () => Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const NotesScreen()),
+    ),
+    borderRadius: BorderRadius.circular(20),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _accentGreen.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _accentGreen.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.note_alt_outlined, color: _accentGreen, size: 14),
+          const SizedBox(width: 5),
+          Text(
+            context.t("Notes", "الملاحظات"),
+            style: TextStyle(
+              color: _accentGreen,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
     ),
   );
 
@@ -593,11 +636,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.auto_awesome, color: _accentGreen, size: 14),
+          Icon(Icons.auto_awesome, color: _accentGreen, size: 14),
           const SizedBox(width: 5),
           Text(
             context.t("Ask AI", "اسأل الذكاء"),
-            style: const TextStyle(
+            style: TextStyle(
               color: _accentGreen,
               fontSize: 12,
               fontWeight: FontWeight.bold,
@@ -635,7 +678,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                         "No notifications yet.",
                         "لا توجد إشعارات بعد.",
                       ),
-                      style: const TextStyle(color: Colors.grey),
+                      style: TextStyle(color: _mutedTextColor),
                     ),
                   ),
                 ),
@@ -652,8 +695,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                       Expanded(
                         child: Text(
                           context.t("Notifications", "الإشعارات"),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _textColor,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -665,7 +708,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                         },
                         child: Text(
                           context.t("Clear", "مسح"),
-                          style: const TextStyle(color: _accentGreen),
+                          style: TextStyle(color: _accentGreen),
                         ),
                       ),
                     ],
@@ -693,7 +736,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                   shape: BoxShape.circle,
                   border: Border.all(color: _accentGreen.withOpacity(0.3)),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.notifications_none,
                   color: _accentGreen,
                   size: 20,
@@ -714,8 +757,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                     ),
                     child: Text(
                       count > 9 ? "9+" : count.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: _colors.onPrimary,
                         fontSize: 9,
                         fontWeight: FontWeight.bold,
                       ),
@@ -748,7 +791,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         break;
       default:
         icon = Icons.notifications_none;
-        color = Colors.grey;
+        color = _mutedTextColor;
     }
 
     return Row(
@@ -769,8 +812,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
             children: [
               Text(
                 notification.title,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textColor,
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
                 ),
@@ -780,14 +823,17 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
               const SizedBox(height: 3),
               Text(
                 notification.body,
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                style: TextStyle(color: _mutedTextColor, fontSize: 12),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 4),
               Text(
                 _formatNotificationTime(notification.createdAt),
-                style: const TextStyle(color: Colors.white38, fontSize: 10),
+                style: TextStyle(
+                  color: _mutedTextColor.withOpacity(0.7),
+                  fontSize: 10,
+                ),
               ),
             ],
           ),
@@ -805,8 +851,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     children: [
       Text(
         context.t("Recent Transactions", "آخر الحركات"),
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: _textColor,
           fontSize: 18,
           fontWeight: FontWeight.bold,
         ),
@@ -816,7 +862,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           IconButton(
             icon: Icon(
               _showHidden ? Icons.visibility : Icons.visibility_off,
-              color: _showHidden ? _accentGreen : Colors.grey,
+              color: _showHidden ? _accentGreen : _mutedTextColor,
               size: 20,
             ),
             tooltip: _showHidden
@@ -839,7 +885,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
             },
             child: Text(
               context.t("See All", "عرض الكل"),
-              style: const TextStyle(color: _accentGreen),
+              style: TextStyle(color: _accentGreen),
             ),
           ),
         ],
@@ -853,6 +899,16 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     double progress,
     Color color,
   ) {
+    if (progress < 0) return const SizedBox.shrink();
+
+    final flowParts = amount.split('|');
+    if (flowParts.length == 2) {
+      return _buildMonthlyFlowCard(
+        income: double.tryParse(flowParts[0]) ?? 0.0,
+        expense: double.tryParse(flowParts[1]) ?? 0.0,
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -864,11 +920,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(title, style: const TextStyle(color: Colors.grey)),
+              Text(title, style: TextStyle(color: _mutedTextColor)),
               Text(
                 amount,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textColor,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -877,12 +933,157 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           const SizedBox(height: 12),
           LinearProgressIndicator(
             value: progress,
-            backgroundColor: Colors.white10,
+            backgroundColor: _fieldColor,
             color: color,
             minHeight: 6,
           ),
         ],
       ),
+    );
+  }
+
+  Map<String, double> _monthlySummaryFromTransactions(
+    List<Map<String, dynamic>> transactions,
+  ) {
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final summary = {'Income': 0.0, 'Expense': 0.0};
+
+    for (final tx in transactions) {
+      if (tx['is_hidden'] == true || tx['is_internal_transfer'] == true) {
+        continue;
+      }
+
+      final date = DateTime.tryParse(
+        (tx['date'] ?? tx['created_at'] ?? '').toString(),
+      );
+      if (date == null || date.toLocal().isBefore(monthStart)) continue;
+
+      final type = tx['type']?.toString() ?? '';
+      if (type != 'Income' && type != 'Expense') continue;
+
+      final amount = (tx['amount'] as num?)?.toDouble() ?? 0.0;
+      summary[type] = (summary[type] ?? 0.0) + amount.abs();
+    }
+
+    return summary;
+  }
+
+  Widget _buildMonthlyFlowCard({
+    required double income,
+    required double expense,
+  }) {
+    final totalFlow = income + expense;
+    final incomeShare = totalFlow <= 0 ? 0.0 : income / totalFlow;
+    final expenseShare = totalFlow <= 0 ? 0.0 : expense / totalFlow;
+    final net = income - expense;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _colors.subtleBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  context.t("Monthly Flow", "الحركة الشهرية"),
+                  style: TextStyle(
+                    color: _textColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              Text(
+                "${context.t("Net", "الصافي")}: ${_formatAmount(net)}",
+                style: TextStyle(
+                  color: net >= 0 ? _accentGreen : _expenseRed,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _buildFlowLegend(
+                  context.t("Income", "الدخل"),
+                  _formatAmount(income),
+                  _accentGreen,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildFlowLegend(
+                  context.t("Expenses", "المصاريف"),
+                  _formatAmount(expense),
+                  _expenseRed,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              height: 12,
+              color: _fieldColor,
+              child: totalFlow <= 0
+                  ? const SizedBox.expand()
+                  : Row(
+                      children: [
+                        if (incomeShare > 0)
+                          Expanded(
+                            flex: (incomeShare * 1000).round().clamp(1, 1000),
+                            child: Container(color: _accentGreen),
+                          ),
+                        if (incomeShare > 0 && expenseShare > 0)
+                          Container(width: 2, color: _cardColor),
+                        if (expenseShare > 0)
+                          Expanded(
+                            flex: (expenseShare * 1000).round().clamp(1, 1000),
+                            child: Container(color: _expenseRed),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlowLegend(String label, String amount, Color color) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            "$label: $amount",
+            style: TextStyle(
+              color: _secondaryTextColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 
@@ -934,7 +1135,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           color: _cardColor,
           borderRadius: BorderRadius.circular(15),
           border: isHidden
-              ? Border.all(color: Colors.grey.withOpacity(0.3), width: 1)
+              ? Border.all(color: _mutedTextColor.withOpacity(0.3), width: 1)
               : null,
         ),
         child: Material(
@@ -961,15 +1162,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                       children: [
                         Text(
                           title,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _textColor,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
                           secondaryText,
-                          style: const TextStyle(
-                            color: Colors.grey,
+                          style: TextStyle(
+                            color: _mutedTextColor,
                             fontSize: 12,
                           ),
                         ),
@@ -986,12 +1187,12 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                   ),
                   const SizedBox(width: 5),
                   PopupMenuButton<String>(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.more_vert,
-                      color: Colors.grey,
+                      color: _mutedTextColor,
                       size: 20,
                     ),
-                    color: _bgColor,
+                    color: _cardColor,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15),
                     ),
@@ -1017,38 +1218,35 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                       }
                     },
                     itemBuilder: (BuildContext context) => [
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'details',
                         child: Row(
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.info_outline,
                               color: Colors.blueAccent,
                               size: 18,
                             ),
-                            SizedBox(width: 10),
+                            const SizedBox(width: 10),
                             Text(
                               "Details",
-                              style: TextStyle(color: Colors.white),
+                              style: TextStyle(color: _textColor),
                             ),
                           ],
                         ),
                       ),
                       if (!isInternalTransfer)
-                        const PopupMenuItem(
+                        PopupMenuItem(
                           value: 'edit',
                           child: Row(
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.edit,
                                 color: Colors.orangeAccent,
                                 size: 18,
                               ),
-                              SizedBox(width: 10),
-                              Text(
-                                "Edit",
-                                style: TextStyle(color: Colors.white),
-                              ),
+                              const SizedBox(width: 10),
+                              Text("Edit", style: TextStyle(color: _textColor)),
                             ],
                           ),
                         ),
@@ -1060,31 +1258,28 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                               isHidden
                                   ? Icons.visibility
                                   : Icons.visibility_off,
-                              color: Colors.grey,
+                              color: _mutedTextColor,
                               size: 18,
                             ),
                             const SizedBox(width: 10),
                             Text(
                               isHidden ? "Unhide" : "Hide",
-                              style: const TextStyle(color: Colors.white),
+                              style: TextStyle(color: _textColor),
                             ),
                           ],
                         ),
                       ),
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'delete',
                         child: Row(
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.delete,
                               color: Colors.redAccent,
                               size: 18,
                             ),
-                            SizedBox(width: 10),
-                            Text(
-                              "Delete",
-                              style: TextStyle(color: Colors.white),
-                            ),
+                            const SizedBox(width: 10),
+                            Text("Delete", style: TextStyle(color: _textColor)),
                           ],
                         ),
                       ),
@@ -1123,17 +1318,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         title: Center(
           child: Text(
             context.t("Transaction Details", "تفاصيل الحركة"),
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
           ),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Divider(color: Colors.white10),
+            Divider(color: _colors.subtleBorder),
             const SizedBox(height: 10),
             _buildDetailRow(
               context.t("Description", "الوصف"),
@@ -1168,8 +1360,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
             onPressed: () => Navigator.pop(ctx),
             child: Text(
               context.t("Close", "إغلاق"),
-              style: const TextStyle(
-                color: Colors.black,
+              style: TextStyle(
+                color: _colors.onPrimary,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1179,23 +1371,19 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
-  Widget _buildDetailRow(
-    String label,
-    String value, {
-    Color valueColor = Colors.white,
-  }) {
+  Widget _buildDetailRow(String label, String value, {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+          Text(label, style: TextStyle(color: _mutedTextColor, fontSize: 14)),
           Expanded(
             child: Text(
               value,
               textAlign: TextAlign.right,
               style: TextStyle(
-                color: valueColor,
+                color: valueColor ?? _textColor,
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
               ),
@@ -1216,14 +1404,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         backgroundColor: _cardColor,
         title: Text(
           context.t("Delete Transaction", "حذف الحركة"),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
         ),
         content: Text(
           context.t(
             "Are you sure? This will reverse the account balance.",
             "هل أنت متأكد؟ سيؤدي ذلك إلى عكس رصيد الحساب.",
           ),
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: _secondaryTextColor),
         ),
         actions: [
           TextButton(
@@ -1290,10 +1478,13 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Center(
+                  Center(
                     child: SizedBox(
                       width: 50,
-                      child: Divider(thickness: 5, color: Colors.white24),
+                      child: Divider(
+                        thickness: 5,
+                        color: _mutedTextColor.withOpacity(0.35),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -1301,8 +1492,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                     isEditing
                         ? context.t("Edit Transaction", "تعديل الحركة")
                         : context.t("New Transaction", "حركة جديدة"),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: _textColor,
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
@@ -1343,7 +1534,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d*')),
                     ],
-                    style: const TextStyle(color: Colors.white, fontSize: 22),
+                    style: TextStyle(color: _textColor, fontSize: 22),
                     decoration: _inputStyle(
                       context.t("Amount (In JD)", "المبلغ بالدينار"),
                       Icons.attach_money,
@@ -1358,7 +1549,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                           DropdownButtonFormField<String>(
                             initialValue: selectedWalletId,
                             dropdownColor: _cardColor,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: _textColor),
                             decoration: _inputStyle(
                               selectedType == 'Transfer'
                                   ? context.t("From Account", "من حساب")
@@ -1379,7 +1570,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                             const SizedBox(height: 15),
                             DropdownButtonFormField<String>(
                               dropdownColor: _cardColor,
-                              style: const TextStyle(color: Colors.white),
+                              style: TextStyle(color: _textColor),
                               decoration: _inputStyle(
                                 context.t("To Account", "إلى حساب"),
                                 Icons.account_balance,
@@ -1410,7 +1601,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                               return DropdownButtonFormField<int>(
                                 initialValue: selectedCategoryId,
                                 dropdownColor: _cardColor,
-                                style: const TextStyle(color: Colors.white),
+                                style: TextStyle(color: _textColor),
                                 decoration: _inputStyle(
                                   context.t("Select Category", "اختر الفئة"),
                                   Icons.category,
@@ -1438,7 +1629,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                             border: Border.all(color: _accentGreen),
                           ),
                           child: IconButton(
-                            icon: const Icon(Icons.add, color: _accentGreen),
+                            icon: Icon(Icons.add, color: _accentGreen),
                             onPressed: () => _showAddNewCategoryDialog(
                               context,
                               setModalState,
@@ -1451,7 +1642,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                   ],
                   TextField(
                     controller: descController,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _textColor),
                     decoration: _inputStyle(
                       context.t("Description", "الوصف"),
                       Icons.edit,
@@ -1545,8 +1736,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                       isEditing
                           ? context.t("UPDATE TRANSACTION", "تحديث الحركة")
                           : context.t("SAVE TRANSACTION", "حفظ الحركة"),
-                      style: const TextStyle(
-                        color: Colors.black,
+                      style: TextStyle(
+                        color: _colors.onPrimary,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -1584,11 +1775,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         backgroundColor: _cardColor,
         title: Text(
           context.t("Add Category", "إضافة فئة"),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
         ),
         content: TextField(
           controller: nameController,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
           decoration: _inputStyle(
             context.t("Category Name", "اسم الفئة"),
             Icons.edit,
@@ -1619,15 +1810,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
 
   InputDecoration _inputStyle(String label, IconData icon) => InputDecoration(
     labelText: label,
-    labelStyle: const TextStyle(color: Colors.grey),
+    labelStyle: TextStyle(color: _mutedTextColor),
     prefixIcon: Icon(icon, color: _accentGreen),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(15),
-      borderSide: const BorderSide(color: Colors.white10),
+      borderSide: BorderSide(color: _colors.subtleBorder),
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(15),
-      borderSide: const BorderSide(color: _accentGreen),
+      borderSide: BorderSide(color: _accentGreen),
     ),
   );
 
@@ -1645,13 +1836,15 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           decoration: BoxDecoration(
             color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: isSelected ? color : Colors.white10),
+            border: Border.all(
+              color: isSelected ? color : _colors.subtleBorder,
+            ),
           ),
           child: Center(
             child: Text(
               label,
               style: TextStyle(
-                color: isSelected ? color : Colors.grey,
+                color: isSelected ? color : _mutedTextColor,
                 fontWeight: FontWeight.bold,
               ),
             ),

@@ -6,6 +6,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../services/supabase_service.dart';
 import 'update_password_screen.dart';
 
@@ -26,6 +27,14 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _isPasswordVisible = false;
   late final StreamSubscription<AuthState> _authStateSubscription;
+
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _accentGreen => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _panelColor => const Color(0xFF1E293B);
+  Color get _inputColor => const Color(0xFF000000);
 
   @override
   void initState() {
@@ -253,7 +262,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: _bgColor,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -268,23 +277,19 @@ class _LoginScreenState extends State<LoginScreen> {
                     'التبديل إلى الإنجليزية',
                   ),
                   onPressed: AppText.toggle,
-                  icon: const Icon(Icons.language, color: Color(0xFF00E676)),
+                  icon: Icon(Icons.language, color: _accentGreen),
                 ),
               ),
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(
-                    Icons.lock_outline,
-                    color: Color(0xFF00E676),
-                    size: 30,
-                  ),
+                  Icon(Icons.lock_outline, color: _accentGreen, size: 30),
                   const SizedBox(width: 10),
                   Text(
                     context.t('Financial Mind', 'فايننشال مايند'),
-                    style: const TextStyle(
-                      color: Color(0xFF00E676),
+                    style: TextStyle(
+                      color: _accentGreen,
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                     ),
@@ -294,8 +299,8 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 60),
               Text(
                 context.t('Welcome Back', 'مرحبًا بعودتك'),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textColor,
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
                 ),
@@ -306,13 +311,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   'Enter your credentials to access your vault',
                   'أدخل بياناتك للوصول إلى حسابك',
                 ),
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                style: TextStyle(color: _secondaryTextColor, fontSize: 14),
               ),
               const SizedBox(height: 40),
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E293B),
+                  color: _panelColor,
                   borderRadius: BorderRadius.circular(28),
                 ),
                 child: Column(
@@ -320,8 +325,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     Text(
                       context.t(' EMAIL', ' البريد الإلكتروني'),
-                      style: const TextStyle(
-                        color: Colors.white60,
+                      style: TextStyle(
+                        color: _secondaryTextColor,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -338,8 +343,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       children: [
                         Text(
                           context.t('PASSWORD', 'كلمة المرور'),
-                          style: const TextStyle(
-                            color: Colors.white60,
+                          style: TextStyle(
+                            color: _secondaryTextColor,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                           ),
@@ -348,10 +353,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           onPressed: _showForgotPasswordDialog,
                           child: Text(
                             context.t('Forgot Password?', 'نسيت كلمة المرور؟'),
-                            style: const TextStyle(
-                              color: Color(0xFF00E676),
-                              fontSize: 12,
-                            ),
+                            style: TextStyle(color: _accentGreen, fontSize: 12),
                           ),
                         ),
                       ],
@@ -375,9 +377,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 30),
                     _isLoading
-                        ? const Center(
+                        ? Center(
                             child: CircularProgressIndicator(
-                              color: Color(0xFF00E676),
+                              color: _accentGreen,
                             ),
                           )
                         : ElevatedButton(
@@ -391,8 +393,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             child: Text(
                               context.t('Log In', 'تسجيل الدخول'),
-                              style: const TextStyle(
-                                color: Colors.black,
+                              style: TextStyle(
+                                color: _colors.onPrimary,
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -435,7 +437,7 @@ class _LoginScreenState extends State<LoginScreen> {
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         filled: true,
-        fillColor: Colors.black,
+        fillColor: _inputColor,
         hintText: hint,
         hintStyle: const TextStyle(color: Colors.white24),
         prefixIcon: Icon(icon, color: Colors.white38),
@@ -452,7 +454,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: _panelColor,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Icon(icon, color: Colors.white, size: 30),
@@ -462,7 +464,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildBottomNav() {
     return Container(
       height: 80,
-      color: const Color(0xFF0F172A),
+      color: _bgColor,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
@@ -486,11 +488,11 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: isActive ? const Color(0xFF00E676) : Colors.white38),
+        Icon(icon, color: isActive ? _accentGreen : Colors.white38),
         Text(
           label,
           style: TextStyle(
-            color: isActive ? const Color(0xFF00E676) : Colors.white38,
+            color: isActive ? _accentGreen : Colors.white38,
             fontSize: 10,
           ),
         ),

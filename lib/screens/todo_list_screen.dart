@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/task_model.dart';
 import '../models/wallet_model.dart';
 import '../services/notification_service.dart';
@@ -41,9 +42,13 @@ class _TodoListScreenState extends State<TodoListScreen> {
   final List<String> _selectedTaskIds = [];
 
   // Theme constants
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _accentGreen = Color(0xFF34EAB9);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _cardColor => _colors.surface;
+  Color get _accentGreen => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
   static const Color _accentRed = Color(0xFFFF5252);
 
   @override
@@ -107,7 +112,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
         ),
         content: Text(
           "Are you sure you want to delete ${_selectedTaskIds.length} tasks?",
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: _secondaryTextColor),
         ),
         actions: [
           TextButton(
@@ -166,16 +171,16 @@ class _TodoListScreenState extends State<TodoListScreen> {
                   "تم تحديد ${_selectedTaskIds.length}",
                 )
               : context.t("My Agenda", "مهامي"),
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: Colors.white,
+            color: _textColor,
             fontSize: 24,
             letterSpacing: 0.5,
           ),
         ),
         leading: _isDeleteMode
             ? IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
+                icon: Icon(Icons.close, color: _textColor),
                 onPressed: () => setState(() {
                   _isDeleteMode = false;
                   _selectedTaskIds.clear();
@@ -188,7 +193,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               _isDeleteMode
                   ? Icons.delete_forever
                   : Icons.delete_sweep_outlined,
-              color: _isDeleteMode ? _accentRed : Colors.white,
+              color: _isDeleteMode ? _accentRed : _textColor,
             ),
             onPressed: () => setState(() {
               _isDeleteMode = !_isDeleteMode;
@@ -197,7 +202,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
           ),
           if (!_isDeleteMode)
             IconButton(
-              icon: const Icon(Icons.sync, color: Colors.white),
+              icon: Icon(Icons.sync, color: _textColor),
               onPressed: _refresh,
             ),
         ],
@@ -269,7 +274,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               ),
               Text(
                 "${(progress * 100).toInt()}%",
-                style: const TextStyle(
+                style: TextStyle(
                   color: _accentGreen,
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
@@ -283,7 +288,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
             child: LinearProgressIndicator(
               value: progress,
               backgroundColor: Colors.white.withValues(alpha: 0.05),
-              valueColor: const AlwaysStoppedAnimation<Color>(_accentGreen),
+              valueColor: AlwaysStoppedAnimation<Color>(_accentGreen),
               minHeight: 8,
             ),
           ),
@@ -499,9 +504,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
       future: _tasksFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: _accentGreen),
-          );
+          return Center(child: CircularProgressIndicator(color: _accentGreen));
         }
 
         if (snapshot.hasError) {
@@ -574,7 +577,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               "Tap the + button to add a new task.",
               "اضغط زر + لإضافة مهمة جديدة.",
             ),
-            style: const TextStyle(color: Colors.grey, fontSize: 14),
+            style: TextStyle(color: _mutedTextColor, fontSize: 14),
           ),
         ],
       ),
@@ -616,7 +619,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               label: const Text("Retry"),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _accentGreen,
-                side: const BorderSide(color: _accentGreen),
+                side: BorderSide(color: _accentGreen),
               ),
             ),
           ],
@@ -752,14 +755,14 @@ class _TodoListScreenState extends State<TodoListScreen> {
                       children: [
                         Text(
                           "\$${task.amount.toStringAsFixed(0)}",
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: _accentGreen,
                             fontSize: 12,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
                         const SizedBox(width: 4),
-                        const Icon(
+                        Icon(
                           Icons.account_balance_wallet,
                           color: _accentGreen,
                           size: 14,
@@ -914,7 +917,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               const SizedBox(height: 20),
               TextField(
                 controller: titleController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: _textColor),
                 decoration: _inputStyle(
                   context.t("What do you need to do?", "ماذا تريد أن تفعل؟"),
                   Icons.title,
@@ -935,7 +938,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     lastDate: DateTime.now().add(const Duration(days: 365)),
                     builder: (context, child) => Theme(
                       data: ThemeData.dark().copyWith(
-                        colorScheme: const ColorScheme.dark(
+                        colorScheme: ColorScheme.dark(
                           primary: _accentGreen,
                           onPrimary: Colors.black,
                           surface: _cardColor,
@@ -961,16 +964,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(
-                        Icons.calendar_month,
-                        color: _accentGreen,
-                        size: 22,
-                      ),
+                      Icon(Icons.calendar_month, color: _accentGreen, size: 22),
                       const SizedBox(width: 15),
                       Text(
                         "${DateFormat.yMMMd().format(startDate)} - ${DateFormat.yMMMd().format(endDate)}",
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textColor,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -1050,7 +1049,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
                             initialTime: TimeOfDay.now(),
                             builder: (context, child) => Theme(
                               data: ThemeData.dark().copyWith(
-                                colorScheme: const ColorScheme.dark(
+                                colorScheme: ColorScheme.dark(
                                   primary: Colors.amberAccent,
                                   onPrimary: Colors.black,
                                 ),
@@ -1081,7 +1080,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               ),
               Text(
                 context.t("Link to Wallet (Optional)", "ربط بمحفظة (اختياري)"),
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                style: TextStyle(color: _secondaryTextColor, fontSize: 14),
               ),
               const SizedBox(height: 10),
               Row(
@@ -1293,7 +1292,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
               const SizedBox(height: 20),
               TextField(
                 controller: titleController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: _textColor),
                 decoration: _inputStyle(
                   context.t("Task Title", "عنوان المهمة"),
                   Icons.edit,
@@ -1329,7 +1328,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.date_range, color: _accentGreen),
+                      Icon(Icons.date_range, color: _accentGreen),
                       const SizedBox(width: 15),
                       Text(
                         "${DateFormat.yMMMd().format(startDate)} - ${DateFormat.yMMMd().format(endDate)}",
@@ -1694,7 +1693,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(15),
-      borderSide: const BorderSide(color: _accentGreen, width: 2),
+      borderSide: BorderSide(color: _accentGreen, width: 2),
     ),
   );
 

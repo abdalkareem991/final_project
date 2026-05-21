@@ -26,6 +26,11 @@ Future<void> finmindBackgroundSmsHandler(SmsMessage message) async {
     await NotificationService().initNotification(requestPermissions: false);
     await SMSListenerService().processIncomingMessage(message);
   } catch (e) {
+    try {
+      await NotificationService().showSyncErrorNotification(
+        "Background SMS sync failed: $e",
+      );
+    } catch (_) {}
     debugPrint("Background SMS sync failed: $e");
   }
 }
@@ -56,10 +61,10 @@ class SMSListenerService {
   static int lastProcessedCount = 0;
   static String lastSyncStatus = "Not started";
 
-  static const Duration _syncInterval = Duration(minutes: 2);
-  static const Duration _minSyncGap = Duration(seconds: 20);
-  static const Duration _networkCooldown = Duration(minutes: 2);
-  static const int _recentMessagesLimit = 10;
+  static const Duration _syncInterval = Duration(seconds: 30);
+  static const Duration _minSyncGap = Duration(seconds: 5);
+  static const Duration _networkCooldown = Duration(seconds: 45);
+  static const int _recentMessagesLimit = 25;
 
   Future<bool> startListening({bool syncImmediately = false}) async {
     if (_isStarted && _smsSyncTimer != null) {

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/analytics_model.dart';
 import '../models/wallet_model.dart';
 import '../services/analytics_service.dart';
@@ -37,14 +38,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   String _currencySymbol = "JD";
   double _exchangeRate = 1.0;
 
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _fieldColor = Color(0xFF0B1818);
-  static const Color _accentGreen = Color(0xFF34EAB9);
-  static const Color _expenseRed = Color(0xFFFF6B6B);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _cardColor => _colors.surface;
+  Color get _fieldColor => _colors.field;
+  Color get _accentGreen => _colors.primary;
+  Color get _expenseRed => _colors.expense;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
   static const Color _infoBlue = Color(0xFF3B82F6);
 
-  final List<Color> _incomePalette = const [
+  late final List<Color> _incomePalette = [
     _accentGreen,
     Color(0xFF38BDF8),
     Color(0xFFA7F3D0),
@@ -52,7 +57,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     Color(0xFF8B5CF6),
   ];
 
-  final List<Color> _expensePalette = const [
+  late final List<Color> _expensePalette = [
     _expenseRed,
     Color(0xFFF59E0B),
     Color(0xFF3B82F6),
@@ -200,10 +205,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         builder: (context, child) {
           return Theme(
             data: Theme.of(context).copyWith(
-              colorScheme: const ColorScheme.dark(
+              colorScheme: ColorScheme.dark(
                 primary: _accentGreen,
                 surface: _cardColor,
-                onSurface: Colors.white,
+                onSurface: _textColor,
               ),
             ),
             child: child!,
@@ -251,17 +256,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         centerTitle: true,
         title: Text(
           context.t("Analytics & Reports", "التحليلات والتقارير"),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
         ),
       ),
       body: FutureBuilder<AnalyticsReport>(
         future: _reportFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
+            return Center(
               child: CircularProgressIndicator(color: _accentGreen),
             );
           }
@@ -335,12 +337,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline, color: _expenseRed, size: 42),
+            Icon(Icons.error_outline, color: _expenseRed, size: 42),
             const SizedBox(height: 12),
             Text(
               context.t("Could not load analytics", "تعذر تحميل التحليلات"),
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textColor,
                 fontWeight: FontWeight.bold,
                 fontSize: 18,
               ),
@@ -349,7 +351,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white60, fontSize: 13),
+              style: TextStyle(color: _secondaryTextColor, fontSize: 13),
             ),
             const SizedBox(height: 18),
             ElevatedButton.icon(
@@ -564,14 +566,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           initialValue: initialValue,
           isExpanded: true,
           dropdownColor: _cardColor,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
           decoration: InputDecoration(
             labelText: context.t("Wallet", "المحفظة"),
-            labelStyle: const TextStyle(color: Colors.white54),
-            prefixIcon: const Icon(
-              Icons.account_balance_wallet,
-              color: _accentGreen,
-            ),
+            labelStyle: TextStyle(color: _mutedTextColor),
+            prefixIcon: Icon(Icons.account_balance_wallet, color: _accentGreen),
             filled: true,
             fillColor: _fieldColor,
             enabledBorder: OutlineInputBorder(
@@ -582,7 +581,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: _accentGreen),
+              borderSide: BorderSide(color: _accentGreen),
             ),
           ),
           items: [
@@ -707,7 +706,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(color: _mutedTextColor, fontSize: 12),
           ),
         ],
       ),

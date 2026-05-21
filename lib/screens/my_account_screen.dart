@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telephony/telephony.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/wallet_model.dart';
 import '../services/ai_service.dart';
 import '../services/sms_listener_service.dart';
@@ -34,9 +35,13 @@ class MyAccountScreenState extends State<MyAccountScreen>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _accentGreen = Color(0xFF34EAB9);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _cardColor => _colors.surface;
+  Color get _accentGreen => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
   static const Color _accentBlue = Color(0xFF3B82F6);
   static const Color _expenseRed = Color(0xFFFF5252);
 
@@ -119,24 +124,21 @@ class MyAccountScreenState extends State<MyAccountScreen>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           context.t("Delete Account", "حذف الحساب"),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
         ),
         content: Text(
           context.t(
             "This action will remove the account and its history. Continue?",
             "سيؤدي هذا الإجراء إلى حذف الحساب وسجله. هل تريد المتابعة؟",
           ),
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: _secondaryTextColor),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text(
               context.t("Cancel", "إلغاء"),
-              style: const TextStyle(color: Colors.grey),
+              style: TextStyle(color: _mutedTextColor),
             ),
           ),
           ElevatedButton(
@@ -170,9 +172,9 @@ class MyAccountScreenState extends State<MyAccountScreen>
         automaticallyImplyLeading: false,
         title: Text(
           context.t("Accounts", "الحسابات"),
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: Colors.white,
+            color: _textColor,
             fontSize: 28,
           ),
         ),
@@ -239,7 +241,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
           padding: const EdgeInsets.all(25),
           width: double.infinity,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               colors: [_accentGreen, _accentBlue],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -261,8 +263,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
               const SizedBox(height: 10),
               Text(
                 "JD ${total.toStringAsFixed(2)}",
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _colors.onPrimary,
                   fontSize: 38,
                   fontWeight: FontWeight.w900,
                 ),
@@ -279,9 +281,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
       stream: _walletsStream,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const Center(
-            child: CircularProgressIndicator(color: _accentGreen),
-          );
+          return Center(child: CircularProgressIndicator(color: _accentGreen));
         }
 
         final wallets = snapshot.data!;
@@ -292,7 +292,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
             child: Center(
               child: Text(
                 context.t("No accounts yet.", "لا توجد حسابات بعد."),
-                style: const TextStyle(color: Colors.grey),
+                style: TextStyle(color: _mutedTextColor),
               ),
             ),
           );
@@ -359,7 +359,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                   account.accountMode == 'AUTOMATED'
                       ? "${context.enumText(account.type)} • ${account.smsSenderId ?? context.t('No sender', 'لا يوجد مرسل')}"
                       : context.enumText(account.type),
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  style: TextStyle(color: _mutedTextColor, fontSize: 12),
                 ),
               ],
             ),
@@ -389,7 +389,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 value: 'edit',
                 child: Text(
                   context.t("Edit", "تعديل"),
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textColor),
                 ),
               ),
               PopupMenuItem(
@@ -481,7 +481,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                       ),
                       Text(
                         context.t("Manual", "يدوي"),
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: _textColor),
                       ),
                       const SizedBox(width: 20),
                       Radio<String>(
@@ -492,7 +492,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                       ),
                       Text(
                         context.t("Automated", "آلي"),
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: _textColor),
                       ),
                     ],
                   ),
@@ -533,14 +533,14 @@ class MyAccountScreenState extends State<MyAccountScreen>
                   ),
                   if (isLoadingBalance) ...[
                     const SizedBox(height: 10),
-                    const LinearProgressIndicator(color: _accentGreen),
+                    LinearProgressIndicator(color: _accentGreen),
                   ],
                   const SizedBox(height: 15),
                 ],
 
                 TextField(
                   controller: nameController,
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textColor),
                   decoration: _inputDecoration(
                     context.t("Account Name", "اسم الحساب"),
                     Icons.account_balance,
@@ -569,7 +569,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                 DropdownButtonFormField<String>(
                   initialValue: selectedType,
                   dropdownColor: _cardColor,
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: _textColor),
                   decoration: _inputDecoration(
                     context.t("Account Type", "نوع الحساب"),
                     Icons.category,
@@ -739,7 +739,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
                       "No SMS senders found",
                       "لم يتم العثور على مرسلين",
                     ),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: _textColor),
                   ),
                 )
               : ListView.builder(
@@ -749,11 +749,8 @@ class MyAccountScreenState extends State<MyAccountScreen>
                     final String sender = senders[index];
 
                     return ListTile(
-                      leading: const Icon(Icons.sms, color: _accentGreen),
-                      title: Text(
-                        sender,
-                        style: const TextStyle(color: Colors.white),
-                      ),
+                      leading: Icon(Icons.sms, color: _accentGreen),
+                      title: Text(sender, style: TextStyle(color: _textColor)),
                       onTap: () {
                         Navigator.pop(ctx);
                         onPicked(sender);
@@ -846,7 +843,7 @@ class MyAccountScreenState extends State<MyAccountScreen>
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
-        borderSide: const BorderSide(color: _accentGreen, width: 2),
+        borderSide: BorderSide(color: _accentGreen, width: 2),
       ),
     );
   }

@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:telephony/telephony.dart'; //new
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/profile_model.dart';
 import '../services/sms_listener_service.dart'; //new
 import '../services/supabase_service.dart';
@@ -34,16 +35,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isBiometricEnabled = false;
   bool _isNotificationsEnabled = true;
   bool _isSmsAutomationEnabled = false;
+  bool _isLightMode = false;
   String? _busySettingKey;
   String _selectedLanguageCode = "en";
   String _selectedCurrency = "JOD (JD)";
   late final Future<ProfileModel> _profileFuture = _supabaseService
       .getProfileData();
 
-  // UI Theme Constants (Neon-Dark Professional Style)
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _cardColor = Color(0xFF111D1D);
-  static const Color _accentGreen = Color(0xFF34EAB9);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _cardColor => _colors.surface;
+  Color get _fieldColor => _colors.field;
+  Color get _accentGreen => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
+  Color get _mutedTextColor => _colors.textMuted;
 
   @override
   void initState() {
@@ -68,6 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           prefs.getBool('sms_automation_enabled') ?? false;
       _selectedLanguageCode = prefs.getString(AppText.languageKey) ?? 'en';
       _selectedCurrency = prefs.getString('currency') ?? "JOD (JD)";
+      _isLightMode = AppTheme.isLightMode;
     });
   }
 
@@ -82,6 +89,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _setLanguage(String code) async {
     await AppText.setLanguageCode(code);
     await _loadUserSettings();
+  }
+
+  Future<void> _setThemeMode(bool lightMode) async {
+    await AppTheme.setLightMode(lightMode);
+    if (!mounted) return;
+    setState(() => _isLightMode = lightMode);
   }
 
   Future<void> _setBusy(String? key) async {
@@ -334,13 +347,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Text(
               context.t("User Account Details", "تفاصيل حساب المستخدم"),
-              style: const TextStyle(
+              style: TextStyle(
                 color: _accentGreen,
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const Divider(color: Colors.white10, height: 30),
+            Divider(color: _colors.subtleBorder, height: 30),
             _detailRow(
               context.t("Full Name", "الاسم الكامل"),
               profile.fullName,
@@ -366,13 +379,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.grey)),
+          Text(label, style: TextStyle(color: _mutedTextColor)),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -389,10 +399,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         centerTitle: true,
         title: Text(
           context.t("Settings", "الإعدادات"),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
         ),
       ),
       body: SingleChildScrollView(
@@ -427,7 +434,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : null,
                   activeThumbColor: _accentGreen,
                   activeTrackColor: _accentGreen.withOpacity(0.3),
-                  inactiveThumbColor: Colors.grey,
+                  inactiveThumbColor: _mutedTextColor,
                 ),
               ),
             ]),
@@ -483,6 +490,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 20),
             _buildSettingsGroup(context.t("Preferences", "التفضيلات"), [
               _buildSettingItem(
+                icon: _isLightMode ? Icons.light_mode : Icons.dark_mode,
+                title: context.t("Light Mode", "الوضع الفاتح"),
+                subtitle: _isLightMode
+                    ? context.t(
+                        "Bright professional colors",
+                        "ألوان فاتحة احترافية",
+                      )
+                    : context.t(
+                        "Dark mode is the default",
+                        "الوضع الداكن هو الافتراضي",
+                      ),
+                trailing: Switch(
+                  value: _isLightMode,
+                  onChanged: _setThemeMode,
+                  activeThumbColor: _accentGreen,
+                ),
+              ),
+              _buildSettingItem(
                 icon: Icons.language,
                 title: context.t("Language", "اللغة"),
                 subtitle: AppText.languageLabel(_selectedLanguageCode),
@@ -515,7 +540,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: _cardColor,
         title: Text(
           context.t("Select Language", "اختر اللغة"),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: _textColor),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -532,12 +557,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       title: Text(
         AppText.languageLabel(code),
         style: TextStyle(
-          color: isSelected ? _accentGreen : Colors.white70,
+          color: isSelected ? _accentGreen : _secondaryTextColor,
           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
         ),
       ),
       trailing: isSelected
-          ? const Icon(Icons.check, color: _accentGreen, size: 20)
+          ? Icon(Icons.check, color: _accentGreen, size: 20)
           : null,
       onTap: () async {
         await _setLanguage(code);
@@ -551,7 +576,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: _cardColor,
-        title: Text(title, style: const TextStyle(color: Colors.white)),
+        title: Text(title, style: TextStyle(color: _textColor)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: options
@@ -559,7 +584,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 (opt) => ListTile(
                   title: Text(
                     opt,
-                    style: const TextStyle(color: Colors.white70),
+                    style: TextStyle(color: _secondaryTextColor),
                   ),
                   onTap: () {
                     _updatePreference(key, opt);
@@ -578,7 +603,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       future: _profileFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const LinearProgressIndicator(color: _accentGreen);
+          return LinearProgressIndicator(color: _accentGreen);
         }
         if (snapshot.hasError || !snapshot.hasData) {
           return const SizedBox();
@@ -592,14 +617,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decoration: BoxDecoration(
               color: _cardColor,
               borderRadius: BorderRadius.circular(25),
-              border: Border.all(color: Colors.white.withOpacity(0.05)),
+              border: Border.all(color: _colors.subtleBorder),
             ),
             child: Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 35,
                   backgroundColor: _accentGreen,
-                  child: Icon(Icons.person, size: 40, color: Colors.black),
+                  child: Icon(Icons.person, size: 40, color: _colors.onPrimary),
                 ),
                 const SizedBox(width: 20),
                 Expanded(
@@ -608,8 +633,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Text(
                         profile.fullName,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: _textColor,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
@@ -621,19 +646,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               "No phone number added",
                               "لا يوجد رقم هاتف",
                             ),
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 14,
-                        ),
+                        style: TextStyle(color: _mutedTextColor, fontSize: 14),
                       ),
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.arrow_forward_ios,
-                  color: Colors.grey,
-                  size: 16,
-                ),
+                Icon(Icons.arrow_forward_ios, color: _mutedTextColor, size: 16),
               ],
             ),
           ),
@@ -661,7 +679,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               color: _accentGreen.withOpacity(0.12),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.auto_awesome, color: _accentGreen),
+            child: Icon(Icons.auto_awesome, color: _accentGreen),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -670,8 +688,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 Text(
                   context.t("Enable All Features", "تفعيل كل الميزات"),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontWeight: FontWeight.bold,
                     fontSize: 15,
                   ),
@@ -682,7 +700,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     "Turns on notifications, SMS automation, and biometric login where available.",
                     "يشغل الإشعارات وأتمتة الرسائل والدخول بالبصمة عند توفرها.",
                   ),
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  style: TextStyle(color: _mutedTextColor, fontSize: 12),
                 ),
               ],
             ),
@@ -692,24 +710,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: isBusy ? null : _enableEverything,
             style: ElevatedButton.styleFrom(
               backgroundColor: _accentGreen,
-              disabledBackgroundColor: Colors.white12,
+              disabledBackgroundColor: _colors.field,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
             child: isBusy
-                ? const SizedBox(
+                ? SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: _textColor,
                     ),
                   )
                 : Text(
                     context.t("Enable", "تفعيل"),
-                    style: const TextStyle(
-                      color: Colors.black,
+                    style: TextStyle(
+                      color: _colors.onPrimary,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -727,7 +745,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           padding: const EdgeInsets.fromLTRB(10, 0, 0, 10),
           child: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: _accentGreen,
               fontWeight: FontWeight.bold,
               fontSize: 13,
@@ -757,25 +775,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       leading: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: _fieldColor,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, color: Colors.white70, size: 20),
+        child: Icon(icon, color: _secondaryTextColor, size: 20),
       ),
-      title: Text(
-        title,
-        style: const TextStyle(color: Colors.white, fontSize: 15),
-      ),
+      title: Text(title, style: TextStyle(color: _textColor, fontSize: 15)),
       subtitle: subtitle != null
           ? Text(
               subtitle,
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
+              style: TextStyle(color: _mutedTextColor, fontSize: 12),
             )
           : null,
       trailing:
           trailing ??
           (onTap != null
-              ? const Icon(Icons.chevron_right, color: Colors.grey, size: 20)
+              ? Icon(Icons.chevron_right, color: _mutedTextColor, size: 20)
               : null),
     );
   }
@@ -783,16 +798,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildLogoutButton() {
     return ElevatedButton.icon(
       onPressed: _handleSignOut,
-      icon: const Icon(Icons.logout, color: Colors.black),
+      icon: Icon(Icons.logout, color: _colors.onPrimary),
       label: Text(
         context.t("Logout", "تسجيل الخروج"),
-        style: const TextStyle(
-          color: Colors.black,
-          fontWeight: FontWeight.bold,
-        ),
+        style: TextStyle(color: _colors.onPrimary, fontWeight: FontWeight.bold),
       ),
       style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.white,
+        backgroundColor: _accentGreen,
         minimumSize: const Size(double.infinity, 55),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       ),

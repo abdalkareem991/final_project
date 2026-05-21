@@ -89,6 +89,28 @@ class NotificationService {
           AndroidFlutterLocalNotificationsPlugin
         >();
 
+    await androidImplementation?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'finmind_general_channel',
+        'FinMind Notifications',
+        description: 'General FinMind app notifications',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      ),
+    );
+
+    await androidImplementation?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'finmind_tasks_channel',
+        'Task Reminders',
+        description: 'Financial task reminders',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      ),
+    );
+
     if (requestPermissions) {
       await androidImplementation?.requestNotificationsPermission();
       await androidImplementation?.requestExactAlarmsPermission();
@@ -173,6 +195,7 @@ class NotificationService {
           priority: Priority.high,
           playSound: true,
           enableVibration: true,
+          visibility: NotificationVisibility.public,
           styleInformation: BigTextStyleInformation(body),
         );
 
@@ -308,6 +331,7 @@ class NotificationService {
           priority: Priority.high,
           playSound: true,
           enableVibration: true,
+          visibility: NotificationVisibility.public,
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,

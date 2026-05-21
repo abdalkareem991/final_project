@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../core/app_theme.dart';
 import '../services/ai_service.dart';
 import '../services/supabase_service.dart';
 
@@ -39,9 +40,12 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
   String _userName = "User";
   String? _currentChatId;
 
-  static const Color _bgColor = Color(0xFF061414);
-  static const Color _accentGreen = Color(0xFF34EAB9);
-  static const Color _aiChatColor = Color(0xFF111D1D);
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _accentGreen => _colors.primary;
+  Color get _aiChatColor => _colors.surface;
+  Color get _textColor => _colors.textPrimary;
+  Color get _mutedTextColor => _colors.textMuted;
 
   @override
   void initState() {
@@ -364,7 +368,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                       Navigator.pop(context);
                       _startNewChatLocally();
                     },
-                    icon: const Icon(Icons.add, color: _accentGreen),
+                    icon: Icon(Icons.add, color: _accentGreen),
                     tooltip: "New Chat",
                   ),
                 ],
@@ -372,11 +376,8 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
             ),
             const Divider(color: Colors.white10),
             ListTile(
-              leading: const Icon(Icons.add_comment, color: _accentGreen),
-              title: const Text(
-                "New Chat",
-                style: TextStyle(color: Colors.white),
-              ),
+              leading: Icon(Icons.add_comment, color: _accentGreen),
+              title: Text("New Chat", style: TextStyle(color: _textColor)),
               onTap: () {
                 Navigator.pop(context);
                 _startNewChatLocally();
@@ -385,14 +386,14 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
             const Divider(color: Colors.white10),
             Expanded(
               child: _isLoadingChats
-                  ? const Center(
+                  ? Center(
                       child: CircularProgressIndicator(color: _accentGreen),
                     )
                   : _chats.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
                         "No previous chats.",
-                        style: TextStyle(color: Colors.grey),
+                        style: TextStyle(color: _mutedTextColor),
                       ),
                     )
                   : ListView.builder(
@@ -471,7 +472,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
           return ActionChip(
             label: Text(suggestion),
             backgroundColor: _aiChatColor,
-            labelStyle: const TextStyle(color: _accentGreen),
+            labelStyle: TextStyle(color: _accentGreen),
             side: BorderSide(color: _accentGreen.withOpacity(0.4)),
             onPressed: () => _sendSuggestion(suggestion),
           );
@@ -515,7 +516,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
   Widget _buildInputArea() {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: _aiChatColor,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -524,19 +525,19 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
           Expanded(
             child: TextField(
               controller: _messageController,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: _textColor),
               onSubmitted: (_) => _sendMessage(),
               minLines: 1,
               maxLines: 4,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: "Ask about your finances...",
-                hintStyle: TextStyle(color: Colors.grey),
+                hintStyle: TextStyle(color: _mutedTextColor),
                 border: InputBorder.none,
               ),
             ),
           ),
           _isLoading
-              ? const SizedBox(
+              ? SizedBox(
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(
@@ -545,7 +546,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
                   ),
                 )
               : IconButton(
-                  icon: const Icon(Icons.send, color: _accentGreen),
+                  icon: Icon(Icons.send, color: _accentGreen),
                   onPressed: _sendMessage,
                 ),
         ],
@@ -564,16 +565,16 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
         backgroundColor: _bgColor,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.menu, color: Colors.white),
+          icon: Icon(Icons.menu, color: _textColor),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
+        title: Text(
           "FinMind AI",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.close, color: Colors.white),
+            icon: Icon(Icons.close, color: _textColor),
             onPressed: () => Navigator.pop(context),
           ),
         ],

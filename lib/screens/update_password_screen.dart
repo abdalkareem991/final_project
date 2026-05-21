@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../core/app_theme.dart';
 import '../services/supabase_service.dart';
 
 class UpdatePasswordScreen extends StatefulWidget {
@@ -12,6 +14,12 @@ class _UpdatePasswordScreenState extends State<UpdatePasswordScreen> {
   final _newPasswordController = TextEditingController();
   final _supabaseService = SupabaseService();
   bool _isLoading = false;
+
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _textColor => _colors.textPrimary;
+  Color get _mutedTextColor => _colors.textMuted;
+  Color get _accentGreen => _colors.primary;
 
   Future<void> _handleUpdate() async {
     setState(() => _isLoading = true);
@@ -35,8 +43,10 @@ class _UpdatePasswordScreenState extends State<UpdatePasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(title: const Text('New Password')),
+      backgroundColor: _bgColor,
+      appBar: AppBar(
+        title: Text('New Password', style: TextStyle(color: _textColor)),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
@@ -44,10 +54,10 @@ class _UpdatePasswordScreenState extends State<UpdatePasswordScreen> {
             TextField(
               controller: _newPasswordController,
               obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
+              style: TextStyle(color: _textColor),
+              decoration: InputDecoration(
                 labelText: 'New Password',
-                labelStyle: TextStyle(color: Colors.white60),
+                labelStyle: TextStyle(color: _mutedTextColor),
               ),
             ),
             const SizedBox(height: 20),
@@ -55,6 +65,10 @@ class _UpdatePasswordScreenState extends State<UpdatePasswordScreen> {
                 ? const CircularProgressIndicator()
                 : ElevatedButton(
                     onPressed: _handleUpdate,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _accentGreen,
+                      foregroundColor: _colors.onPrimary,
+                    ),
                     child: const Text('Update Password'),
                   ),
           ],

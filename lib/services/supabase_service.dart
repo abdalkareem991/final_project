@@ -1675,7 +1675,7 @@ $recentTransactionsText
           double bankBalance = 0.0;
           double cashBalance = 0.0;
           for (var row in data) {
-            final double bal = (row['balance'] as num).toDouble();
+            final double bal = (row['balance'] as num?)?.toDouble() ?? 0.0;
             if (row['type'].toString().toLowerCase() == 'cash') {
               cashBalance += bal;
             } else {
@@ -1703,25 +1703,33 @@ $recentTransactionsText
         .eq('user_id', userId)
         .order('date', ascending: false)
         .asyncMap((transactions) async {
-          final walletsResponse = await client
-              .from('wallets')
-              .select('id, name')
-              .eq('user_id', userId);
+          Map<String, String> walletNames = {};
+          Map<String, String> categoryNames = {};
 
-          final categoriesResponse = await client
-              .from('categories')
-              .select('id, name')
-              .eq('user_id', userId);
+          try {
+            final walletsResponse = await client
+                .from('wallets')
+                .select('id, name')
+                .eq('user_id', userId);
 
-          final Map<String, String> walletNames = {
-            for (final wallet in walletsResponse)
-              wallet['id'].toString(): wallet['name'].toString(),
-          };
+            final categoriesResponse = await client
+                .from('categories')
+                .select('id, name')
+                .eq('user_id', userId);
 
-          final Map<String, String> categoryNames = {
-            for (final category in categoriesResponse)
-              category['id'].toString(): category['name'].toString(),
-          };
+            walletNames = {
+              for (final wallet in walletsResponse)
+                wallet['id'].toString(): wallet['name'].toString(),
+            };
+
+            categoryNames = {
+              for (final category in categoriesResponse)
+                category['id'].toString(): category['name'].toString(),
+            };
+          } catch (error) {
+            debugPrint("Realtime lookup refresh failed: $error");
+          }
+
           final visibleTransactions = includeHidden
               ? transactions
               : transactions.where((tx) => tx['is_hidden'] != true).toList();

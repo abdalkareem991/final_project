@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_text.dart';
+import '../core/app_theme.dart';
 import '../models/wallet_model.dart';
 import '../services/sms_listener_service.dart';
 import '../services/supabase_service.dart';
@@ -20,10 +21,14 @@ class BankSelectionScreen extends StatefulWidget {
 class _BankSelectionScreenState extends State<BankSelectionScreen> {
   final SupabaseService _supabaseService = SupabaseService();
 
-  // Theme Colors
-  static const Color bgColor = Color(0xFF061414);
-  static const Color cardColor = Color(0xFF111D1D);
-  static const Color accentGreen = Color(0xFF34EAB9);
+  AppThemeColors get _colors => context.themeColors;
+  Color get bgColor => _colors.background;
+  Color get cardColor => _colors.surface;
+  Color get fieldColor => _colors.field;
+  Color get accentGreen => _colors.primary;
+  Color get textColor => _colors.textPrimary;
+  Color get secondaryTextColor => _colors.textSecondary;
+  Color get mutedTextColor => _colors.textMuted;
 
   @override
   void initState() {
@@ -98,10 +103,7 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
         centerTitle: true,
         title: Text(
           context.t("Bank Monitoring", "مراقبة البنك"),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
         ),
       ),
       body: Padding(
@@ -111,7 +113,7 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
           children: [
             Text(
               context.t("Automated Accounts", "الحسابات الآلية"),
-              style: const TextStyle(color: Colors.grey, fontSize: 16),
+              style: TextStyle(color: mutedTextColor, fontSize: 16),
             ),
             const SizedBox(height: 20),
             Expanded(
@@ -120,7 +122,7 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
                 future: _supabaseService.getWallets(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
+                    return Center(
                       child: CircularProgressIndicator(color: accentGreen),
                     );
                   }
@@ -147,22 +149,24 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
                           color: cardColor,
                           borderRadius: BorderRadius.circular(15),
                           border: Border.all(
-                            color: isMonitoring ? accentGreen : Colors.white10,
+                            color: isMonitoring
+                                ? accentGreen
+                                : _colors.subtleBorder,
                             width: 1.5,
                           ),
                         ),
                         child: SwitchListTile(
                           title: Text(
                             wallet.name,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: textColor,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           subtitle: Text(
                             "Sender ID: ${wallet.smsSenderId}",
-                            style: const TextStyle(
-                              color: Colors.grey,
+                            style: TextStyle(
+                              color: mutedTextColor,
                               fontSize: 12,
                             ),
                           ),
@@ -171,7 +175,7 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
                           onChanged: (val) => _toggleMonitoring(wallet, val),
                           secondary: Icon(
                             Icons.security,
-                            color: isMonitoring ? accentGreen : Colors.grey,
+                            color: isMonitoring ? accentGreen : mutedTextColor,
                           ),
                         ),
                       );
@@ -195,12 +199,12 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
           Icon(
             Icons.auto_fix_off,
             size: 60,
-            color: Colors.white.withOpacity(0.1),
+            color: textColor.withOpacity(0.12),
           ),
           const SizedBox(height: 15),
           Text(
             context.t("No automated accounts found.", "لا توجد حسابات آلية."),
-            style: const TextStyle(color: Colors.grey),
+            style: TextStyle(color: mutedTextColor),
           ),
           Text(
             context.t(
@@ -208,7 +212,10 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
               "أضف حسابًا آليًا من الشاشة الرئيسية.",
             ),
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white24, fontSize: 12),
+            style: TextStyle(
+              color: mutedTextColor.withOpacity(0.7),
+              fontSize: 12,
+            ),
           ),
         ],
       ),

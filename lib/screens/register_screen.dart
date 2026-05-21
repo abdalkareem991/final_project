@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../core/app_theme.dart';
 import '../services/supabase_service.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -13,17 +14,8 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // --- Theme Constants (Pixel-Perfect match to your image) ---
-  static const Color _bgColor = Color(
-    0xFF061414,
-  ); // Dark background matching the app
-  static const Color _inputColor = Color(
-    0xFF000000,
-  ); // Pure black for input fields
-  static const Color _cardColor = Color(
-    0xFF111D1D,
-  ); // Slightly lighter for the biometrics card
-  static const Color _accentGreen = Color(0xFF34EAB9); // Vibrant Mint Green
+  static const Color _inputColor = Color(0xFF000000);
+  static const Color _cardColor = Color(0xFF111D1D);
   static const Color _textGrey = Color(
     0xFF8B92A5,
   ); // Soft grey for labels and subtitles
@@ -40,6 +32,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isLoading = false;
   bool _agreeToTerms = false;
   bool _enableBiometrics = false;
+
+  AppThemeColors get _colors => context.themeColors;
+  Color get _bgColor => _colors.background;
+  Color get _accentGreen => _colors.primary;
+  Color get _textColor => _colors.textPrimary;
+  Color get _secondaryTextColor => _colors.textSecondary;
 
   @override
   void dispose() {
@@ -113,9 +111,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               // 1. Top Logo & Brand Name
               Row(
                 children: [
-                  const Icon(Icons.lock, color: _accentGreen, size: 20),
+                  Icon(Icons.lock, color: _accentGreen, size: 20),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     'Financial Mind',
                     style: TextStyle(
                       color: _accentGreen,
@@ -130,15 +128,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
               // 2. Main Title (RichText for mixed colors)
               RichText(
-                text: const TextSpan(
+                text: TextSpan(
                   style: TextStyle(
                     fontSize: 38,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: _textColor,
                     height: 1.2,
                   ),
                   children: [
-                    TextSpan(text: 'Join '),
+                    const TextSpan(text: 'Join '),
                     TextSpan(
                       text: 'Financial\nMind',
                       style: TextStyle(color: _accentGreen),
@@ -149,9 +147,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const SizedBox(height: 15),
 
               // 3. Subtitle
-              const Text(
+              Text(
                 'Secure your future with the sovereign\npulse of wealth management.',
-                style: TextStyle(color: _textGrey, fontSize: 14, height: 1.5),
+                style: TextStyle(
+                  color: _secondaryTextColor,
+                  fontSize: 14,
+                  height: 1.5,
+                ),
               ),
               const SizedBox(height: 40),
 
@@ -214,7 +216,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text.rich(
                       TextSpan(
                         text: 'I agree to the ',
@@ -263,11 +265,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                     ),
                     const SizedBox(width: 15),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Enable Biometrics for future\nlogins',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: _textColor,
                           fontSize: 13,
                           height: 1.3,
                           fontWeight: FontWeight.w500,
@@ -288,7 +290,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
               // 7. Submit Button (With glowing effect)
               _isLoading
-                  ? const Center(
+                  ? Center(
                       child: CircularProgressIndicator(color: _accentGreen),
                     )
                   : Container(
@@ -312,10 +314,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ),
                           elevation: 0, // Handled by container shadow
                         ),
-                        child: const Text(
+                        child: Text(
                           'Create Account',
                           style: TextStyle(
-                            color: Colors.black,
+                            color: _colors.onPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 0.5,
@@ -336,7 +338,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
-                    child: const Text(
+                    child: Text(
                       'Log In',
                       style: TextStyle(
                         color: _accentGreen,
@@ -396,7 +398,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: _accentGreen, width: 1.5),
+              borderSide: BorderSide(color: _accentGreen, width: 1.5),
             ),
           ),
         ),
