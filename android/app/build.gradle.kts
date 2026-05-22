@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.final_project"
+    namespace = "com.financialmind.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -23,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.final_project"
+        applicationId = "com.financialmind.app"
         
         // Essential for local notifications
         minSdk = flutter.minSdkVersion 

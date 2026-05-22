@@ -23,7 +23,9 @@ import 'transactions_history_screen.dart';
 
 /// Root dashboard shell that owns the bottom navigation and page switching.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final int initialIndex;
+
+  const DashboardScreen({super.key, this.initialIndex = 0});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -31,7 +33,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   // Navigation state is kept here so each tab can refresh itself when revisited.
-  int _selectedIndex = 0;
+  late int _selectedIndex;
   final PageController _pageController = PageController();
 
   AppThemeColors get _colors => context.themeColors;
@@ -46,6 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedIndex = widget.initialIndex.clamp(0, 4).toInt();
     _screens = [
       _DashboardMainContent(
         key: _mainContentKey,
@@ -60,6 +63,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       const TodoListScreen(),
       const SettingsScreen(),
     ];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_selectedIndex != 0 && _pageController.hasClients) {
+        _pageController.jumpToPage(_selectedIndex);
+      }
+    });
   }
 
   @override
@@ -222,7 +230,13 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     final isEnabled = prefs.getBool('sms_automation_enabled') ?? false;
 
     if (isEnabled) {
-      await SMSListenerService().startListening(syncImmediately: true);
+      final started = await SMSListenerService()
+          .startListening(syncImmediately: true)
+          .timeout(const Duration(seconds: 25), onTimeout: () => false);
+      if (!started) {
+        await prefs.setBool('sms_automation_enabled', false);
+        SMSListenerService().stopListening();
+      }
     } else {
       SMSListenerService().stopListening();
     }

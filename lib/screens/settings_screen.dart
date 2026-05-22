@@ -8,7 +8,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:telephony/telephony.dart'; //new
 
 import '../core/app_text.dart';
 import '../core/app_theme.dart';
@@ -84,6 +83,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (value is bool) await prefs.setBool(key, value);
     if (value is String) await prefs.setString(key, value);
     await _loadUserSettings(); // Refresh UI State
+  }
+
+  Future<void> _savePreference(String key, dynamic value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value is bool) await prefs.setBool(key, value);
+    if (value is String) await prefs.setString(key, value);
   }
 
   Future<void> _setLanguage(String code) async {
@@ -170,7 +175,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await _secureStorage.write(key: 'use_biometrics', value: 'false');
       }
 
-      await _updatePreference('biometric_enabled', enabled);
+      await _savePreference('biometric_enabled', enabled);
+      if (mounted) {
+        setState(() => _isBiometricEnabled = enabled);
+      }
       _showSnack(
         enabled
             ? context.t("Biometric login enabled.", "تم تفعيل الدخول بالبصمة.")
@@ -198,27 +206,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       if (enabled) {
-        final permissionsGranted =
-            await Telephony.instance.requestPhoneAndSmsPermissions;
-
-        if (permissionsGranted != true) {
-          await _updatePreference('sms_automation_enabled', false);
-          _showSnack(
-            context.t(
-              "SMS permissions denied. Automation was not enabled.",
-              "تم رفض صلاحيات الرسائل. لم يتم تفعيل الأتمتة.",
-            ),
-            isError: true,
-          );
-          return;
+        await _savePreference('sms_automation_enabled', true);
+        if (mounted) {
+          setState(() => _isSmsAutomationEnabled = true);
         }
 
-        await _updatePreference('sms_automation_enabled', true);
-        final started = await SMSListenerService().startListening(
-          syncImmediately: true,
-        );
+        final started = await SMSListenerService()
+            .startListening(syncImmediately: true)
+            .timeout(const Duration(seconds: 25), onTimeout: () => false);
         if (!started) {
-          await _updatePreference('sms_automation_enabled', false);
+          SMSListenerService().stopListening();
+          await _savePreference('sms_automation_enabled', false);
+          if (mounted) {
+            setState(() => _isSmsAutomationEnabled = false);
+          }
           _showSnack(
             context.t(
               "SMS permissions denied. Automation was not enabled.",
@@ -236,14 +237,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       } else {
         SMSListenerService().stopListening();
-        await _updatePreference('sms_automation_enabled', false);
+        await _savePreference('sms_automation_enabled', false);
+        if (mounted) {
+          setState(() => _isSmsAutomationEnabled = false);
+        }
         _showSnack(
           context.t("SMS automation stopped.", "تم إيقاف أتمتة الرسائل."),
         );
       }
     } catch (e) {
       debugPrint("SMS automation setting error: $e");
-      await _updatePreference('sms_automation_enabled', false);
+      await _savePreference('sms_automation_enabled', false);
+      if (mounted) {
+        setState(() => _isSmsAutomationEnabled = false);
+      }
       _showSnack(
         context.t(
           "Could not update SMS automation.",

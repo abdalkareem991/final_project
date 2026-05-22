@@ -49,6 +49,7 @@ class FinancialMindApp extends StatelessWidget {
             return MaterialApp(
               title: 'Financial Mind',
               debugShowCheckedModeBanner: false,
+              navigatorKey: NotificationService.navigatorKey,
               locale: Locale(languageCode),
               supportedLocales: const [Locale('en'), Locale('ar')],
               localizationsDelegates: const [
@@ -57,10 +58,12 @@ class FinancialMindApp extends StatelessWidget {
                 GlobalCupertinoLocalizations.delegate,
               ],
               builder: (context, child) {
-                return AppLanguageScope(
+                return _NotificationNavigationBootstrap(
                   child: Directionality(
                     textDirection: TextDirection.ltr,
-                    child: child ?? const SizedBox.shrink(),
+                    child: AppLanguageScope(
+                      child: child ?? const SizedBox.shrink(),
+                    ),
                   ),
                 );
               },
@@ -78,6 +81,7 @@ class FinancialMindApp extends StatelessWidget {
                 '/login': (context) => const LoginScreen(),
                 '/register': (context) => const RegisterScreen(),
                 '/dashboard': (context) => const DashboardScreen(),
+                '/todo': (context) => const DashboardScreen(initialIndex: 3),
                 '/update-password': (context) => const UpdatePasswordScreen(),
               },
             );
@@ -86,4 +90,33 @@ class FinancialMindApp extends StatelessWidget {
       },
     );
   }
+}
+
+class _NotificationNavigationBootstrap extends StatefulWidget {
+  final Widget child;
+
+  const _NotificationNavigationBootstrap({required this.child});
+
+  @override
+  State<_NotificationNavigationBootstrap> createState() =>
+      _NotificationNavigationBootstrapState();
+}
+
+class _NotificationNavigationBootstrapState
+    extends State<_NotificationNavigationBootstrap> {
+  bool _handledPendingNavigation = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_handledPendingNavigation) return;
+
+    _handledPendingNavigation = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService().handlePendingNotificationNavigation();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

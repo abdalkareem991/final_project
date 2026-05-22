@@ -102,7 +102,10 @@ class MyAccountScreenState extends State<MyAccountScreen>
   Future<void> _enableSmsAutomationForAutomatedWallet() async {
     final started = await SMSListenerService().startListening(
       syncImmediately: true,
-    );
+    ).timeout(const Duration(seconds: 25), onTimeout: () => false);
+    if (!started) {
+      SMSListenerService().stopListening();
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('sms_automation_enabled', started);
 

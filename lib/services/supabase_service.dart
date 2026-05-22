@@ -15,6 +15,8 @@ import 'analytics_service.dart';
 import 'debts_service.dart';
 import 'notification_service.dart';
 
+const String _smsLogTag = 'FinMindSMS';
+
 class SupabaseService {
   // Singleton pattern to ensure only one instance of the service exists
   static final SupabaseService _instance = SupabaseService._internal();
@@ -502,62 +504,74 @@ class SupabaseService {
       }
 
       final DateTime effectiveDate = transactionDate ?? DateTime.now();
-      // 1. Insert transaction and return its ID
-      final inserted = await client
-          .from('transactions')
-          .insert({
-            'user_id': user.id,
-            'wallet_id': walletId,
-            'amount': amount,
-            'type': type,
-            'description': description,
-            'category_id': categoryId,
-            'sms_hash': smsHash,
-            'is_internal_transfer': isInternalTransfer,
-            'transfer_group_id': transferGroupId,
-            'merchant_name': merchantName,
-            'sms_kind': smsKind,
-            'date': effectiveDate.toUtc().toIso8601String(),
-          })
-          .select('id')
-          .single();
+      late final String transactionId;
 
-      final String transactionId = inserted['id'] as String;
-
-      // 2. Read current wallet balance
-      final walletData = await client
-          .from('wallets')
-          .select('balance')
-          .eq('id', walletId)
-          .single();
-
-      final double currentBalance = (walletData['balance'] as num).toDouble();
-
-      // 3. Calculate new balance
-      final double calculatedBalance = type.toLowerCase() == 'income'
-          ? currentBalance + amount
-          : currentBalance - amount;
-
-      double newBalance = calculatedBalance;
-
-      if (balanceAfter != null) {
-        final newerTransactions = await client
+      try {
+        final inserted = await client
             .from('transactions')
+            .insert({
+              'user_id': user.id,
+              'wallet_id': walletId,
+              'amount': amount,
+              'type': type,
+              'description': description,
+              'category_id': categoryId,
+              'sms_hash': smsHash,
+              'is_internal_transfer': isInternalTransfer,
+              'transfer_group_id': transferGroupId,
+              'merchant_name': merchantName,
+              'sms_kind': smsKind,
+              'date': effectiveDate.toUtc().toIso8601String(),
+            })
             .select('id')
-            .eq('wallet_id', walletId)
-            .gt('date', effectiveDate.toUtc().toIso8601String())
-            .limit(1);
+            .single();
 
-        if (newerTransactions.isEmpty) {
-          newBalance = balanceAfter;
-        }
+        transactionId = inserted['id'] as String;
+      } catch (insertError) {
+        debugPrint('Create Transaction Insert Error: $insertError');
+        return null;
       }
 
-      // 4. Update wallet balance
-      await client
-          .from('wallets')
-          .update({'balance': newBalance})
-          .eq('id', walletId);
+      double? newBalance;
+
+      try {
+        final walletData = await client
+            .from('wallets')
+            .select('balance')
+            .eq('id', walletId)
+            .single();
+
+        final double currentBalance = (walletData['balance'] as num).toDouble();
+
+        final double calculatedBalance = type.toLowerCase() == 'income'
+            ? currentBalance + amount
+            : currentBalance - amount;
+
+        newBalance = calculatedBalance;
+
+        if (balanceAfter != null) {
+          final newerTransactions = await client
+              .from('transactions')
+              .select('id')
+              .eq('wallet_id', walletId)
+              .gt('date', effectiveDate.toUtc().toIso8601String())
+              .limit(1);
+
+          if (newerTransactions.isEmpty) {
+            newBalance = balanceAfter;
+          }
+        }
+
+        await client
+            .from('wallets')
+            .update({'balance': newBalance})
+            .eq('id', walletId);
+      } catch (walletError) {
+        debugPrint(
+          'Wallet update after transaction insert failed: $walletError',
+        );
+        return null;
+      }
 
       // 5. Try to detect internal transfer after successful insertion
       if (!isInternalTransfer) {
@@ -901,6 +915,7 @@ class SupabaseService {
           .eq('user_id', user.id)
           .eq('type', oppositeType)
           .eq('amount', amount)
+          .eq('is_internal_transfer', false)
           .neq('wallet_id', walletId)
           .gte('date', windowStart.toUtc().toIso8601String())
           .lte('date', windowEnd.toUtc().toIso8601String())
@@ -957,11 +972,15 @@ class SupabaseService {
           })
           .inFilter('id', [newTransactionId, matchedId]);
 
-      await NotificationService().showInternalTransferNotification(
-        fromWallet: fromWalletName,
-        toWallet: toWalletName,
-        amount: amount,
-      );
+      try {
+        await NotificationService().showInternalTransferNotification(
+          fromWallet: fromWalletName,
+          toWallet: toWalletName,
+          amount: amount,
+        );
+      } catch (notificationError) {
+        debugPrint("Internal transfer notification error: $notificationError");
+      }
 
       debugPrint("Internal transfer detected: $transferDescription");
       debugPrint("Internal transfer detected and linked.");
@@ -1068,36 +1087,48 @@ class SupabaseService {
           .from('tasks')
           .insert(task.toJson())
           .select()
-          .single();
+          .single()
+          .timeout(const Duration(seconds: 20));
       return TaskModel.fromJson(response);
     } catch (error) {
+      debugPrint("Add task error: $error");
       rethrow;
     }
   }
 
-  Future<void> updateTask(
+  Future<bool> updateTask(
     TaskModel task, {
     bool rescheduleAlert = false,
     DateTime? newAlertTime,
   }) async {
     try {
-      await client.from('tasks').update(task.toJson()).eq('id', task.id);
+      await client
+          .from('tasks')
+          .update(task.toJson())
+          .eq('id', task.id)
+          .timeout(const Duration(seconds: 20));
       await NotificationService().cancelTaskReminder(task.id);
 
       var reminderScheduled = false;
       if (rescheduleAlert && newAlertTime != null && !task.isCompleted) {
-        reminderScheduled = await NotificationService().scheduleTaskReminder(
-          id: NotificationService.taskReminderId(task.id),
-          title: "Task Reminder",
-          body: task.title,
-          firstDateTime: newAlertTime,
-          recurrenceType: task.recurrenceType,
+        reminderScheduled = await _scheduleTaskReminder(
+          task.copyWith(reminderTime: newAlertTime),
+          newAlertTime,
         );
       }
 
       if (rescheduleAlert || !task.hasNotification) {
-        await updateTaskNotificationStatus(task.id, reminderScheduled);
+        await updateTaskNotificationStatus(
+          task.id,
+          reminderScheduled,
+          reminderTime: reminderScheduled ? newAlertTime : null,
+          notificationId: reminderScheduled
+              ? NotificationService.taskReminderId(task.id)
+              : null,
+        );
       }
+
+      return reminderScheduled;
     } catch (error) {
       rethrow;
     }
@@ -1110,26 +1141,41 @@ class SupabaseService {
           .from('tasks')
           .update({
             'is_completed': nextStatus,
-            if (nextStatus) 'has_notification': false,
+            if (nextStatus) ..._taskReminderStatusPayload(false),
           })
-          .eq('id', taskId);
+          .eq('id', taskId)
+          .timeout(const Duration(seconds: 15));
 
       if (nextStatus) {
         await NotificationService().cancelTaskReminder(taskId);
       }
-    } catch (error) {}
+    } catch (error) {
+      debugPrint("Toggle task status error: $error");
+      rethrow;
+    }
   }
 
   Future<void> updateTaskNotificationStatus(
     String taskId,
-    bool hasNotification,
-  ) async {
+    bool hasNotification, {
+    DateTime? reminderTime,
+    int? notificationId,
+  }) async {
     try {
       await client
           .from('tasks')
-          .update({'has_notification': hasNotification})
-          .eq('id', taskId);
-    } catch (error) {}
+          .update(
+            _taskReminderStatusPayload(
+              hasNotification,
+              reminderTime: reminderTime,
+              notificationId: notificationId,
+            ),
+          )
+          .eq('id', taskId)
+          .timeout(const Duration(seconds: 15));
+    } catch (error) {
+      debugPrint("Update task notification status error: $error");
+    }
   }
 
   Future<int> reschedulePendingTaskReminders() async {
@@ -1141,7 +1187,7 @@ class SupabaseService {
           .from('tasks')
           .select()
           .eq('user_id', user.id)
-          .eq('has_notification', true)
+          .eq('reminder_enabled', true)
           .eq('is_completed', false);
 
       var scheduledCount = 0;
@@ -1150,16 +1196,27 @@ class SupabaseService {
         final task = TaskModel.fromJson(row);
         await NotificationService().cancelTaskReminder(task.id);
 
-        final scheduled = await NotificationService().scheduleTaskReminder(
-          id: NotificationService.taskReminderId(task.id),
-          title: "Task Reminder",
-          body: task.title,
-          firstDateTime: task.dueDate,
-          recurrenceType: task.recurrenceType,
-        );
+        if (!_shouldScheduleTaskReminder(task)) {
+          debugPrint(
+            "[FinMindNotifications] Skipped task reminder restore: task=${task.id}, reminderTime=${task.reminderTime}, completed=${task.isCompleted}",
+          );
+          await updateTaskNotificationStatus(task.id, false);
+          continue;
+        }
+
+        final reminderTime = task.effectiveReminderTime!;
+        final scheduled = await _scheduleTaskReminder(task, reminderTime);
 
         if (scheduled) {
           scheduledCount++;
+          await updateTaskNotificationStatus(
+            task.id,
+            true,
+            reminderTime: reminderTime,
+            notificationId:
+                task.notificationId ??
+                NotificationService.taskReminderId(task.id),
+          );
         } else {
           await updateTaskNotificationStatus(task.id, false);
         }
@@ -1174,9 +1231,159 @@ class SupabaseService {
 
   Future<void> deleteTask(String taskId) async {
     try {
-      await client.from('tasks').delete().eq('id', taskId);
+      await client
+          .from('tasks')
+          .delete()
+          .eq('id', taskId)
+          .timeout(const Duration(seconds: 15));
       await NotificationService().cancelTaskReminder(taskId);
-    } catch (error) {}
+    } catch (error) {
+      debugPrint("Delete task error: $error");
+      rethrow;
+    }
+  }
+
+  Future<bool> scheduleTaskReminderForTask(
+    TaskModel task,
+    DateTime reminderTime,
+  ) async {
+    try {
+      await NotificationService().cancelTaskReminder(task.id);
+      final taskToSchedule = task.copyWith(
+        hasNotification: true,
+        reminderTime: reminderTime,
+        notificationId:
+            task.notificationId ?? NotificationService.taskReminderId(task.id),
+      );
+      final shouldSchedule = _shouldScheduleTaskReminder(taskToSchedule);
+
+      if (!shouldSchedule) {
+        debugPrint(
+          "[FinMindNotifications] Task reminder not scheduled because reminder_time is missing, completed, or past.",
+        );
+        await updateTaskNotificationStatus(task.id, false);
+        return false;
+      }
+
+      final scheduled = await _scheduleTaskReminder(
+        taskToSchedule,
+        reminderTime,
+      );
+      await updateTaskNotificationStatus(
+        task.id,
+        scheduled,
+        reminderTime: scheduled ? reminderTime : null,
+        notificationId: scheduled ? taskToSchedule.notificationId : null,
+      );
+      return scheduled;
+    } catch (error) {
+      debugPrint("Schedule task reminder error: $error");
+      return false;
+    }
+  }
+
+  Future<void> cancelTaskReminderForTask(String taskId) async {
+    await NotificationService().cancelTaskReminder(taskId);
+    await updateTaskNotificationStatus(taskId, false);
+  }
+
+  Future<bool> _scheduleTaskReminder(
+    TaskModel task,
+    DateTime reminderTime,
+  ) async {
+    final notificationId =
+        task.notificationId ?? NotificationService.taskReminderId(task.id);
+    final dueTime = _formatTaskTime(reminderTime);
+    debugPrint("[FinMindNotifications] Selected due_date: ${task.dueDate}");
+    debugPrint("[FinMindNotifications] Selected due_time: $dueTime");
+    debugPrint(
+      "[FinMindNotifications] Calculated reminder_time: $reminderTime",
+    );
+    debugPrint(
+      "[FinMindNotifications] Current DateTime.now(): ${DateTime.now()}",
+    );
+
+    if (!reminderTime.isAfter(DateTime.now())) {
+      debugPrint(
+        "[FinMindNotifications] Schedule skipped: reminder_time is in the past.",
+      );
+      return false;
+    }
+
+    final scheduled = await NotificationService().scheduleTaskReminder(
+      id: notificationId,
+      title: task.title,
+      body: _taskReminderBody(task, reminderTime),
+      firstDateTime: reminderTime,
+      recurrenceType: task.recurrenceType,
+      payload: NotificationService.taskReminderPayload(task.id),
+    );
+
+    if (scheduled) {
+      debugPrint(
+        "[FinMindNotifications] Task reminder scheduled: id=$notificationId",
+      );
+    } else {
+      debugPrint(
+        "[FinMindNotifications] Task reminder schedule failed: ${NotificationService().lastReminderScheduleFailure ?? 'unknown reason'}",
+      );
+    }
+
+    return scheduled;
+  }
+
+  bool _shouldScheduleTaskReminder(TaskModel task) {
+    if (!task.hasNotification || task.isCompleted) return false;
+
+    final now = DateTime.now();
+    final reminderTime = task.effectiveReminderTime;
+    if (reminderTime == null) return false;
+
+    if (task.recurrenceType == TaskModel.recurrenceNone) {
+      return reminderTime.isAfter(now);
+    }
+
+    final endOfEndDate = DateTime(
+      task.endDate.year,
+      task.endDate.month,
+      task.endDate.day,
+      23,
+      59,
+      59,
+      999,
+    );
+    return endOfEndDate.isAfter(now);
+  }
+
+  Map<String, dynamic> _taskReminderStatusPayload(
+    bool enabled, {
+    DateTime? reminderTime,
+    int? notificationId,
+  }) {
+    final payload = <String, dynamic>{
+      'has_notification': enabled,
+      'reminder_enabled': enabled,
+      'reminder_time': enabled ? reminderTime?.toIso8601String() : null,
+      'notification_id': enabled ? notificationId : null,
+    };
+
+    if (reminderTime != null) {
+      payload['due_time'] = _formatTaskTime(reminderTime);
+    }
+
+    return payload;
+  }
+
+  String _taskReminderBody(TaskModel task, DateTime reminderTime) {
+    final description = task.description.trim();
+    if (description.isNotEmpty) return description;
+    return "Due at ${_formatTaskTime(reminderTime)}";
+  }
+
+  String _formatTaskTime(DateTime dateTime) {
+    final hour = dateTime.hour.toString().padLeft(2, '0');
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
   Future<void> executeTaskTransaction(TaskModel task) async {
@@ -1333,8 +1540,8 @@ class SupabaseService {
           .eq('is_active_monitoring', true)
           .maybeSingle();
 
-      debugPrint("Matching sender: $senderId");
-      debugPrint("Matched wallet: $response");
+      debugPrint("Matching automated wallet by SMS sender.");
+      debugPrint("Automated wallet match found: ${response != null}");
 
       return response != null ? response['id'] as String : null;
     } catch (e) {
@@ -1362,19 +1569,28 @@ class SupabaseService {
     Map<String, dynamic> aiData,
     String senderId, {
     String? smsHash,
+    String? matchedWalletId,
   }) async {
     try {
-      final String? walletId = await findWalletBySmsSender(senderId);
+      final String? walletId =
+          matchedWalletId ?? await findWalletBySmsSender(senderId);
 
       if (walletId == null) {
-        debugPrint("No linked wallet found for sender: $senderId");
+        debugPrint("No linked wallet found for SMS sender.");
+        if (smsHash != null) {
+          await recordSmsProcessingStatus(
+            smsHash: smsHash,
+            senderId: senderId,
+            status: 'no_linked_wallet',
+          );
+        }
         return;
       }
 
       if (smsHash != null) {
         final alreadyProcessed = await isSmsAlreadyProcessed(smsHash);
         if (alreadyProcessed) {
-          debugPrint("SMS already processed. Skipping.");
+          debugPrint("[$_smsLogTag] SMS duplicate skipped.");
           return;
         }
       }
@@ -1426,7 +1642,16 @@ class SupabaseService {
       );
 
       if (transactionId == null) {
-        debugPrint("SMS transaction was not created, notification skipped.");
+        debugPrint(
+          "[$_smsLogTag] SMS processing failed: transaction not created.",
+        );
+        if (smsHash != null) {
+          await recordSmsProcessingStatus(
+            smsHash: smsHash,
+            senderId: senderId,
+            status: 'transaction_not_created',
+          );
+        }
         return;
       }
 
@@ -1456,9 +1681,24 @@ class SupabaseService {
         debugPrint("Transaction notification error: $e");
       }
 
+      if (smsHash != null) {
+        await recordSmsProcessingStatus(
+          smsHash: smsHash,
+          senderId: senderId,
+          status: 'processed',
+        );
+      }
+
       debugPrint("SMS transaction added to dashboard successfully.");
     } catch (e) {
-      debugPrint("SMS automation error: $e");
+      debugPrint("[$_smsLogTag] SMS processing failed: $e");
+      if (smsHash != null) {
+        await recordSmsProcessingStatus(
+          smsHash: smsHash,
+          senderId: senderId,
+          status: 'processing_failed',
+        );
+      }
     }
   }
 
@@ -1524,11 +1764,63 @@ class SupabaseService {
           .eq('sms_hash', smsHash)
           .maybeSingle();
 
-      return response != null;
+      if (response != null) return true;
+
+      try {
+        final logged = await client
+            .from('sms_processing_logs')
+            .select('id, status')
+            .eq('user_id', user.id)
+            .eq('sms_hash', smsHash)
+            .maybeSingle();
+
+        if (logged != null) {
+          debugPrint("[$_smsLogTag] SMS duplicate skipped using log table.");
+          return true;
+        }
+      } catch (logError) {
+        debugPrint("[$_smsLogTag] SMS log duplicate check unavailable.");
+      }
+
+      return false;
     } catch (e) {
-      debugPrint("SMS duplicate check error: $e");
+      debugPrint("[$_smsLogTag] SMS duplicate check error: $e");
       return true;
     }
+  }
+
+  Future<void> recordSmsProcessingStatus({
+    required String smsHash,
+    required String senderId,
+    required String status,
+  }) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return;
+
+      await client.from('sms_processing_logs').upsert({
+        'user_id': user.id,
+        'sms_hash': smsHash,
+        'sender_id': senderId,
+        'status': status,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'user_id,sms_hash');
+      debugPrint("[$_smsLogTag] SMS processing status logged: $status.");
+    } catch (e) {
+      debugPrint("[$_smsLogTag] SMS processing log unavailable: $e");
+    }
+  }
+
+  Future<void> recordSmsProcessingIssue({
+    required String smsHash,
+    required String senderId,
+    required String status,
+  }) {
+    return recordSmsProcessingStatus(
+      smsHash: smsHash,
+      senderId: senderId,
+      status: status,
+    );
   }
 
   Future<String> buildFinancialContextForAI() async {

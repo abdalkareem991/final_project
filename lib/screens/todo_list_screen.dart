@@ -1,5 +1,7 @@
 // lib/screens/todo_list_screen.dart
 
+import 'dart:async';
+
 import 'package:easy_date_timeline/easy_date_timeline.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -20,6 +22,7 @@ class TodoListScreen extends StatefulWidget {
 
 class _TodoListScreenState extends State<TodoListScreen> {
   final _supabaseService = SupabaseService();
+  static const Duration _saveTimeout = Duration(seconds: 25);
 
   // Normalize date to midnight to avoid time-matching bugs in DB queries
   late DateTime _selectedDate;
@@ -40,6 +43,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
   // Multi-Selection Logic
   bool _isDeleteMode = false;
   final List<String> _selectedTaskIds = [];
+  final Set<String> _busyTaskIds = {};
 
   // Theme constants
   AppThemeColors get _colors => context.themeColors;
@@ -52,12 +56,118 @@ class _TodoListScreenState extends State<TodoListScreen> {
   Color get _secondaryTextColor => _colors.textSecondary;
   Color get _mutedTextColor => _colors.textMuted;
 
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? _accentRed : _accentGreen,
+      ),
+    );
+  }
+
+  DateTime _dateWithTime(DateTime date, TimeOfDay time) {
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  String _formatDueTime(TimeOfDay? time) {
+    if (time == null) return 'missing';
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  void _logReminderSelection({
+    required DateTime dueDate,
+    required TimeOfDay? dueTime,
+    required DateTime reminderTime,
+  }) {
+    debugPrint("[FinMindNotifications] Selected due_date: $dueDate");
+    debugPrint(
+      "[FinMindNotifications] Selected due_time: ${_formatDueTime(dueTime)}",
+    );
+    debugPrint(
+      "[FinMindNotifications] Calculated reminder_time: $reminderTime",
+    );
+    debugPrint(
+      "[FinMindNotifications] Current DateTime.now(): ${DateTime.now()}",
+    );
+  }
+
+  String? _validateReminder({
+    required bool enabled,
+    required TimeOfDay? time,
+    required DateTime reminderDateTime,
+    required DateTime endDate,
+    required String recurrenceType,
+  }) {
+    if (!enabled) return null;
+    if (time == null) {
+      return context.t(
+        "Choose a due time before enabling a reminder.",
+        "اختر وقت الاستحقاق قبل تفعيل التذكير.",
+      );
+    }
+
+    if (!reminderDateTime.isAfter(DateTime.now())) {
+      return context.t(
+        "Choose a future time for this reminder.",
+        "اختر وقتا مستقبليا لهذا التذكير.",
+      );
+    }
+
+    if (recurrenceType != TaskModel.recurrenceNone) {
+      final endOfEndDate = DateTime(
+        endDate.year,
+        endDate.month,
+        endDate.day,
+        23,
+        59,
+        59,
+      );
+      if (endOfEndDate.isBefore(DateTime.now())) {
+        return context.t(
+          "Choose a future end date for this reminder.",
+          "اختر تاريخ انتهاء مستقبلي لهذا التذكير.",
+        );
+      }
+    }
+
+    return null;
+  }
+
+  void _showReminderResult({required bool requested, required bool scheduled}) {
+    if (!requested) return;
+
+    final failureReason = NotificationService().lastReminderScheduleFailure;
+    final message = scheduled
+        ? "Reminder scheduled."
+        : failureReason ==
+              NotificationService.notificationPermissionRequiredMessage
+        ? "Notification permission is required for reminders."
+        : "Task saved, but the reminder could not be scheduled.";
+
+    _showSnack(
+      message,
+      /*
+      scheduled
+          ? context.t("Reminder scheduled.", "تم ضبط التذكير.")
+          : context.t(
+              "Task saved, but the reminder could not be scheduled.",
+              "تم حفظ المهمة، لكن تعذر ضبط التذكير.",
+            ),
+      */
+      isError: !scheduled,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
     _selectedDate = DateTime(now.year, now.month, now.day);
     _refresh();
+    unawaited(_supabaseService.reschedulePendingTaskReminders());
   }
 
   // CORE FUNCTION: Fetches all dynamic data cleanly and specifically
@@ -96,6 +206,97 @@ class _TodoListScreenState extends State<TodoListScreen> {
       _tasksFuture = _supabaseService.getTasks(_selectedDate);
     });
     _loadAllData();
+  }
+
+  Future<void> _toggleTaskReminderFromCard(TaskModel task) async {
+    if (_busyTaskIds.contains(task.id)) return;
+
+    if (task.isCompleted) {
+      _showSnack(
+        context.t(
+          "Completed tasks do not need reminders.",
+          "المهام المكتملة لا تحتاج إلى تذكير.",
+        ),
+        isError: true,
+      );
+      return;
+    }
+
+    setState(() => _busyTaskIds.add(task.id));
+
+    try {
+      if (task.hasNotification) {
+        await _supabaseService
+            .cancelTaskReminderForTask(task.id)
+            .timeout(_saveTimeout);
+        _showSnack(context.t("Reminder cancelled.", "تم إلغاء التذكير."));
+        _refresh();
+        return;
+      }
+
+      final selectedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(task.dueDate),
+        builder: (context, child) => Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: ColorScheme.dark(
+              primary: Colors.amberAccent,
+              onPrimary: _colors.onPrimary,
+            ),
+          ),
+          child: child!,
+        ),
+      );
+
+      if (selectedTime == null) return;
+      if (!mounted) return;
+
+      final reminderDateTime = _dateWithTime(_displayDate(task), selectedTime);
+      _logReminderSelection(
+        dueDate: _displayDate(task),
+        dueTime: selectedTime,
+        reminderTime: reminderDateTime,
+      );
+      final validationError = _validateReminder(
+        enabled: true,
+        time: selectedTime,
+        reminderDateTime: reminderDateTime,
+        endDate: task.endDate,
+        recurrenceType: task.recurrenceType,
+      );
+
+      if (validationError != null) {
+        _showSnack(validationError, isError: true);
+        return;
+      }
+
+      final updatedTask = task.copyWith(
+        dueDate: reminderDateTime,
+        hasNotification: true,
+        reminderTime: reminderDateTime,
+      );
+
+      final scheduled = await _supabaseService
+          .updateTask(
+            updatedTask,
+            rescheduleAlert: true,
+            newAlertTime: reminderDateTime,
+          )
+          .timeout(_saveTimeout);
+
+      _refresh();
+      _showReminderResult(requested: true, scheduled: scheduled);
+    } catch (e) {
+      debugPrint("Task reminder toggle failed: $e");
+      _showSnack(
+        context.t("Could not update the reminder.", "تعذر تحديث التذكير."),
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busyTaskIds.remove(task.id));
+      }
+    }
   }
 
   // FUNCTION: Executes bulk delete and cleans up notifications
@@ -672,11 +873,24 @@ class _TodoListScreenState extends State<TodoListScreen> {
           else
             GestureDetector(
               onTap: () async {
-                await _supabaseService.toggleTaskStatus(
-                  task.id,
-                  task.isCompleted,
-                );
-                _refresh();
+                if (_busyTaskIds.contains(task.id)) return;
+                setState(() => _busyTaskIds.add(task.id));
+                try {
+                  await _supabaseService
+                      .toggleTaskStatus(task.id, task.isCompleted)
+                      .timeout(_saveTimeout);
+                  _refresh();
+                } catch (e) {
+                  debugPrint("Task status update failed: $e");
+                  _showSnack(
+                    "Could not update task. Please try again.",
+                    isError: true,
+                  );
+                } finally {
+                  if (mounted) {
+                    setState(() => _busyTaskIds.remove(task.id));
+                  }
+                }
               },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
@@ -714,6 +928,20 @@ class _TodoListScreenState extends State<TodoListScreen> {
                         : null,
                   ),
                 ),
+                if (task.description.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    task.description.trim(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: task.isCompleted
+                          ? _mutedTextColor
+                          : _secondaryTextColor,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 8,
@@ -786,24 +1014,27 @@ class _TodoListScreenState extends State<TodoListScreen> {
                     ),
 
                     const SizedBox(width: 15),
-                    // Visual Notification Badge
-                    Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: task.hasNotification
-                            ? Colors.amberAccent.withValues(alpha: 0.15)
-                            : Colors.transparent,
-                        shape: BoxShape.circle,
+                    InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => _toggleTaskReminderFromCard(task),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: task.hasNotification
+                              ? Colors.amberAccent.withValues(alpha: 0.15)
+                              : Colors.transparent,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          task.hasNotification
+                              ? Icons.notifications_active
+                              : Icons.notifications_off_outlined,
+                          color: task.hasNotification
+                              ? Colors.amberAccent
+                              : _mutedTextColor.withValues(alpha: 0.45),
+                          size: 20,
+                        ),
                       ),
-                    ),
-                    Icon(
-                      task.hasNotification
-                          ? Icons.notifications_active
-                          : Icons.notifications_off_outlined,
-                      color: task.hasNotification
-                          ? Colors.amberAccent
-                          : _mutedTextColor.withValues(alpha: 0.45),
-                      size: 20,
                     ),
                   ],
                 ),
@@ -852,12 +1083,17 @@ class _TodoListScreenState extends State<TodoListScreen> {
         child: const Icon(Icons.delete, color: Colors.white, size: 30),
       ),
       onDismissed: (direction) async {
-        if (direction == DismissDirection.endToStart) {
-          // Swipe Left -> Delete
-          await _supabaseService.deleteTask(task.id);
-        } else if (direction == DismissDirection.startToEnd) {
-          // Swipe Right -> Toggle Status
-          await _supabaseService.toggleTaskStatus(task.id, task.isCompleted);
+        try {
+          if (direction == DismissDirection.endToStart) {
+            await _supabaseService.deleteTask(task.id).timeout(_saveTimeout);
+          } else if (direction == DismissDirection.startToEnd) {
+            await _supabaseService
+                .toggleTaskStatus(task.id, task.isCompleted)
+                .timeout(_saveTimeout);
+          }
+        } catch (e) {
+          debugPrint("Task swipe action failed: $e");
+          _showSnack("Could not complete task action.", isError: true);
         }
         _refresh();
       },
@@ -868,6 +1104,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
   // Add Task Modal
   void _showAddTaskModal(BuildContext context) {
     final titleController = TextEditingController();
+    final descriptionController = TextEditingController();
     final amountController = TextEditingController();
     DateTime startDate = _selectedDate;
     DateTime endDate = _selectedDate;
@@ -876,6 +1113,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
     String? selectedWalletId;
     bool enableNotification = false;
     TimeOfDay? notificationTime;
+    bool isSaving = false;
 
     final walletsFuture = _supabaseService.getWallets();
 
@@ -924,6 +1162,30 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 decoration: _inputStyle(
                   context.t("What do you need to do?", "ماذا تريد أن تفعل؟"),
                   Icons.title,
+                ),
+              ),
+              const SizedBox(height: 15),
+              if (descriptionController.text == '__never__') ...[
+                TextField(
+                  controller: descriptionController,
+                  style: TextStyle(color: _textColor),
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: _inputStyle(
+                    context.t("Description", "Ø§Ù„ÙˆØµÙ"),
+                    Icons.notes,
+                  ),
+                ),
+                const SizedBox(height: 15),
+              ],
+              TextField(
+                controller: descriptionController,
+                style: TextStyle(color: _textColor),
+                minLines: 2,
+                maxLines: 3,
+                decoration: _inputStyle(
+                  context.t("Description", "Ø§Ù„ÙˆØµÙ"),
+                  Icons.notes,
                 ),
               ),
               const SizedBox(height: 15),
@@ -1030,8 +1292,11 @@ class _TodoListScreenState extends State<TodoListScreen> {
                         const SizedBox(width: 12),
                         Text(
                           enableNotification && notificationTime != null
-                              ? "Alert at ${notificationTime!.format(context)}"
-                              : "Reminder",
+                              ? context.t(
+                                  "Alert at ${notificationTime!.format(context)}",
+                                  "التذكير عند ${notificationTime!.format(context)}",
+                                )
+                              : context.t("Reminder", "تذكير"),
                           style: TextStyle(
                             color: enableNotification
                                 ? _textColor
@@ -1049,7 +1314,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
                         if (val) {
                           final time = await showTimePicker(
                             context: context,
-                            initialTime: TimeOfDay.now(),
+                            initialTime: notificationTime ?? TimeOfDay.now(),
                             builder: (context, child) => Theme(
                               data: ThemeData.dark().copyWith(
                                 colorScheme: ColorScheme.dark(
@@ -1127,7 +1392,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
                                   ),
                                 )
                                 .toList(),
-                            onChanged: (val) => selectedWalletId = val,
+                            onChanged: (val) =>
+                                setModalState(() => selectedWalletId = val),
                           ),
                     ),
                   ),
@@ -1135,68 +1401,105 @@ class _TodoListScreenState extends State<TodoListScreen> {
               ),
               const SizedBox(height: 30),
               ElevatedButton(
-                onPressed: () async {
-                  if (titleController.text.isNotEmpty) {
-                    final user = _supabaseService.client.auth.currentUser;
-                    if (user == null) return;
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (titleController.text.trim().isEmpty) return;
+                        setModalState(() => isSaving = true);
+                        var closedSheet = false;
+                        try {
+                          final user = _supabaseService.client.auth.currentUser;
+                          if (user == null) return;
 
-                    DateTime taskDueDate = startDate;
+                          final reminderDateTime = notificationTime == null
+                              ? startDate
+                              : _dateWithTime(startDate, notificationTime!);
+                          _logReminderSelection(
+                            dueDate: startDate,
+                            dueTime: notificationTime,
+                            reminderTime: reminderDateTime,
+                          );
 
-                    if (enableNotification && notificationTime != null) {
-                      taskDueDate = DateTime(
-                        startDate.year,
-                        startDate.month,
-                        startDate.day,
-                        notificationTime!.hour,
-                        notificationTime!.minute,
-                      );
-                    }
-
-                    final newTask = TaskModel(
-                      id: '',
-                      title: titleController.text.trim(),
-                      description: '',
-                      dueDate: taskDueDate,
-                      endDate: endDate,
-                      priority: priority,
-                      userId: user.id,
-                      isRecurring: recurrenceType != TaskModel.recurrenceNone,
-                      recurrenceType: recurrenceType,
-                      linkedWalletId: selectedWalletId,
-                      amount: double.tryParse(amountController.text) ?? 0.0,
-                      hasNotification:
-                          enableNotification && notificationTime != null,
-                    );
-
-                    final insertedTask = await _supabaseService.addTask(
-                      newTask,
-                    );
-
-                    if (enableNotification && notificationTime != null) {
-                      final scheduled = await NotificationService()
-                          .scheduleTaskReminder(
-                            id: NotificationService.taskReminderId(
-                              insertedTask.id,
-                            ),
-                            title: 'FinMind Task Reminder',
-                            body: insertedTask.title,
-                            firstDateTime: taskDueDate,
+                          final validationError = _validateReminder(
+                            enabled: enableNotification,
+                            time: notificationTime,
+                            reminderDateTime: reminderDateTime,
+                            endDate: endDate,
                             recurrenceType: recurrenceType,
                           );
 
-                      debugPrint("Task notification scheduled: $scheduled");
+                          if (validationError != null) {
+                            _showSnack(validationError, isError: true);
+                            /*
+                            /*
+                              context.t(
+                                "Choose a future time for this reminder.",
+                                "اختر وقتا مستقبليا لهذا التذكير.",
+                              ),
+                              isError: true,
+                            );
+                            */
+                            */
+                            return;
+                          }
 
-                      await _supabaseService.updateTaskNotificationStatus(
-                        insertedTask.id,
-                        scheduled,
-                      );
-                    }
+                          final newTask = TaskModel(
+                            id: '',
+                            title: titleController.text.trim(),
+                            description: descriptionController.text.trim(),
+                            dueDate: reminderDateTime,
+                            endDate: endDate,
+                            priority: priority,
+                            userId: user.id,
+                            isRecurring:
+                                recurrenceType != TaskModel.recurrenceNone,
+                            recurrenceType: recurrenceType,
+                            linkedWalletId: selectedWalletId,
+                            amount:
+                                double.tryParse(amountController.text) ?? 0.0,
+                            hasNotification: enableNotification,
+                            reminderTime: enableNotification
+                                ? reminderDateTime
+                                : null,
+                          );
 
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    _refresh();
-                  }
-                },
+                          final insertedTask = await _supabaseService
+                              .addTask(newTask)
+                              .timeout(_saveTimeout);
+
+                          var reminderScheduled = false;
+                          if (enableNotification) {
+                            reminderScheduled = await _supabaseService
+                                .scheduleTaskReminderForTask(
+                                  insertedTask.copyWith(
+                                    hasNotification: true,
+                                    reminderTime: reminderDateTime,
+                                  ),
+                                  reminderDateTime,
+                                )
+                                .timeout(_saveTimeout, onTimeout: () => false);
+                          }
+
+                          if (!mounted) return;
+                          Navigator.pop(context);
+                          closedSheet = true;
+                          _refresh();
+                          _showReminderResult(
+                            requested: enableNotification,
+                            scheduled: reminderScheduled,
+                          );
+                        } catch (e) {
+                          debugPrint("Create task failed: $e");
+                          _showSnack(
+                            "Could not create task. Please try again.",
+                            isError: true,
+                          );
+                        } finally {
+                          if (mounted && !closedSheet) {
+                            setModalState(() => isSaving = false);
+                          }
+                        }
+                      },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _accentGreen,
                   minimumSize: const Size(double.infinity, 60),
@@ -1227,6 +1530,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
   /// UI: Shows a modal pre-filled with task data for editing
   void _showEditTaskModal(BuildContext context, TaskModel existingTask) {
     final titleController = TextEditingController(text: existingTask.title);
+    final descriptionController = TextEditingController(
+      text: existingTask.description,
+    );
     final amountController = TextEditingController(
       text: existingTask.amount > 0 ? existingTask.amount.toString() : '',
     );
@@ -1248,6 +1554,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
     TimeOfDay? notificationTime = existingTask.hasNotification
         ? TimeOfDay.fromDateTime(existingTask.dueDate)
         : null;
+    bool isSaving = false;
 
     final walletsFuture = _supabaseService.getWallets();
 
@@ -1296,6 +1603,17 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 decoration: _inputStyle(
                   context.t("Task Title", "عنوان المهمة"),
                   Icons.edit,
+                ),
+              ),
+              const SizedBox(height: 15),
+              TextField(
+                controller: descriptionController,
+                style: TextStyle(color: _textColor),
+                minLines: 2,
+                maxLines: 3,
+                decoration: _inputStyle(
+                  context.t("Description", "Ø§Ù„ÙˆØµÙ"),
+                  Icons.notes,
                 ),
               ),
               const SizedBox(height: 15),
@@ -1391,8 +1709,11 @@ class _TodoListScreenState extends State<TodoListScreen> {
                         const SizedBox(width: 12),
                         Text(
                           enableNotification && notificationTime != null
-                              ? "Alert at ${notificationTime!.format(context)}"
-                              : "Reset Alert",
+                              ? context.t(
+                                  "Alert at ${notificationTime!.format(context)}",
+                                  "التذكير عند ${notificationTime!.format(context)}",
+                                )
+                              : context.t("Reminder", "تذكير"),
                           style: TextStyle(
                             color: enableNotification
                                 ? _textColor
@@ -1410,7 +1731,16 @@ class _TodoListScreenState extends State<TodoListScreen> {
                         if (val) {
                           final time = await showTimePicker(
                             context: context,
-                            initialTime: TimeOfDay.now(),
+                            initialTime: notificationTime ?? TimeOfDay.now(),
+                            builder: (context, child) => Theme(
+                              data: ThemeData.dark().copyWith(
+                                colorScheme: ColorScheme.dark(
+                                  primary: Colors.amberAccent,
+                                  onPrimary: _colors.onPrimary,
+                                ),
+                              ),
+                              child: child!,
+                            ),
                           );
                           if (time != null) {
                             setModalState(() {
@@ -1456,7 +1786,13 @@ class _TodoListScreenState extends State<TodoListScreen> {
                       future: walletsFuture,
                       builder: (context, snapshot) =>
                           DropdownButtonFormField<String>(
-                            initialValue: selectedWalletId,
+                            initialValue:
+                                (snapshot.data?.any(
+                                      (w) => w.id == selectedWalletId,
+                                    ) ??
+                                    false)
+                                ? selectedWalletId
+                                : null,
                             dropdownColor: _cardColor,
                             isExpanded: true,
                             style: TextStyle(color: _textColor, fontSize: 14),
@@ -1475,7 +1811,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
                                   ),
                                 )
                                 .toList(),
-                            onChanged: (val) => selectedWalletId = val,
+                            onChanged: (val) =>
+                                setModalState(() => selectedWalletId = val),
                           ),
                     ),
                   ),
@@ -1483,52 +1820,94 @@ class _TodoListScreenState extends State<TodoListScreen> {
               ),
               const SizedBox(height: 30),
               ElevatedButton(
-                onPressed: () async {
-                  if (titleController.text.isNotEmpty) {
-                    DateTime updatedDueDate = startDate;
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (titleController.text.trim().isEmpty) return;
+                        setModalState(() => isSaving = true);
+                        var closedSheet = false;
+                        try {
+                          final reminderDateTime = notificationTime == null
+                              ? startDate
+                              : _dateWithTime(startDate, notificationTime!);
+                          _logReminderSelection(
+                            dueDate: startDate,
+                            dueTime: notificationTime,
+                            reminderTime: reminderDateTime,
+                          );
 
-                    if (enableNotification && notificationTime != null) {
-                      updatedDueDate = DateTime(
-                        startDate.year,
-                        startDate.month,
-                        startDate.day,
-                        notificationTime!.hour,
-                        notificationTime!.minute,
-                      );
-                    }
+                          final validationError = _validateReminder(
+                            enabled: enableNotification,
+                            time: notificationTime,
+                            reminderDateTime: reminderDateTime,
+                            endDate: endDate,
+                            recurrenceType: recurrenceType,
+                          );
 
-                    final updatedTask = TaskModel(
-                      id: existingTask.id,
-                      title: titleController.text.trim(),
-                      description: existingTask.description,
-                      dueDate: updatedDueDate,
-                      endDate: endDate,
-                      priority: priority,
-                      isCompleted: existingTask.isCompleted,
-                      userId: existingTask.userId,
-                      isRecurring: recurrenceType != TaskModel.recurrenceNone,
-                      recurrenceType: recurrenceType,
-                      linkedWalletId: selectedWalletId,
-                      amount: double.tryParse(amountController.text) ?? 0.0,
-                      hasNotification:
-                          enableNotification && notificationTime != null,
-                    );
+                          if (validationError != null) {
+                            _showSnack(validationError, isError: true);
+                            /*
+                              context.t(
+                                "Choose a future time for this reminder.",
+                                "اختر وقتا مستقبليا لهذا التذكير.",
+                              ),
+                              isError: true,
+                            );
+                            */
+                            return;
+                          }
 
-                    await _supabaseService.updateTask(
-                      updatedTask,
-                      rescheduleAlert:
-                          enableNotification && notificationTime != null,
-                      newAlertTime:
-                          enableNotification && notificationTime != null
-                          ? updatedDueDate
-                          : null,
-                    );
+                          final updatedTask = TaskModel(
+                            id: existingTask.id,
+                            title: titleController.text.trim(),
+                            description: descriptionController.text.trim(),
+                            dueDate: reminderDateTime,
+                            endDate: endDate,
+                            priority: priority,
+                            isCompleted: existingTask.isCompleted,
+                            userId: existingTask.userId,
+                            isRecurring:
+                                recurrenceType != TaskModel.recurrenceNone,
+                            recurrenceType: recurrenceType,
+                            linkedWalletId: selectedWalletId,
+                            amount:
+                                double.tryParse(amountController.text) ?? 0.0,
+                            hasNotification: enableNotification,
+                            reminderTime: enableNotification
+                                ? reminderDateTime
+                                : null,
+                          );
 
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    _refresh();
-                  }
-                },
+                          final reminderScheduled = await _supabaseService
+                              .updateTask(
+                                updatedTask,
+                                rescheduleAlert: enableNotification,
+                                newAlertTime: enableNotification
+                                    ? reminderDateTime
+                                    : null,
+                              )
+                              .timeout(_saveTimeout);
+
+                          if (!mounted) return;
+                          Navigator.pop(context);
+                          closedSheet = true;
+                          _refresh();
+                          _showReminderResult(
+                            requested: enableNotification,
+                            scheduled: reminderScheduled,
+                          );
+                        } catch (e) {
+                          debugPrint("Update task failed: $e");
+                          _showSnack(
+                            "Could not update task. Please try again.",
+                            isError: true,
+                          );
+                        } finally {
+                          if (mounted && !closedSheet) {
+                            setModalState(() => isSaving = false);
+                          }
+                        }
+                      },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _accentBlue,
                   minimumSize: const Size(double.infinity, 60),

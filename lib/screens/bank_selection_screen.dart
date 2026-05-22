@@ -48,7 +48,10 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
       if (status) {
         final started = await SMSListenerService().startListening(
           syncImmediately: false,
-        );
+        ).timeout(const Duration(seconds: 25), onTimeout: () => false);
+        if (!started) {
+          SMSListenerService().stopListening();
+        }
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('sms_automation_enabled', started);
 

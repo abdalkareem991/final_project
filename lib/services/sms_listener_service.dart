@@ -12,6 +12,8 @@ import 'ai_service.dart';
 import 'notification_service.dart';
 import 'supabase_service.dart';
 
+const String _smsLogTag = 'FinMindSMS';
+
 @pragma('vm:entry-point')
 Future<void> finmindBackgroundSmsHandler(SmsMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +30,7 @@ Future<void> finmindBackgroundSmsHandler(SmsMessage message) async {
   } catch (e) {
     try {
       await NotificationService().showSyncErrorNotification(
-        "Background SMS sync failed: $e",
+        "A background SMS could not be synced.",
       );
     } catch (_) {}
     debugPrint("Background SMS sync failed: $e");
@@ -61,9 +63,9 @@ class SMSListenerService {
   static int lastProcessedCount = 0;
   static String lastSyncStatus = "Not started";
 
-  static const Duration _syncInterval = Duration(seconds: 30);
+  static const Duration _syncInterval = Duration(seconds: 5);
   static const Duration _minSyncGap = Duration(seconds: 5);
-  static const Duration _networkCooldown = Duration(seconds: 45);
+  static const Duration _networkCooldown = Duration(seconds: 15);
   static const int _recentMessagesLimit = 25;
 
   Future<bool> startListening({bool syncImmediately = false}) async {
@@ -137,6 +139,8 @@ class SMSListenerService {
     final address = message.address?.trim();
     if (address == null || address.isEmpty) return false;
 
+    debugPrint("[$_smsLogTag] SMS received.");
+
     try {
       final wallets = await _supabaseService.getWallets();
       final automatedWallets = wallets.where((wallet) {
@@ -154,6 +158,7 @@ class SMSListenerService {
         final processed = await _processSmsMessageForSender(
           message: message,
           sender: sender,
+          walletId: wallet.id,
         );
 
         _lastNetworkErrorAt = null;
@@ -240,6 +245,7 @@ class SMSListenerService {
   Future<bool> _processSmsMessageForSender({
     required SmsMessage message,
     required String sender,
+    required String walletId,
   }) async {
     final String? normalizedBody = message.body
         ?.replaceAll(RegExp(r'\s+'), ' ')
@@ -263,35 +269,91 @@ class SMSListenerService {
       return false;
     }
 
-    final bool alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
-      smsHash,
-    );
+    try {
+      final bool alreadyProcessed = await _supabaseService
+          .isSmsAlreadyProcessed(smsHash);
 
-    if (alreadyProcessed) {
-      _processedInMemory.add(smsHash);
+      if (alreadyProcessed) {
+        _processedInMemory.add(smsHash);
+        debugPrint("[$_smsLogTag] SMS duplicate skipped.");
+        return false;
+      }
+    } catch (e) {
+      debugPrint("[$_smsLogTag] SMS duplicate check failed: $e");
       return false;
     }
 
-    final Map<String, dynamic>? parsedData = _aiService.parseBankSmsLocally(
-      normalizedBody,
+    await _logSmsProcessingStatus(
+      smsHash: smsHash,
       sender: sender,
+      status: 'pending',
     );
 
-    if (parsedData == null) {
+    Map<String, dynamic>? parsedData;
+    try {
+      parsedData = _aiService.parseBankSmsLocally(
+        normalizedBody,
+        sender: sender,
+      );
+    } catch (e) {
+      debugPrint("[$_smsLogTag] SMS parsing failed: $e");
+      await _logSmsProcessingStatus(
+        smsHash: smsHash,
+        sender: sender,
+        status: 'parse_failed',
+      );
       _ignoredInMemory.add(smsHash);
       return false;
     }
 
+    if (parsedData == null) {
+      debugPrint("[$_smsLogTag] SMS parsing failed.");
+      await _logSmsProcessingStatus(
+        smsHash: smsHash,
+        sender: sender,
+        status: 'parse_failed',
+      );
+      _ignoredInMemory.add(smsHash);
+      return false;
+    }
+
+    debugPrint("[$_smsLogTag] SMS parsed successfully.");
     parsedData['sms_timestamp'] = smsDate;
 
-    await _supabaseService.processAutomatedTransaction(
-      parsedData,
-      sender,
-      smsHash: smsHash,
-    );
+    try {
+      await _supabaseService.processAutomatedTransaction(
+        parsedData,
+        sender,
+        smsHash: smsHash,
+        matchedWalletId: walletId,
+      );
+      _processedInMemory.add(smsHash);
+      return true;
+    } catch (e) {
+      debugPrint("[$_smsLogTag] SMS processing failed: $e");
+      await _logSmsProcessingStatus(
+        smsHash: smsHash,
+        sender: sender,
+        status: 'processing_failed',
+      );
+      return false;
+    }
+  }
 
-    _processedInMemory.add(smsHash);
-    return true;
+  Future<void> _logSmsProcessingStatus({
+    required String smsHash,
+    required String sender,
+    required String status,
+  }) async {
+    try {
+      await _supabaseService.recordSmsProcessingStatus(
+        smsHash: smsHash,
+        senderId: sender,
+        status: status,
+      );
+    } catch (e) {
+      debugPrint("[$_smsLogTag] SMS processing log failed: $e");
+    }
   }
 
   Future<List<SmsMessage>> _getMessagesForSender(String sender) async {
@@ -313,7 +375,7 @@ class SMSListenerService {
 
         // Keep release logging quiet; only errors are printed below.
       } catch (e) {
-        debugPrint("Sender candidate failed: $candidate => $e");
+        debugPrint("Sender candidate query failed: $e");
       }
     }
 
@@ -378,11 +440,12 @@ class SMSListenerService {
             final processed = await _processSmsMessageForSender(
               message: message,
               sender: sender,
+              walletId: wallet.id,
             );
             if (processed) processedCount++;
           }
         } catch (walletError) {
-          debugPrint("SMS sync error for sender $sender: $walletError");
+          debugPrint("SMS sync error for monitored sender: $walletError");
           continue;
         }
       }

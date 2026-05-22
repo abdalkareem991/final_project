@@ -1,10 +1,22 @@
 // lib/services/notification_service.dart
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+
+const String _notificationLogTag = 'FinMindNotifications';
+
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse response) {
+  debugPrint(
+    "[$_notificationLogTag] Notification tapped while app was in the background.",
+  );
+}
 
 class AppNotificationItem {
   final String id;
@@ -35,6 +47,14 @@ class AppNotificationItem {
   }
 }
 
+class _NotificationPayload {
+  final String? type;
+  final String? taskId;
+  final String route;
+
+  const _NotificationPayload({this.type, this.taskId, this.route = '/todo'});
+}
+
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
 
@@ -50,7 +70,25 @@ class NotificationService {
 
   final ValueNotifier<int> unreadCount = ValueNotifier<int>(0);
 
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   static const int _maxRecentNotifications = 20;
+  static const String _localTimeZoneName = 'Asia/Amman';
+  static const String _generalChannelId = 'finmind_general_channel';
+  static const String _tasksChannelId = 'finmind_tasks_channel';
+  static const String _todoRoute = '/todo';
+  bool _timeZonesReady = false;
+  bool _isInitialized = false;
+  bool _channelsReady = false;
+  bool _didCheckLaunchDetails = false;
+  String? _pendingNavigationPayload;
+  String? _lastReminderScheduleFailure;
+
+  static const String notificationPermissionRequiredMessage =
+      'Notification permission is required for reminders.';
+
+  String? get lastReminderScheduleFailure => _lastReminderScheduleFailure;
 
   static int taskReminderId(String taskId) {
     var hash = 0;
@@ -60,12 +98,23 @@ class NotificationService {
     return hash == 0 ? 1 : hash;
   }
 
+  static String taskReminderPayload(String taskId) {
+    return jsonEncode({
+      'type': 'task_reminder',
+      'task_id': taskId,
+      'route': _todoRoute,
+    });
+  }
+
   Future<bool> get isNotificationEnabled async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('notifications_enabled') ?? true;
   }
 
   Future<void> initNotification({bool requestPermissions = true}) async {
+    _ensureTimeZonesInitialized();
+    debugPrint("[$_notificationLogTag] Notification initialization started.");
+
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/launcher_icon');
 
@@ -82,42 +131,177 @@ class NotificationService {
           iOS: initializationSettingsIOS,
         );
 
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+    if (!_isInitialized) {
+      await flutterLocalNotificationsPlugin.initialize(
+        initializationSettings,
+        onDidReceiveNotificationResponse: _handleNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+      );
+      _isInitialized = true;
+    }
 
     final androidImplementation = flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
 
-    await androidImplementation?.createNotificationChannel(
-      const AndroidNotificationChannel(
-        'finmind_general_channel',
-        'FinMind Notifications',
-        description: 'General FinMind app notifications',
-        importance: Importance.max,
-        playSound: true,
-        enableVibration: true,
-      ),
-    );
+    if (!_channelsReady) {
+      await androidImplementation?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _generalChannelId,
+          'FinMind Notifications',
+          description: 'General FinMind app notifications',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+        ),
+      );
 
-    await androidImplementation?.createNotificationChannel(
-      const AndroidNotificationChannel(
-        'finmind_tasks_channel',
-        'Task Reminders',
-        description: 'Financial task reminders',
-        importance: Importance.max,
-        playSound: true,
-        enableVibration: true,
-      ),
-    );
-
-    if (requestPermissions) {
-      await androidImplementation?.requestNotificationsPermission();
-      await androidImplementation?.requestExactAlarmsPermission();
+      await androidImplementation?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _tasksChannelId,
+          'Task Reminders',
+          description: 'Financial task reminders',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+        ),
+      );
+      _channelsReady = true;
     }
 
+    if (requestPermissions) {
+      final notificationPermission = await androidImplementation
+          ?.requestNotificationsPermission();
+      debugPrint(
+        "[$_notificationLogTag] Notification permission status: ${notificationPermission ?? 'not_applicable'}",
+      );
+
+      final canScheduleExact =
+          await androidImplementation?.canScheduleExactNotifications() ?? true;
+      debugPrint(
+        "[$_notificationLogTag] Exact alarm permission status: $canScheduleExact",
+      );
+      if (!canScheduleExact) {
+        await androidImplementation?.requestExactAlarmsPermission();
+        debugPrint("[$_notificationLogTag] Exact alarm permission requested.");
+      }
+    }
+
+    if (!_didCheckLaunchDetails) {
+      _didCheckLaunchDetails = true;
+      final launchDetails = await flutterLocalNotificationsPlugin
+          .getNotificationAppLaunchDetails();
+      final response = launchDetails?.notificationResponse;
+      if (launchDetails?.didNotificationLaunchApp == true &&
+          response?.payload != null) {
+        _pendingNavigationPayload = response!.payload;
+        debugPrint(
+          "[$_notificationLogTag] Notification launch payload captured.",
+        );
+      }
+    }
+
+    debugPrint("[$_notificationLogTag] Notification initialization completed.");
+  }
+
+  void handlePendingNotificationNavigation() {
+    final payload = _pendingNavigationPayload;
+    if (payload == null) return;
+
+    _pendingNavigationPayload = null;
+    _navigateForPayload(payload);
+  }
+
+  void _handleNotificationResponse(NotificationResponse response) {
+    try {
+      debugPrint(
+        "[$_notificationLogTag] Notification tapped: ${_safePayloadLabel(response.payload)}",
+      );
+      _navigateForPayload(response.payload);
+    } catch (e, stackTrace) {
+      debugPrint(
+        "[$_notificationLogTag] Notification tap handling failed: $e\n$stackTrace",
+      );
+      _navigateToTodoList();
+    }
+  }
+
+  String _safePayloadLabel(String? payload) {
+    if (payload == null || payload.isEmpty) return 'empty';
+    final decoded = _decodePayload(payload);
+    return decoded.type ?? 'invalid';
+  }
+
+  void _navigateForPayload(String? payload) {
+    final decoded = _decodePayload(payload);
+    debugPrint(
+      "[$_notificationLogTag] Payload decoded: type=${decoded.type ?? 'invalid'}, route=${decoded.route}",
+    );
+
+    if (decoded.route != _todoRoute && decoded.type != 'task_reminder') {
+      _navigateToTodoList();
+      return;
+    }
+
+    _navigateToTodoList(payload: payload);
+  }
+
+  void _navigateToTodoList({String? payload}) {
+    final navigator = navigatorKey.currentState;
+    if (navigator == null) {
+      _pendingNavigationPayload = payload ?? taskReminderPayload('');
+      debugPrint(
+        "[$_notificationLogTag] Navigation deferred until navigator is ready.",
+      );
+      return;
+    }
+
+    debugPrint("[$_notificationLogTag] Navigation to Todo List.");
+    navigator.pushNamed(_todoRoute, arguments: payload);
+  }
+
+  _NotificationPayload _decodePayload(String? payload) {
+    if (payload == null || payload.trim().isEmpty) {
+      return const _NotificationPayload(route: _todoRoute);
+    }
+
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map<String, dynamic>) {
+        return _NotificationPayload(
+          type: decoded['type']?.toString(),
+          taskId: decoded['task_id']?.toString(),
+          route: decoded['route']?.toString() ?? _todoRoute,
+        );
+      }
+    } catch (e) {
+      debugPrint("[$_notificationLogTag] Payload decode failed: $e");
+    }
+
+    if (payload.startsWith('todo')) {
+      final parts = payload.split(':');
+      return _NotificationPayload(
+        type: 'task_reminder',
+        taskId: parts.length > 1 ? parts[1] : null,
+        route: _todoRoute,
+      );
+    }
+
+    return const _NotificationPayload(route: _todoRoute);
+  }
+
+  void _ensureTimeZonesInitialized() {
+    if (_timeZonesReady) return;
+
     tz.initializeTimeZones();
-    tz.setLocalLocation(tz.getLocation('Asia/Amman'));
+    try {
+      tz.setLocalLocation(tz.getLocation(_localTimeZoneName));
+    } catch (e) {
+      debugPrint("Could not load $_localTimeZoneName timezone: $e");
+      tz.setLocalLocation(tz.UTC);
+    }
+    _timeZonesReady = true;
   }
 
   int _generateNotificationId() {
@@ -162,13 +346,20 @@ class NotificationService {
   }
 
   Future<void> cancelNotification(int id) async {
-    await flutterLocalNotificationsPlugin.cancel(id);
-    debugPrint("Notification with ID $id cancelled.");
+    try {
+      await flutterLocalNotificationsPlugin.cancel(id);
+      debugPrint("Notification with ID $id cancelled.");
+    } catch (e) {
+      debugPrint("Cancel notification failed for $id: $e");
+    }
   }
 
   Future<void> cancelTaskReminder(String taskId) async {
     await cancelNotification(taskReminderId(taskId));
     await cancelNotification(taskId.hashCode);
+    debugPrint(
+      "[$_notificationLogTag] Task reminder cancelled: ${taskReminderId(taskId)}",
+    );
   }
 
   Future<void> cancelAllNotifications() async {
@@ -180,6 +371,7 @@ class NotificationService {
     String title,
     String body, {
     String type = 'general',
+    String? payload,
   }) async {
     _addToNotificationCenter(title: title, body: body, type: type);
 
@@ -188,7 +380,7 @@ class NotificationService {
 
     final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-          'finmind_general_channel',
+          _generalChannelId,
           'FinMind Notifications',
           channelDescription: 'General FinMind app notifications',
           importance: Importance.max,
@@ -201,14 +393,33 @@ class NotificationService {
 
     final NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        presentBanner: true,
+        presentList: true,
+      ),
+      macOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        presentBanner: true,
+        presentList: true,
+      ),
     );
 
-    await flutterLocalNotificationsPlugin.show(
-      _generateNotificationId(),
-      title,
-      body,
-      platformDetails,
-    );
+    try {
+      await flutterLocalNotificationsPlugin.show(
+        _generateNotificationId(),
+        title,
+        body,
+        platformDetails,
+        payload: payload,
+      );
+    } catch (e) {
+      debugPrint("Show notification failed: $e");
+    }
   }
 
   Future<void> showTransactionNotification({
@@ -256,8 +467,14 @@ class NotificationService {
   Future<void> showTaskReminderNotification({
     required String title,
     required String body,
+    String? taskId,
   }) async {
-    await showInstantNotification(title, body, type: 'task');
+    await showInstantNotification(
+      title,
+      body,
+      type: 'task',
+      payload: taskReminderPayload(taskId ?? ''),
+    );
   }
 
   Future<bool> scheduleNotification(
@@ -280,7 +497,12 @@ class NotificationService {
     required String body,
     required DateTime firstDateTime,
     String recurrenceType = 'none',
+    String? payload,
   }) async {
+    _lastReminderScheduleFailure = null;
+    await initNotification(requestPermissions: false);
+    _ensureTimeZonesInitialized();
+
     final isEnabled = await isNotificationEnabled;
     final normalizedRecurrenceType = recurrenceType.toLowerCase();
 
@@ -290,8 +512,18 @@ class NotificationService {
     debugPrint("Current time: ${DateTime.now()}");
 
     if (!isEnabled) {
+      _lastReminderScheduleFailure = 'App notifications are disabled.';
       debugPrint(
         "Notification not scheduled because notifications are disabled.",
+      );
+      return false;
+    }
+
+    final hasNotificationPermission = await _ensureNotificationPermission();
+    if (!hasNotificationPermission) {
+      _lastReminderScheduleFailure = notificationPermissionRequiredMessage;
+      debugPrint(
+        "[$_notificationLogTag] Notification permission denied; reminder not scheduled.",
       );
       return false;
     }
@@ -302,6 +534,7 @@ class NotificationService {
     );
 
     if (nextDateTime == null) {
+      _lastReminderScheduleFailure = 'Selected reminder time is in the past.';
       debugPrint(
         "Notification not scheduled because selected time is in the past.",
       );
@@ -317,14 +550,147 @@ class NotificationService {
 
     debugPrint("Notification scheduled TZ time: $scheduledTzDate");
 
-    await flutterLocalNotificationsPlugin.zonedSchedule(
+    final scheduleMode = await _bestAndroidScheduleMode();
+
+    try {
+      await _scheduleZonedTaskReminder(
+        id,
+        title,
+        body,
+        scheduledTzDate,
+        androidScheduleMode: scheduleMode,
+        matchComponents: matchComponents,
+        payload: payload,
+      );
+
+      debugPrint(
+        "[$_notificationLogTag] Task reminder scheduled: id=$id mode=$scheduleMode.",
+      );
+      return true;
+    } on PlatformException catch (e, stackTrace) {
+      if (scheduleMode != AndroidScheduleMode.inexactAllowWhileIdle &&
+          _isExactAlarmFailure(e)) {
+        debugPrint(
+          "[$_notificationLogTag] Exact task notification failed, retrying with inexact alarm: $e\n$stackTrace",
+        );
+
+        try {
+          await _scheduleZonedTaskReminder(
+            id,
+            title,
+            body,
+            scheduledTzDate,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            matchComponents: matchComponents,
+            payload: payload,
+          );
+          debugPrint(
+            "[$_notificationLogTag] Task notification scheduled with inexact fallback.",
+          );
+          return true;
+        } catch (retryError, retryStackTrace) {
+          _lastReminderScheduleFailure = retryError.toString();
+          debugPrint(
+            "[$_notificationLogTag] Inexact task notification schedule failed: $retryError\n$retryStackTrace",
+          );
+          return false;
+        }
+      }
+
+      _lastReminderScheduleFailure = e.message ?? e.toString();
+      debugPrint(
+        "[$_notificationLogTag] Task notification schedule failed: $e\n$stackTrace",
+      );
+      return false;
+    } catch (e, stackTrace) {
+      _lastReminderScheduleFailure = e.toString();
+      debugPrint(
+        "[$_notificationLogTag] Task notification schedule failed: $e\n$stackTrace",
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _ensureNotificationPermission() async {
+    final androidImplementation = flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+
+    if (androidImplementation == null) return true;
+
+    try {
+      final currentlyEnabled =
+          await androidImplementation.areNotificationsEnabled() ?? true;
+      debugPrint(
+        "[$_notificationLogTag] Notification permission status before scheduling: $currentlyEnabled",
+      );
+      if (currentlyEnabled) return true;
+
+      final requested =
+          await androidImplementation.requestNotificationsPermission() ?? false;
+      debugPrint(
+        "[$_notificationLogTag] Notification permission request result: $requested",
+      );
+      return requested;
+    } catch (e, stackTrace) {
+      debugPrint(
+        "[$_notificationLogTag] Notification permission check failed: $e\n$stackTrace",
+      );
+      return true;
+    }
+  }
+
+  Future<AndroidScheduleMode> _bestAndroidScheduleMode() async {
+    final androidImplementation = flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+
+    try {
+      final canScheduleExact = await androidImplementation
+          ?.canScheduleExactNotifications();
+      debugPrint(
+        "[$_notificationLogTag] Exact alarm permission status before scheduling: ${canScheduleExact ?? 'not_applicable'}",
+      );
+      if (canScheduleExact == false) {
+        final requested = await androidImplementation
+            ?.requestExactAlarmsPermission();
+        debugPrint(
+          "[$_notificationLogTag] Exact alarm permission request result: ${requested ?? 'not_applicable'}",
+        );
+        if (requested == true) {
+          return AndroidScheduleMode.exactAllowWhileIdle;
+        }
+        return AndroidScheduleMode.inexactAllowWhileIdle;
+      }
+    } catch (e) {
+      debugPrint(
+        "[$_notificationLogTag] Could not check exact alarm availability: $e",
+      );
+      return AndroidScheduleMode.inexactAllowWhileIdle;
+    }
+
+    return AndroidScheduleMode.exactAllowWhileIdle;
+  }
+
+  Future<void> _scheduleZonedTaskReminder(
+    int id,
+    String title,
+    String body,
+    tz.TZDateTime scheduledDate, {
+    required AndroidScheduleMode androidScheduleMode,
+    DateTimeComponents? matchComponents,
+    String? payload,
+  }) {
+    return flutterLocalNotificationsPlugin.zonedSchedule(
       id,
       title,
       body,
-      scheduledTzDate,
+      scheduledDate,
       const NotificationDetails(
         android: AndroidNotificationDetails(
-          'finmind_tasks_channel',
+          _tasksChannelId,
           'Task Reminders',
           channelDescription: 'Financial task reminders',
           importance: Importance.max,
@@ -333,15 +699,32 @@ class NotificationService {
           enableVibration: true,
           visibility: NotificationVisibility.public,
         ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+          presentBanner: true,
+          presentList: true,
+        ),
+        macOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+          presentBanner: true,
+          presentList: true,
+        ),
       ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: androidScheduleMode,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: matchComponents,
+      payload: payload,
     );
+  }
 
-    debugPrint("Task notification scheduled successfully.");
-    return true;
+  bool _isExactAlarmFailure(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('exact') || message.contains('alarm');
   }
 
   DateTime? _nextReminderDateTime(
