@@ -68,6 +68,15 @@ class SMSListenerService {
   static const Duration _networkCooldown = Duration(seconds: 15);
   static const int _recentMessagesLimit = 25;
 
+  bool _isTransientNetworkError(Object error) {
+    final text = error.toString();
+    return text.contains("Failed host lookup") ||
+        text.contains("SocketException") ||
+        text.contains("Connection timed out") ||
+        text.contains("Software caused connection abort") ||
+        text.contains("Connection reset");
+  }
+
   Future<bool> startListening({bool syncImmediately = false}) async {
     if (_isStarted && _smsSyncTimer != null) {
       debugPrint("SMS Auto Sync already running.");
@@ -160,6 +169,10 @@ class SMSListenerService {
           sender: sender,
           walletId: wallet.id,
         );
+
+        if (_lastNetworkErrorAt != null) {
+          return false;
+        }
 
         _lastNetworkErrorAt = null;
         lastSyncTime = DateTime.now();
@@ -279,7 +292,13 @@ class SMSListenerService {
         return false;
       }
     } catch (e) {
-      debugPrint("[$_smsLogTag] SMS duplicate check failed: $e");
+      if (_isTransientNetworkError(e)) {
+        _lastNetworkErrorAt = DateTime.now();
+        lastSyncStatus = "Offline";
+        debugPrint("[$_smsLogTag] SMS duplicate check offline; will retry.");
+      } else {
+        debugPrint("[$_smsLogTag] SMS duplicate check failed: $e");
+      }
       return false;
     }
 
@@ -442,6 +461,9 @@ class SMSListenerService {
               sender: sender,
               walletId: wallet.id,
             );
+            if (_lastNetworkErrorAt != null) {
+              return;
+            }
             if (processed) processedCount++;
           }
         } catch (walletError) {

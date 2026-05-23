@@ -1775,8 +1775,18 @@ class SupabaseService {
             .maybeSingle();
 
         if (logged != null) {
-          debugPrint("[$_smsLogTag] SMS duplicate skipped using log table.");
-          return true;
+          final status = logged['status']?.toString();
+          if (status == 'processed' || status == 'parse_failed') {
+            debugPrint(
+              "[$_smsLogTag] SMS duplicate skipped using log status: $status.",
+            );
+            return true;
+          }
+
+          debugPrint(
+            "[$_smsLogTag] SMS retrying previous status: ${status ?? 'unknown'}.",
+          );
+          return false;
         }
       } catch (logError) {
         debugPrint("[$_smsLogTag] SMS log duplicate check unavailable.");
@@ -1784,9 +1794,25 @@ class SupabaseService {
 
       return false;
     } catch (e) {
-      debugPrint("[$_smsLogTag] SMS duplicate check error: $e");
-      return true;
+      if (_isTransientNetworkError(e)) {
+        debugPrint(
+          "[$_smsLogTag] SMS duplicate check temporarily unavailable: $e",
+        );
+        rethrow;
+      }
+
+      debugPrint("[$_smsLogTag] SMS duplicate check unavailable: $e");
+      return false;
     }
+  }
+
+  bool _isTransientNetworkError(Object error) {
+    final text = error.toString();
+    return text.contains("Failed host lookup") ||
+        text.contains("SocketException") ||
+        text.contains("Connection timed out") ||
+        text.contains("Software caused connection abort") ||
+        text.contains("Connection reset");
   }
 
   Future<void> recordSmsProcessingStatus({

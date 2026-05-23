@@ -30,8 +30,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
   Color get _mutedTextColor => _colors.textMuted;
-  static const Color _expenseRed = Color(0xFFFF5252);
-  static const Color _transferBlue = Color(0xFF3B82F6);
+  Color get _expenseRed => _colors.expense;
+  Color get _transferBlue => _colors.transfer;
 
   String _searchText = '';
   String _typeFilter = 'All';
@@ -135,9 +135,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
         decoration: BoxDecoration(
           color: _cardColor,
           borderRadius: BorderRadius.circular(16),
-          border: isHidden
-              ? Border.all(color: Colors.white.withOpacity(0.12))
-              : null,
+          border: isHidden ? Border.all(color: _colors.subtleBorder) : null,
         ),
         child: Material(
           color: Colors.transparent,
@@ -161,8 +159,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                           title.isEmpty
                               ? context.t("Transaction", "حركة")
                               : title,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: _textColor,
                             fontWeight: FontWeight.bold,
                           ),
                           maxLines: 1,
@@ -171,8 +169,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         const SizedBox(height: 4),
                         Text(
                           subtitle,
-                          style: const TextStyle(
-                            color: Colors.grey,
+                          style: TextStyle(
+                            color: _secondaryTextColor,
                             fontSize: 12,
                           ),
                           maxLines: 1,
@@ -181,8 +179,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         const SizedBox(height: 4),
                         Text(
                           _formatDateTime(tx['date'] ?? tx['created_at']),
-                          style: const TextStyle(
-                            color: Colors.grey,
+                          style: TextStyle(
+                            color: _mutedTextColor,
                             fontSize: 11,
                           ),
                         ),
@@ -194,12 +192,12 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                     style: TextStyle(color: color, fontWeight: FontWeight.bold),
                   ),
                   PopupMenuButton<String>(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.more_vert,
-                      color: Colors.grey,
+                      color: _mutedTextColor,
                       size: 20,
                     ),
-                    color: _bgColor,
+                    color: _cardColor,
                     onSelected: (value) async {
                       if (value == 'details') {
                         _showTransactionDetailsDialog(tx);
@@ -224,7 +222,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         value: 'details',
                         child: _menuRow(
                           Icons.info_outline,
-                          Colors.blueAccent,
+                          _transferBlue,
                           context.t("Details", "التفاصيل"),
                         ),
                       ),
@@ -241,7 +239,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         value: isHidden ? 'unhide' : 'hide',
                         child: _menuRow(
                           isHidden ? Icons.visibility : Icons.visibility_off,
-                          Colors.grey,
+                          _mutedTextColor,
                           isHidden
                               ? context.t("Unhide", "إظهار")
                               : context.t("Hide", "إخفاء"),
@@ -251,7 +249,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         value: 'delete',
                         child: _menuRow(
                           Icons.delete,
-                          Colors.redAccent,
+                          _expenseRed,
                           context.t("Delete", "حذف"),
                         ),
                       ),
@@ -332,11 +330,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     );
   }
 
-  Widget _detailRow(
-    String label,
-    String value, {
-    Color valueColor = Colors.white,
-  }) {
+  Widget _detailRow(String label, String value, {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -347,7 +341,10 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
             child: Text(
               value.isEmpty ? '-' : value,
               textAlign: TextAlign.end,
-              style: TextStyle(color: valueColor, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: valueColor ?? _textColor,
+                fontWeight: FontWeight.bold,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -380,7 +377,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
             child: Text(context.t("Cancel", "إلغاء")),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: ElevatedButton.styleFrom(backgroundColor: _expenseRed),
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(context.t("Delete", "حذف")),
           ),
@@ -441,8 +438,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                   children: [
                     Text(
                       context.t("Edit Transaction", "تعديل الحركة"),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: _textColor,
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
@@ -606,8 +603,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                       },
                       child: Text(
                         context.t("UPDATE TRANSACTION", "تحديث الحركة"),
-                        style: const TextStyle(
-                          color: Colors.black,
+                        style: TextStyle(
+                          color: _colors.onPrimary,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -632,6 +629,11 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
     Color color,
     VoidCallback onTap,
   ) {
+    final selectedTextColor =
+        ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+        ? Colors.white
+        : Colors.black;
+
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
@@ -646,7 +648,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
           child: Text(
             label,
             style: TextStyle(
-              color: selected ? Colors.black : Colors.white,
+              color: selected ? selectedTextColor : _textColor,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -658,13 +660,21 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
   InputDecoration _inputStyle(String hint, IconData icon) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: Colors.grey),
+      hintStyle: TextStyle(color: _mutedTextColor),
       prefixIcon: Icon(icon, color: _accentGreen),
       filled: true,
-      fillColor: _cardColor,
+      fillColor: _colors.field,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
+        borderSide: BorderSide(color: _colors.subtleBorder),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _colors.subtleBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: _accentGreen, width: 2),
       ),
     );
   }
@@ -672,7 +682,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
   void _showSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
+      SnackBar(content: Text(message), backgroundColor: _expenseRed),
     );
   }
 
@@ -689,7 +699,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
       selectedColor: _accentGreen,
       backgroundColor: _cardColor,
       labelStyle: TextStyle(
-        color: selected ? Colors.black : Colors.white,
+        color: selected ? _colors.onPrimary : _textColor,
         fontWeight: FontWeight.bold,
       ),
       onSelected: (_) {
