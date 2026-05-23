@@ -18,7 +18,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 2. Initialize Notification Service to handle transaction alerts
-  await NotificationService().initNotification();
+  await NotificationService().initNotification(requestPermissions: false);
 
   // 3. Initialize Supabase before the app starts with your credentials
   // Ensure that these credentials remain valid in your Supabase project settings

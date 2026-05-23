@@ -54,15 +54,18 @@ class TaskModel {
     final recurrenceType = _normalizeRecurrenceType(
       rawRecurrenceType ?? (legacyIsRecurring ? recurrenceDaily : null),
     );
+    final rawDueTime = json['due_time']?.toString();
     final dueDate = _applyTimeString(
       DateTime.parse(json['due_date']),
-      json['due_time']?.toString(),
+      rawDueTime,
     );
     final reminderEnabled =
         json['reminder_enabled'] == true || json['has_notification'] == true;
     final reminderTime =
         _parseOptionalDateTime(json['reminder_time']) ??
-        (reminderEnabled ? dueDate : null);
+        (reminderEnabled && rawDueTime != null && rawDueTime.trim().isNotEmpty
+            ? dueDate
+            : null);
 
     return TaskModel(
       id: json['id'] ?? '',
@@ -86,13 +89,16 @@ class TaskModel {
   bool get isDailyRecurring => recurrenceType == recurrenceDaily;
   bool get isMonthlyRecurring => recurrenceType == recurrenceMonthly;
   bool get reminderEnabled => hasNotification;
-  DateTime? get effectiveReminderTime => reminderTime;
+  DateTime? get effectiveReminderTime {
+    if (!hasNotification) return null;
+    return reminderTime;
+  }
 
   Map<String, dynamic> toJson() => {
     'title': title,
     'description': description,
     'due_date': dueDate.toIso8601String(),
-    'due_time': _formatTime(reminderTime ?? dueDate),
+    'due_time': reminderTime != null ? _formatTime(reminderTime!) : null,
     'end_date': endDate.toIso8601String(),
     'priority': priority,
     'is_completed': isCompleted,

@@ -13,9 +13,24 @@ const String _notificationLogTag = 'FinMindNotifications';
 
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) {
-  debugPrint(
-    "[$_notificationLogTag] Notification tapped while app was in the background.",
-  );
+  try {
+    debugPrint(
+      "[$_notificationLogTag] Notification tapped while app was in the background.",
+    );
+    final payload = response.payload;
+    if (payload == null || payload.trim().isEmpty) {
+      debugPrint("[$_notificationLogTag] Background payload is empty.");
+      return;
+    }
+    final decoded = jsonDecode(payload);
+    debugPrint(
+      "[$_notificationLogTag] Background payload decoded: ${decoded is Map ? decoded['type'] : 'invalid'}",
+    );
+  } catch (e, stackTrace) {
+    debugPrint(
+      "[$_notificationLogTag] Background notification tap handling failed: $e\n$stackTrace",
+    );
+  }
 }
 
 class AppNotificationItem {
@@ -210,7 +225,14 @@ class NotificationService {
     if (payload == null) return;
 
     _pendingNavigationPayload = null;
-    _navigateForPayload(payload);
+    try {
+      _navigateForPayload(payload);
+    } catch (e, stackTrace) {
+      debugPrint(
+        "[$_notificationLogTag] Pending notification navigation failed: $e\n$stackTrace",
+      );
+      _navigateToTodoList();
+    }
   }
 
   void _handleNotificationResponse(NotificationResponse response) {
@@ -248,17 +270,23 @@ class NotificationService {
   }
 
   void _navigateToTodoList({String? payload}) {
-    final navigator = navigatorKey.currentState;
-    if (navigator == null) {
-      _pendingNavigationPayload = payload ?? taskReminderPayload('');
-      debugPrint(
-        "[$_notificationLogTag] Navigation deferred until navigator is ready.",
-      );
-      return;
-    }
+    try {
+      final navigator = navigatorKey.currentState;
+      if (navigator == null) {
+        _pendingNavigationPayload = payload ?? taskReminderPayload('');
+        debugPrint(
+          "[$_notificationLogTag] Navigation deferred until navigator is ready.",
+        );
+        return;
+      }
 
-    debugPrint("[$_notificationLogTag] Navigation to Todo List.");
-    navigator.pushNamed(_todoRoute, arguments: payload);
+      debugPrint("[$_notificationLogTag] Navigation to Todo List.");
+      navigator.pushNamed(_todoRoute, arguments: payload);
+    } catch (e, stackTrace) {
+      debugPrint(
+        "[$_notificationLogTag] Navigation to Todo List failed: $e\n$stackTrace",
+      );
+    }
   }
 
   _NotificationPayload _decodePayload(String? payload) {
@@ -298,10 +326,12 @@ class NotificationService {
     try {
       tz.setLocalLocation(tz.getLocation(_localTimeZoneName));
     } catch (e) {
-      debugPrint("Could not load $_localTimeZoneName timezone: $e");
-      tz.setLocalLocation(tz.UTC);
+      debugPrint(
+        "[$_notificationLogTag] Could not load $_localTimeZoneName timezone; using tz.local fallback: $e",
+      );
     }
     _timeZonesReady = true;
+    debugPrint("[$_notificationLogTag] Timezone initialized: ${tz.local.name}");
   }
 
   int _generateNotificationId() {
@@ -503,21 +533,19 @@ class NotificationService {
     await initNotification(requestPermissions: false);
     _ensureTimeZonesInitialized();
 
-    final isEnabled = await isNotificationEnabled;
+    final internalAppNotificationsEnabled = await isNotificationEnabled;
     final normalizedRecurrenceType = recurrenceType.toLowerCase();
 
-    debugPrint("Notifications enabled: $isEnabled");
-    debugPrint("Requested schedule time: $firstDateTime");
-    debugPrint("Recurrence type: $normalizedRecurrenceType");
-    debugPrint("Current time: ${DateTime.now()}");
-
-    if (!isEnabled) {
-      _lastReminderScheduleFailure = 'App notifications are disabled.';
-      debugPrint(
-        "Notification not scheduled because notifications are disabled.",
-      );
-      return false;
-    }
+    debugPrint(
+      "[$_notificationLogTag] Internal app notification setting: $internalAppNotificationsEnabled (ignored for task reminders).",
+    );
+    debugPrint("[$_notificationLogTag] firstDateTime: $firstDateTime");
+    debugPrint(
+      "[$_notificationLogTag] Recurrence type: $normalizedRecurrenceType",
+    );
+    debugPrint(
+      "[$_notificationLogTag] Current DateTime.now(): ${DateTime.now()}",
+    );
 
     final hasNotificationPermission = await _ensureNotificationPermission();
     if (!hasNotificationPermission) {
@@ -532,6 +560,7 @@ class NotificationService {
       firstDateTime,
       normalizedRecurrenceType,
     );
+    debugPrint("[$_notificationLogTag] nextDateTime: $nextDateTime");
 
     if (nextDateTime == null) {
       _lastReminderScheduleFailure = 'Selected reminder time is in the past.';
@@ -548,9 +577,12 @@ class NotificationService {
       _ => null,
     };
 
-    debugPrint("Notification scheduled TZ time: $scheduledTzDate");
+    debugPrint(
+      "[$_notificationLogTag] Notification scheduled TZ time: $scheduledTzDate",
+    );
 
     final scheduleMode = await _bestAndroidScheduleMode();
+    debugPrint("[$_notificationLogTag] Schedule mode: $scheduleMode");
 
     try {
       await _scheduleZonedTaskReminder(
@@ -568,8 +600,7 @@ class NotificationService {
       );
       return true;
     } on PlatformException catch (e, stackTrace) {
-      if (scheduleMode != AndroidScheduleMode.inexactAllowWhileIdle &&
-          _isExactAlarmFailure(e)) {
+      if (scheduleMode != AndroidScheduleMode.inexactAllowWhileIdle) {
         debugPrint(
           "[$_notificationLogTag] Exact task notification failed, retrying with inexact alarm: $e\n$stackTrace",
         );
@@ -589,7 +620,8 @@ class NotificationService {
           );
           return true;
         } catch (retryError, retryStackTrace) {
-          _lastReminderScheduleFailure = retryError.toString();
+          _lastReminderScheduleFailure =
+              'Exact scheduling failed: ${e.message ?? e.toString()}; inexact retry failed: $retryError';
           debugPrint(
             "[$_notificationLogTag] Inexact task notification schedule failed: $retryError\n$retryStackTrace",
           );
@@ -720,11 +752,6 @@ class NotificationService {
       matchDateTimeComponents: matchComponents,
       payload: payload,
     );
-  }
-
-  bool _isExactAlarmFailure(Object error) {
-    final message = error.toString().toLowerCase();
-    return message.contains('exact') || message.contains('alarm');
   }
 
   DateTime? _nextReminderDateTime(

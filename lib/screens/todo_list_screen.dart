@@ -105,14 +105,14 @@ class _TodoListScreenState extends State<TodoListScreen> {
     if (time == null) {
       return context.t(
         "Choose a due time before enabling a reminder.",
-        "اختر وقت الاستحقاق قبل تفعيل التذكير.",
+        "\u0627\u062e\u062a\u0631 \u0648\u0642\u062a \u0627\u0644\u0627\u0633\u062a\u062d\u0642\u0627\u0642 \u0642\u0628\u0644 \u062a\u0641\u0639\u064a\u0644 \u0627\u0644\u062a\u0630\u0643\u064a\u0631.",
       );
     }
 
     if (!reminderDateTime.isAfter(DateTime.now())) {
       return context.t(
         "Choose a future time for this reminder.",
-        "اختر وقتا مستقبليا لهذا التذكير.",
+        "\u0627\u062e\u062a\u0631 \u0648\u0642\u062a\u0627 \u0645\u0633\u062a\u0642\u0628\u0644\u064a\u0627 \u0644\u0647\u0630\u0627 \u0627\u0644\u062a\u0630\u0643\u064a\u0631.",
       );
     }
 
@@ -128,7 +128,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
       if (endOfEndDate.isBefore(DateTime.now())) {
         return context.t(
           "Choose a future end date for this reminder.",
-          "اختر تاريخ انتهاء مستقبلي لهذا التذكير.",
+          "\u0627\u062e\u062a\u0631 \u062a\u0627\u0631\u064a\u062e \u0627\u0646\u062a\u0647\u0627\u0621 \u0645\u0633\u062a\u0642\u0628\u0644\u064a \u0644\u0647\u0630\u0627 \u0627\u0644\u062a\u0630\u0643\u064a\u0631.",
         );
       }
     }
@@ -141,24 +141,22 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
     final failureReason = NotificationService().lastReminderScheduleFailure;
     final message = scheduled
-        ? "Reminder scheduled."
+        ? context.t(
+            "Reminder scheduled.",
+            "\u062a\u0645 \u0636\u0628\u0637 \u0627\u0644\u062a\u0630\u0643\u064a\u0631.",
+          )
         : failureReason ==
               NotificationService.notificationPermissionRequiredMessage
-        ? "Notification permission is required for reminders."
-        : "Task saved, but the reminder could not be scheduled.";
+        ? context.t(
+            "Notification permission is required for reminders.",
+            "\u0635\u0644\u0627\u062d\u064a\u0629 \u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062a \u0645\u0637\u0644\u0648\u0628\u0629 \u0644\u0644\u062a\u0630\u0643\u064a\u0631\u0627\u062a.",
+          )
+        : context.t(
+            "Task saved, but the reminder could not be scheduled.",
+            "\u062a\u0645 \u062d\u0641\u0638 \u0627\u0644\u0645\u0647\u0645\u0629\u060c \u0644\u0643\u0646 \u062a\u0639\u0630\u0631 \u0636\u0628\u0637 \u0627\u0644\u062a\u0630\u0643\u064a\u0631.",
+          );
 
-    _showSnack(
-      message,
-      /*
-      scheduled
-          ? context.t("Reminder scheduled.", "تم ضبط التذكير.")
-          : context.t(
-              "Task saved, but the reminder could not be scheduled.",
-              "تم حفظ المهمة، لكن تعذر ضبط التذكير.",
-            ),
-      */
-      isError: !scheduled,
-    );
+    _showSnack(message, isError: !scheduled);
   }
 
   @override
@@ -1165,27 +1163,18 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 ),
               ),
               const SizedBox(height: 15),
-              if (descriptionController.text == '__never__') ...[
-                TextField(
+              Semantics(
+                label: context.t("Task description", "وصف المهمة"),
+                child: TextField(
                   controller: descriptionController,
                   style: TextStyle(color: _textColor),
                   minLines: 2,
                   maxLines: 3,
                   decoration: _inputStyle(
-                    context.t("Description", "Ø§Ù„ÙˆØµÙ"),
+                    context.t("Description", "الوصف"),
                     Icons.notes,
+                    hintText: context.t("Enter description", "أدخل وصف المهمة"),
                   ),
-                ),
-                const SizedBox(height: 15),
-              ],
-              TextField(
-                controller: descriptionController,
-                style: TextStyle(color: _textColor),
-                minLines: 2,
-                maxLines: 3,
-                decoration: _inputStyle(
-                  context.t("Description", "Ø§Ù„ÙˆØµÙ"),
-                  Icons.notes,
                 ),
               ),
               const SizedBox(height: 15),
@@ -1430,16 +1419,6 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
                           if (validationError != null) {
                             _showSnack(validationError, isError: true);
-                            /*
-                            /*
-                              context.t(
-                                "Choose a future time for this reminder.",
-                                "اختر وقتا مستقبليا لهذا التذكير.",
-                              ),
-                              isError: true,
-                            );
-                            */
-                            */
                             return;
                           }
 
@@ -1606,14 +1585,18 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 ),
               ),
               const SizedBox(height: 15),
-              TextField(
-                controller: descriptionController,
-                style: TextStyle(color: _textColor),
-                minLines: 2,
-                maxLines: 3,
-                decoration: _inputStyle(
-                  context.t("Description", "Ø§Ù„ÙˆØµÙ"),
-                  Icons.notes,
+              Semantics(
+                label: context.t("Task description", "وصف المهمة"),
+                child: TextField(
+                  controller: descriptionController,
+                  style: TextStyle(color: _textColor),
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: _inputStyle(
+                    context.t("Description", "الوصف"),
+                    Icons.notes,
+                    hintText: context.t("Enter description", "أدخل وصف المهمة"),
+                  ),
                 ),
               ),
               const SizedBox(height: 15),
@@ -1846,14 +1829,6 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
                           if (validationError != null) {
                             _showSnack(validationError, isError: true);
-                            /*
-                              context.t(
-                                "Choose a future time for this reminder.",
-                                "اختر وقتا مستقبليا لهذا التذكير.",
-                              ),
-                              isError: true,
-                            );
-                            */
                             return;
                           }
 
@@ -2058,9 +2033,15 @@ class _TodoListScreenState extends State<TodoListScreen> {
     };
   }
 
-  InputDecoration _inputStyle(String label, IconData icon) => InputDecoration(
+  InputDecoration _inputStyle(
+    String label,
+    IconData icon, {
+    String? hintText,
+  }) => InputDecoration(
     labelText: label,
+    hintText: hintText,
     labelStyle: TextStyle(color: _mutedTextColor, fontSize: 14),
+    hintStyle: TextStyle(color: _mutedTextColor, fontSize: 14),
     prefixIcon: Icon(icon, color: _accentGreen, size: 22),
     filled: true,
     fillColor: _cardColor,
