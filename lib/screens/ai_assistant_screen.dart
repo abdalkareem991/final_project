@@ -276,12 +276,7 @@ class _AIAssistantScreenState extends State<AIAssistantScreen> {
         isAi: false,
       );
 
-      final contextInfo = await _supabaseService.buildFinancialContextForAI();
-
-      final aiResponse = await _aiService.getFinancialAdvice(
-        userMessage,
-        contextInfo,
-      );
+      final aiResponse = await _aiService.getFinancialAdvice(userMessage);
 
       await _supabaseService.addAiMessage(
         chatId: chatId,

@@ -58,15 +58,40 @@ class SMSListenerService {
   bool _incomingSmsListenerRegistered = false;
   DateTime? _lastSyncAttemptAt;
   DateTime? _lastNetworkErrorAt;
+  DateTime? _remoteSmsUnavailableUntil;
 
   static DateTime? lastSyncTime;
   static int lastProcessedCount = 0;
   static String lastSyncStatus = "Not started";
+  static final ValueNotifier<int> statusVersion = ValueNotifier<int>(0);
 
-  static const Duration _syncInterval = Duration(seconds: 5);
-  static const Duration _minSyncGap = Duration(seconds: 5);
+  static const Duration _syncInterval = Duration(seconds: 20);
+  static const Duration _minSyncGap = Duration(seconds: 10);
   static const Duration _networkCooldown = Duration(seconds: 15);
-  static const int _recentMessagesLimit = 25;
+  static const Duration _remoteSmsCooldown = Duration(minutes: 3);
+  static const Duration _singleSmsTimeout = Duration(seconds: 12);
+  static const int _recentMessagesLimit = 8;
+
+  void _setStatus(String status) {
+    lastSyncStatus = status;
+    statusVersion.value++;
+  }
+
+  void _setSyncResult({
+    required String status,
+    required int processedCount,
+    DateTime? syncTime,
+  }) {
+    lastSyncStatus = status;
+    lastProcessedCount = processedCount;
+    lastSyncTime = syncTime ?? DateTime.now();
+    statusVersion.value++;
+  }
+
+  void markManualSyncStarted() => _setStatus("Syncing");
+
+  void markManualSyncTimedOut() =>
+      _setSyncResult(status: "Timed out", processedCount: 0);
 
   bool _isTransientNetworkError(Object error) {
     final text = error.toString();
@@ -81,7 +106,7 @@ class SMSListenerService {
     if (_isStarted && _smsSyncTimer != null) {
       debugPrint("SMS Auto Sync already running.");
       if (syncImmediately) {
-        await syncNow(force: true);
+        unawaited(syncNow(force: true));
       }
       return true;
     }
@@ -92,14 +117,14 @@ class SMSListenerService {
     }
 
     _isStarted = true;
-    lastSyncStatus = "Starting";
+    _setStatus("Starting");
 
     final bool? permission = await telephony.requestPhoneAndSmsPermissions;
     // debugPrint("SMS permission: $permission");
 
     if (permission != true) {
       _isStarted = false;
-      lastSyncStatus = "Permission denied";
+      _setStatus("Permission denied");
       return false;
     }
 
@@ -112,7 +137,7 @@ class SMSListenerService {
     });
 
     if (syncImmediately) {
-      await syncNow(force: true);
+      unawaited(syncNow(force: true));
     } else {
       unawaited(
         Future<void>.delayed(const Duration(seconds: 3), () async {
@@ -151,7 +176,9 @@ class SMSListenerService {
     debugPrint("[$_smsLogTag] SMS received.");
 
     try {
-      final wallets = await _supabaseService.getWallets();
+      final wallets = await _supabaseService.getWallets().timeout(
+        const Duration(seconds: 8),
+      );
       final automatedWallets = wallets.where((wallet) {
         return wallet.accountMode == 'AUTOMATED' &&
             wallet.isActiveMonitoring == true &&
@@ -163,21 +190,27 @@ class SMSListenerService {
         final sender = wallet.smsSenderId!.trim();
         if (!_senderMatches(sender, address)) continue;
 
-        lastSyncStatus = "Syncing";
-        final processed = await _processSmsMessageForSender(
-          message: message,
-          sender: sender,
-          walletId: wallet.id,
-        );
+        _setStatus("Syncing");
+        final processed =
+            await _processSmsMessageForSender(
+              message: message,
+              sender: sender,
+            ).timeout(
+              _singleSmsTimeout,
+              onTimeout: () {
+                debugPrint("[$_smsLogTag] Incoming SMS processing timed out.");
+                _lastNetworkErrorAt = DateTime.now();
+                _setStatus("Timed out");
+                return false;
+              },
+            );
 
         if (_lastNetworkErrorAt != null) {
           return false;
         }
 
         _lastNetworkErrorAt = null;
-        lastSyncTime = DateTime.now();
-        lastProcessedCount = processed ? 1 : 0;
-        lastSyncStatus = "Active";
+        _setSyncResult(status: "Active", processedCount: processed ? 1 : 0);
 
         return processed;
       }
@@ -187,9 +220,9 @@ class SMSListenerService {
           errorText.contains("SocketException") ||
           errorText.contains("Connection timed out")) {
         _lastNetworkErrorAt = DateTime.now();
-        lastSyncStatus = "Offline";
+        _setStatus("Offline");
       } else {
-        lastSyncStatus = "Error";
+        _setStatus("Error");
       }
       debugPrint("Incoming SMS sync error: $e");
     }
@@ -255,123 +288,179 @@ class SMSListenerService {
     );
   }
 
-  Future<bool> _processSmsMessageForSender({
-    required SmsMessage message,
+  bool get _canUseRemoteSmsProcessing {
+    final unavailableUntil = _remoteSmsUnavailableUntil;
+    return unavailableUntil == null || DateTime.now().isAfter(unavailableUntil);
+  }
+
+  Future<bool> _processSmsLocally({
+    required String localSmsKey,
     required String sender,
-    required String walletId,
+    required String body,
+    required int smsDate,
   }) async {
-    final String? normalizedBody = message.body
-        ?.replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
-        .toLowerCase();
-
-    final int smsDate = message.date ?? 0;
-
-    if (normalizedBody == null || normalizedBody.isEmpty) {
-      return false;
-    }
-
-    final String smsHash = _stableSmsHash(
-      sender: sender,
-      smsDate: smsDate,
-      body: normalizedBody,
-    );
-
-    if (_processedInMemory.contains(smsHash) ||
-        _ignoredInMemory.contains(smsHash)) {
-      return false;
-    }
-
     try {
-      final bool alreadyProcessed = await _supabaseService
-          .isSmsAlreadyProcessed(smsHash);
-
+      final alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
+        localSmsKey,
+      );
       if (alreadyProcessed) {
-        _processedInMemory.add(smsHash);
-        debugPrint("[$_smsLogTag] SMS duplicate skipped.");
+        _processedInMemory.add(localSmsKey);
+        debugPrint("[$_smsLogTag] SMS duplicate skipped locally.");
         return false;
       }
-    } catch (e) {
-      if (_isTransientNetworkError(e)) {
-        _lastNetworkErrorAt = DateTime.now();
-        lastSyncStatus = "Offline";
-        debugPrint("[$_smsLogTag] SMS duplicate check offline; will retry.");
-      } else {
-        debugPrint("[$_smsLogTag] SMS duplicate check failed: $e");
+
+      final walletId = await _supabaseService.findWalletBySmsSender(sender);
+      if (walletId == null) {
+        await _supabaseService.recordSmsProcessingIssue(
+          smsHash: localSmsKey,
+          senderId: sender,
+          status: 'no_linked_wallet',
+        );
+        _ignoredInMemory.add(localSmsKey);
+        return false;
       }
-      return false;
-    }
 
-    await _logSmsProcessingStatus(
-      smsHash: smsHash,
-      sender: sender,
-      status: 'pending',
-    );
+      final parsedData = _aiService.parseBankSmsLocally(body, sender: sender);
 
-    Map<String, dynamic>? parsedData;
-    try {
-      parsedData = _aiService.parseBankSmsLocally(
-        normalizedBody,
-        sender: sender,
-      );
-    } catch (e) {
-      debugPrint("[$_smsLogTag] SMS parsing failed: $e");
-      await _logSmsProcessingStatus(
-        smsHash: smsHash,
-        sender: sender,
-        status: 'parse_failed',
-      );
-      _ignoredInMemory.add(smsHash);
-      return false;
-    }
+      if (parsedData == null) {
+        await _supabaseService.recordSmsProcessingIssue(
+          smsHash: localSmsKey,
+          senderId: sender,
+          status: 'parse_failed',
+        );
+        _ignoredInMemory.add(localSmsKey);
+        return false;
+      }
 
-    if (parsedData == null) {
-      debugPrint("[$_smsLogTag] SMS parsing failed.");
-      await _logSmsProcessingStatus(
-        smsHash: smsHash,
-        sender: sender,
-        status: 'parse_failed',
-      );
-      _ignoredInMemory.add(smsHash);
-      return false;
-    }
+      parsedData['sms_timestamp'] = smsDate;
 
-    debugPrint("[$_smsLogTag] SMS parsed successfully.");
-    parsedData['sms_timestamp'] = smsDate;
+      await _supabaseService
+          .processAutomatedTransaction(
+            parsedData,
+            sender,
+            smsHash: localSmsKey,
+            matchedWalletId: walletId,
+            smsAlreadyChecked: true,
+          )
+          .timeout(const Duration(seconds: 20));
 
-    try {
-      await _supabaseService.processAutomatedTransaction(
-        parsedData,
-        sender,
-        smsHash: smsHash,
-        matchedWalletId: walletId,
-      );
-      _processedInMemory.add(smsHash);
+      _processedInMemory.add(localSmsKey);
       return true;
-    } catch (e) {
-      debugPrint("[$_smsLogTag] SMS processing failed: $e");
-      await _logSmsProcessingStatus(
-        smsHash: smsHash,
-        sender: sender,
-        status: 'processing_failed',
-      );
+    } catch (error) {
+      debugPrint("[$_smsLogTag] Local SMS processing failed: $error");
+      if (_isTransientNetworkError(error)) {
+        _lastNetworkErrorAt = DateTime.now();
+        _setStatus("Offline");
+      }
       return false;
     }
   }
 
-  Future<void> _logSmsProcessingStatus({
-    required String smsHash,
+  Future<bool> _processSmsMessageForSender({
+    required SmsMessage message,
     required String sender,
-    required String status,
   }) async {
-    try {
-      await _supabaseService.recordSmsProcessingStatus(
-        smsHash: smsHash,
-        senderId: sender,
-        status: status,
+    final String? body = message.body?.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final int smsDate = message.date ?? 0;
+
+    if (body == null || body.isEmpty) {
+      return false;
+    }
+
+    final String localSmsKey = _stableSmsHash(
+      sender: sender,
+      smsDate: smsDate,
+      body: body.toLowerCase(),
+    );
+
+    if (_processedInMemory.contains(localSmsKey) ||
+        _ignoredInMemory.contains(localSmsKey)) {
+      return false;
+    }
+
+    if (!_canUseRemoteSmsProcessing) {
+      return _processSmsLocally(
+        localSmsKey: localSmsKey,
+        sender: sender,
+        body: body,
+        smsDate: smsDate,
       );
+    }
+
+    try {
+      final userId = _supabaseService.client.auth.currentUser?.id;
+      if (userId == null) return false;
+
+      final receivedAt = smsDate > 0
+          ? DateTime.fromMillisecondsSinceEpoch(smsDate)
+          : DateTime.now();
+
+      final result = await _supabaseService
+          .processSmsTransactionRemotely(
+            userId: userId,
+            senderId: sender,
+            smsBody: body,
+            receivedAt: receivedAt,
+          )
+          .timeout(_singleSmsTimeout);
+
+      if (result.isDuplicate) {
+        _processedInMemory.add(localSmsKey);
+        debugPrint("[$_smsLogTag] SMS duplicate skipped by backend.");
+        return false;
+      }
+
+      if (!result.processed) {
+        if (result.status == 'parse_failed' ||
+            result.status == 'invalid_response') {
+          debugPrint(
+            "[$_smsLogTag] SMS backend status: ${result.status}; trying local parser.",
+          );
+          return _processSmsLocally(
+            localSmsKey: localSmsKey,
+            sender: sender,
+            body: body,
+            smsDate: smsDate,
+          );
+        }
+
+        _ignoredInMemory.add(localSmsKey);
+        debugPrint("[$_smsLogTag] SMS backend status: ${result.status}");
+        return false;
+      }
+
+      _processedInMemory.add(localSmsKey);
+
+      if (!result.isInternalTransfer &&
+          result.type != null &&
+          result.amount != null) {
+        await NotificationService().showTransactionNotification(
+          type: result.type!,
+          amount: result.amount!,
+          walletName: result.walletName ?? 'Account',
+          description: result.description,
+          balanceAfter: result.balanceAfter,
+        );
+      }
+
+      return true;
     } catch (e) {
-      debugPrint("[$_smsLogTag] SMS processing log failed: $e");
+      debugPrint("[$_smsLogTag] SMS processing failed: $e");
+      if (_isTransientNetworkError(e)) {
+        _lastNetworkErrorAt = DateTime.now();
+        _setStatus("Offline");
+        return false;
+      }
+
+      _remoteSmsUnavailableUntil = DateTime.now().add(_remoteSmsCooldown);
+      debugPrint("[$_smsLogTag] Remote SMS unavailable; using local fallback.");
+      return _processSmsLocally(
+        localSmsKey: localSmsKey,
+        sender: sender,
+        body: body,
+        smsDate: smsDate,
+      );
     }
   }
 
@@ -380,11 +469,19 @@ class SMSListenerService {
 
     for (final candidate in _senderCandidates(sender)) {
       try {
-        final messages = await telephony.getInboxSms(
-          columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
-          filter: SmsFilter.where(SmsColumn.ADDRESS).equals(candidate),
-          sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
-        );
+        final messages = await telephony
+            .getInboxSms(
+              columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+              filter: SmsFilter.where(SmsColumn.ADDRESS).equals(candidate),
+              sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+            )
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () {
+                debugPrint("Sender candidate query timed out: $candidate");
+                return <SmsMessage>[];
+              },
+            );
 
         for (final message in messages) {
           final key =
@@ -418,20 +515,22 @@ class SMSListenerService {
     if (_lastNetworkErrorAt != null) {
       final diff = DateTime.now().difference(_lastNetworkErrorAt!);
       if (diff < _networkCooldown) {
-        lastSyncStatus = "Offline";
+        _setStatus("Offline");
         return;
       }
     }
 
     _isSyncing = true;
-    lastSyncStatus = "Syncing";
+    _setStatus("Syncing");
 
     int processedCount = 0;
 
     try {
       // debugPrint("SMS SYNC TICK STARTED");
 
-      final wallets = await _supabaseService.getWallets();
+      final wallets = await _supabaseService.getWallets().timeout(
+        const Duration(seconds: 8),
+      );
 
       final automatedWallets = wallets.where((wallet) {
         return wallet.accountMode == 'AUTOMATED' &&
@@ -456,11 +555,19 @@ class SMSListenerService {
               .reversed;
 
           for (final message in recentMessages) {
-            final processed = await _processSmsMessageForSender(
-              message: message,
-              sender: sender,
-              walletId: wallet.id,
-            );
+            final processed =
+                await _processSmsMessageForSender(
+                  message: message,
+                  sender: sender,
+                ).timeout(
+                  _singleSmsTimeout + const Duration(seconds: 2),
+                  onTimeout: () {
+                    debugPrint("[$_smsLogTag] SMS processing timed out.");
+                    _lastNetworkErrorAt = DateTime.now();
+                    _setStatus("Timed out");
+                    return false;
+                  },
+                );
             if (_lastNetworkErrorAt != null) {
               return;
             }
@@ -473,9 +580,7 @@ class SMSListenerService {
       }
 
       _lastNetworkErrorAt = null;
-      lastSyncTime = DateTime.now();
-      lastProcessedCount = processedCount;
-      lastSyncStatus = "Active";
+      _setSyncResult(status: "Active", processedCount: processedCount);
 
       debugPrint("SMS SYNC FINISHED. Processed: $processedCount");
     } catch (e) {
@@ -485,11 +590,11 @@ class SMSListenerService {
           errorText.contains("SocketException") ||
           errorText.contains("Connection timed out")) {
         _lastNetworkErrorAt = DateTime.now();
-        lastSyncStatus = "Offline";
+        _setStatus("Offline");
 
         debugPrint("SMS sync offline: $e");
       } else {
-        lastSyncStatus = "Error";
+        _setStatus("Error");
 
         debugPrint("SMS auto sync error: $e");
       }
@@ -514,7 +619,7 @@ class SMSListenerService {
     } catch (e) {
       debugPrint("Incoming SMS listener stop failed: $e");
     }
-    lastSyncStatus = "Stopped";
+    _setStatus("Stopped");
     // debugPrint("SMS Auto Sync stopped.");
   }
 }

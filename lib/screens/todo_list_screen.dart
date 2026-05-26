@@ -150,11 +150,11 @@ class _TodoListScreenState extends State<TodoListScreen> {
         ? context.t(
             "Notification permission is required for reminders.",
             "\u0635\u0644\u0627\u062d\u064a\u0629 \u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062a \u0645\u0637\u0644\u0648\u0628\u0629 \u0644\u0644\u062a\u0630\u0643\u064a\u0631\u0627\u062a.",
-          )
+          ) // If the failure was due to missing permissions, show a specific message
         : context.t(
             "Task saved, but the reminder could not be scheduled.",
             "\u062a\u0645 \u062d\u0641\u0638 \u0627\u0644\u0645\u0647\u0645\u0629\u060c \u0644\u0643\u0646 \u062a\u0639\u0630\u0631 \u0636\u0628\u0637 \u0627\u0644\u062a\u0630\u0643\u064a\u0631.",
-          );
+          ); // Fallback message for any other failure reason
 
     _showSnack(message, isError: !scheduled);
   }

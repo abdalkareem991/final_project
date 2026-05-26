@@ -2,11 +2,16 @@
 
 // ignore_for_file: empty_catches
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/analytics_model.dart';
 import '../models/category_model.dart';
+import '../models/dashboard_summary_model.dart';
 import '../models/debts_model.dart';
 import '../models/profile_model.dart';
 import '../models/task_model.dart';
@@ -17,6 +22,45 @@ import 'notification_service.dart';
 
 const String _smsLogTag = 'FinMindSMS';
 
+class SmsProcessingResult {
+  final String status;
+  final bool processed;
+  final bool isDuplicate;
+  final bool isInternalTransfer;
+  final String? walletName;
+  final String? type;
+  final String? description;
+  final double? amount;
+  final double? balanceAfter;
+
+  const SmsProcessingResult({
+    required this.status,
+    required this.processed,
+    this.isDuplicate = false,
+    this.isInternalTransfer = false,
+    this.walletName,
+    this.type,
+    this.description,
+    this.amount,
+    this.balanceAfter,
+  });
+
+  factory SmsProcessingResult.fromJson(Map<String, dynamic> json) {
+    final status = json['status']?.toString() ?? 'unknown';
+    return SmsProcessingResult(
+      status: status,
+      processed: json['processed'] == true,
+      isDuplicate: status == 'duplicate',
+      isInternalTransfer: json['is_internal_transfer'] == true,
+      walletName: json['wallet_name']?.toString(),
+      type: json['type']?.toString(),
+      description: json['description']?.toString(),
+      amount: (json['amount'] as num?)?.toDouble(),
+      balanceAfter: (json['balance_after'] as num?)?.toDouble(),
+    );
+  }
+}
+
 class SupabaseService {
   // Singleton pattern to ensure only one instance of the service exists
   static final SupabaseService _instance = SupabaseService._internal();
@@ -25,6 +69,16 @@ class SupabaseService {
 
   // Initialize Supabase Client
   final SupabaseClient client = Supabase.instance.client;
+
+  static const String _dashboardSummaryCacheKey =
+      'finmind_dashboard_summary_cache_v1';
+
+  String? _transactionLookupUserId;
+  String? _transactionLookupRefreshUserId;
+  bool _transactionLookupCacheLoaded = false;
+  Future<void>? _transactionLookupRefreshFuture;
+  Map<String, String> _transactionWalletNameCache = {};
+  Map<String, String> _transactionCategoryNameCache = {};
 
   // ===========================================================================
   // 1. AUTHENTICATION OPERATIONS
@@ -462,6 +516,167 @@ class SupabaseService {
   // 5. TRANSACTION LOGIC & ANALYTICS
   // ===========================================================================
 
+  Future<DashboardSummary?> getCachedDashboardSummary() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_dashboardSummaryCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+
+      return DashboardSummary.fromJson(Map<String, dynamic>.from(decoded));
+    } catch (error) {
+      debugPrint('Dashboard cache read error: $error');
+      return null;
+    }
+  }
+
+  Future<void> _cacheDashboardSummary(DashboardSummary summary) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _dashboardSummaryCacheKey,
+        jsonEncode(summary.toJson()),
+      );
+    } catch (error) {
+      debugPrint('Dashboard cache write error: $error');
+    }
+  }
+
+  Future<DashboardSummary> getDashboardSummary({
+    int recentLimit = 10,
+    bool includeHidden = false,
+    bool allowLocalFallback = true,
+  }) async {
+    try {
+      final response = await client.rpc(
+        'get_dashboard_summary',
+        params: {
+          'p_recent_limit': recentLimit,
+          'p_include_hidden': includeHidden,
+        },
+      );
+
+      final summary = DashboardSummary.fromJson(
+        Map<String, dynamic>.from(response as Map),
+      );
+      await _cacheDashboardSummary(summary);
+      return summary;
+    } catch (error) {
+      debugPrint('Dashboard summary API error: $error');
+      if (!allowLocalFallback) rethrow;
+      return _buildDashboardSummaryFallback(
+        recentLimit: recentLimit,
+        includeHidden: includeHidden,
+      );
+    }
+  }
+
+  Future<DashboardSummary> _buildDashboardSummaryFallback({
+    required int recentLimit,
+    required bool includeHidden,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) return DashboardSummary.empty();
+
+    final balances = await getBalancesByType();
+    final transactions = await getTransactionsPage(
+      page: 0,
+      pageSize: recentLimit,
+      includeHidden: includeHidden,
+    );
+
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+    final analytics = await AnalyticsService().getAnalyticsReport(
+      userId: user.id,
+      startDate: monthStart,
+      endDate: monthEnd,
+    );
+
+    DashboardDebtSummary debtSummary = const DashboardDebtSummary(
+      totalDebtorAmount: 0,
+      totalCreditorAmount: 0,
+      netDebt: 0,
+    );
+    try {
+      final activeDebts = await DebtsService().getActiveDebts(user.id);
+      final summary = DebtsService().buildSummary(activeDebts);
+      debtSummary = DashboardDebtSummary(
+        totalDebtorAmount: summary.totalDebtorAmount,
+        totalCreditorAmount: summary.totalCreditorAmount,
+        netDebt: summary.netDebt,
+      );
+    } catch (error) {
+      debugPrint('Dashboard debt fallback error: $error');
+    }
+
+    final summary = DashboardSummary(
+      totalBalance: balances['Total'] ?? 0,
+      bankBalance: balances['Bank'] ?? 0,
+      cashBalance: balances['Cash'] ?? 0,
+      monthlyIncome: analytics.summary.totalIncome,
+      monthlyExpenses: analytics.summary.totalExpenses,
+      recentTransactions: transactions,
+      incomeCategorySummary: analytics.incomeCategories,
+      expenseCategorySummary: analytics.expenseCategories,
+      debtsSummary: debtSummary,
+      fetchedAt: DateTime.now(),
+    );
+    await _cacheDashboardSummary(summary);
+    return summary;
+  }
+
+  Future<List<Map<String, dynamic>>> getTransactionsPage({
+    int page = 0,
+    int pageSize = 25,
+    bool includeHidden = false,
+  }) async {
+    try {
+      final user = client.auth.currentUser;
+      if (user == null) return [];
+
+      final safePage = page < 0 ? 0 : page;
+      final safePageSize = pageSize.clamp(1, 100).toInt();
+      final from = safePage * safePageSize;
+      final to = from + safePageSize - 1;
+
+      var query = client
+          .from('transactions')
+          .select('*, wallets(name), categories(name)')
+          .eq('user_id', user.id);
+
+      if (!includeHidden) {
+        query = query.or('is_hidden.is.null,is_hidden.eq.false');
+      }
+
+      final response = await query
+          .order('date', ascending: false)
+          .range(from, to);
+
+      final rows = List<Map<String, dynamic>>.from(response);
+      return rows.map((tx) {
+        final walletName = tx['wallets'] is Map
+            ? tx['wallets']['name']?.toString()
+            : null;
+        final categoryName = tx['categories'] is Map
+            ? tx['categories']['name']?.toString()
+            : null;
+
+        return {
+          ...tx,
+          'wallet_name': walletName ?? 'Unknown Account',
+          'category_name': categoryName ?? 'Uncategorized',
+        };
+      }).toList();
+    } catch (error) {
+      debugPrint('Fetch transactions page error: $error');
+      return [];
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getTransactions() async {
     try {
       final user = client.auth.currentUser;
@@ -585,6 +800,8 @@ class SupabaseService {
       }
 
       await updateProfileNetWorth();
+
+      unawaited(_refreshTransactionLookups(user.id));
 
       debugPrint("Transaction created successfully: $transactionId");
       debugPrint("Wallet balance updated: $newBalance");
@@ -1565,11 +1782,44 @@ class SupabaseService {
     }
   }
 
+  Future<SmsProcessingResult> processSmsTransactionRemotely({
+    required String userId,
+    required String senderId,
+    required String smsBody,
+    required DateTime receivedAt,
+  }) async {
+    try {
+      final response = await client.functions.invoke(
+        'process_sms_transaction',
+        body: {
+          'user_id': userId,
+          'sender_id': senderId,
+          'sms_body': smsBody,
+          'received_at': receivedAt.toUtc().toIso8601String(),
+        },
+      );
+
+      final data = response.data;
+      if (data is Map) {
+        return SmsProcessingResult.fromJson(Map<String, dynamic>.from(data));
+      }
+
+      return const SmsProcessingResult(
+        status: 'invalid_response',
+        processed: false,
+      );
+    } catch (error) {
+      debugPrint("[$_smsLogTag] Remote SMS processing failed: $error");
+      rethrow;
+    }
+  }
+
   Future<void> processAutomatedTransaction(
     Map<String, dynamic> aiData,
     String senderId, {
     String? smsHash,
     String? matchedWalletId,
+    bool smsAlreadyChecked = false,
   }) async {
     try {
       final String? walletId =
@@ -1587,7 +1837,7 @@ class SupabaseService {
         return;
       }
 
-      if (smsHash != null) {
+      if (smsHash != null && !smsAlreadyChecked) {
         final alreadyProcessed = await isSmsAlreadyProcessed(smsHash);
         if (alreadyProcessed) {
           debugPrint("[$_smsLogTag] SMS duplicate skipped.");
@@ -1776,7 +2026,7 @@ class SupabaseService {
 
         if (logged != null) {
           final status = logged['status']?.toString();
-          if (status == 'processed' || status == 'parse_failed') {
+          if (status == 'processed') {
             debugPrint(
               "[$_smsLogTag] SMS duplicate skipped using log status: $status.",
             );
@@ -1784,7 +2034,7 @@ class SupabaseService {
           }
 
           debugPrint(
-            "[$_smsLogTag] SMS retrying previous status: ${status ?? 'unknown'}.",
+            "[$_smsLogTag] SMS retrying previous log status: ${status ?? 'unknown'}.",
           );
           return false;
         }
@@ -2036,6 +2286,129 @@ $recentTransactionsText
         });
   }
 
+  void _ensureTransactionLookupUser(String userId) {
+    if (_transactionLookupUserId == userId) return;
+
+    _transactionLookupUserId = userId;
+    _transactionLookupRefreshUserId = null;
+    _transactionLookupRefreshFuture = null;
+    _transactionLookupCacheLoaded = false;
+    _transactionWalletNameCache = {};
+    _transactionCategoryNameCache = {};
+  }
+
+  String? _nestedLookupName(Map<String, dynamic> tx, String key) {
+    final nested = tx[key];
+    if (nested is Map && nested['name'] != null) {
+      return nested['name'].toString();
+    }
+    return null;
+  }
+
+  bool _hasTransactionLookupCache(String userId) {
+    _ensureTransactionLookupUser(userId);
+    return _transactionLookupCacheLoaded;
+  }
+
+  bool _hasMissingTransactionLookups(
+    List<Map<String, dynamic>> transactions,
+    String userId,
+  ) {
+    _ensureTransactionLookupUser(userId);
+
+    for (final tx in transactions) {
+      final walletId = tx['wallet_id']?.toString();
+      final categoryId = tx['category_id']?.toString();
+
+      if (walletId != null &&
+          !_transactionWalletNameCache.containsKey(walletId)) {
+        return true;
+      }
+
+      if (categoryId != null &&
+          !_transactionCategoryNameCache.containsKey(categoryId)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  List<Map<String, dynamic>> _attachTransactionLookups(
+    List<Map<String, dynamic>> transactions,
+    String userId,
+  ) {
+    _ensureTransactionLookupUser(userId);
+
+    return transactions
+        .map((tx) {
+          final walletId = tx['wallet_id']?.toString();
+          final categoryId = tx['category_id']?.toString();
+
+          return {
+            ...tx,
+            'wallet_name':
+                _transactionWalletNameCache[walletId] ??
+                tx['wallet_name']?.toString() ??
+                _nestedLookupName(tx, 'wallets') ??
+                'Unknown Account',
+            'category_name':
+                _transactionCategoryNameCache[categoryId] ??
+                tx['category_name']?.toString() ??
+                _nestedLookupName(tx, 'categories') ??
+                'Uncategorized',
+          };
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _refreshTransactionLookups(String userId) {
+    _ensureTransactionLookupUser(userId);
+
+    final inFlight = _transactionLookupRefreshFuture;
+    if (inFlight != null && _transactionLookupRefreshUserId == userId) {
+      return inFlight;
+    }
+
+    _transactionLookupRefreshUserId = userId;
+
+    final refreshFuture = () async {
+      try {
+        final responses = await Future.wait([
+          client.from('wallets').select('id, name').eq('user_id', userId),
+          client.from('categories').select('id, name').eq('user_id', userId),
+        ]);
+
+        final walletsResponse = responses[0] as List;
+        final categoriesResponse = responses[1] as List;
+
+        if (_transactionLookupUserId != userId) return;
+
+        _transactionWalletNameCache = {
+          for (final wallet in walletsResponse)
+            wallet['id'].toString(): wallet['name'].toString(),
+        };
+
+        _transactionCategoryNameCache = {
+          for (final category in categoriesResponse)
+            category['id'].toString(): category['name'].toString(),
+        };
+
+        _transactionLookupCacheLoaded = true;
+      } catch (error) {
+        debugPrint("Realtime lookup refresh failed: $error");
+      } finally {
+        if (_transactionLookupRefreshUserId == userId) {
+          _transactionLookupRefreshUserId = null;
+          _transactionLookupRefreshFuture = null;
+        }
+      }
+    }();
+
+    _transactionLookupRefreshFuture = refreshFuture;
+    return refreshFuture;
+  }
+
   /// Real-time stream for transactions
   Stream<List<Map<String, dynamic>>> getTransactionsStream({
     bool includeHidden = false,
@@ -2048,48 +2421,26 @@ $recentTransactionsText
         .stream(primaryKey: ['id'])
         .eq('user_id', userId)
         .order('date', ascending: false)
-        .asyncMap((transactions) async {
-          Map<String, String> walletNames = {};
-          Map<String, String> categoryNames = {};
-
-          try {
-            final walletsResponse = await client
-                .from('wallets')
-                .select('id, name')
-                .eq('user_id', userId);
-
-            final categoriesResponse = await client
-                .from('categories')
-                .select('id, name')
-                .eq('user_id', userId);
-
-            walletNames = {
-              for (final wallet in walletsResponse)
-                wallet['id'].toString(): wallet['name'].toString(),
-            };
-
-            categoryNames = {
-              for (final category in categoriesResponse)
-                category['id'].toString(): category['name'].toString(),
-            };
-          } catch (error) {
-            debugPrint("Realtime lookup refresh failed: $error");
-          }
-
+        .asyncExpand((transactions) async* {
           final visibleTransactions = includeHidden
-              ? transactions
-              : transactions.where((tx) => tx['is_hidden'] != true).toList();
+              ? List<Map<String, dynamic>>.from(transactions)
+              : transactions
+                    .where((tx) => tx['is_hidden'] != true)
+                    .map((tx) => Map<String, dynamic>.from(tx))
+                    .toList(growable: false);
 
-          return visibleTransactions.map((tx) {
-            final walletId = tx['wallet_id']?.toString();
-            final categoryId = tx['category_id']?.toString();
+          final shouldRefreshLookups =
+              !_hasTransactionLookupCache(userId) ||
+              _hasMissingTransactionLookups(visibleTransactions, userId);
 
-            return {
-              ...tx,
-              'wallet_name': walletNames[walletId] ?? 'Unknown Account',
-              'category_name': categoryNames[categoryId] ?? 'Uncategorized',
-            };
-          }).toList();
+          yield _attachTransactionLookups(visibleTransactions, userId);
+
+          if (shouldRefreshLookups) {
+            await _refreshTransactionLookups(userId);
+            yield _attachTransactionLookups(visibleTransactions, userId);
+          } else {
+            unawaited(_refreshTransactionLookups(userId));
+          }
         });
   }
   // ===========================================================================

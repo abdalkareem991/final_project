@@ -73,6 +73,13 @@ class AnalyticsService {
     String? walletId,
   }) async {
     try {
+      final remoteReport = await _fetchRemoteAnalyticsReport(
+        startDate: startDate,
+        endDate: endDate,
+        walletId: walletId,
+      );
+      if (remoteReport != null) return remoteReport;
+
       final transactions = await _fetchFilteredTransactions(
         userId: userId,
         startDate: startDate,
@@ -90,6 +97,89 @@ class AnalyticsService {
       debugPrint('Analytics report error: $error');
       rethrow;
     }
+  }
+
+  Future<AnalyticsReport?> _fetchRemoteAnalyticsReport({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? walletId,
+  }) async {
+    if (startDate == null || endDate == null) return null;
+
+    try {
+      final response = await _client.rpc(
+        'get_monthly_analytics',
+        params: {
+          'p_start_date': startDate.toUtc().toIso8601String(),
+          'p_end_date': endDate.toUtc().toIso8601String(),
+          'p_wallet_id': walletId,
+        },
+      );
+
+      return _reportFromJson(
+        Map<String, dynamic>.from(response as Map),
+        startDate: startDate,
+        endDate: endDate,
+        walletId: walletId,
+      );
+    } catch (error) {
+      debugPrint('Remote analytics unavailable, using local fallback: $error');
+      return null;
+    }
+  }
+
+  AnalyticsReport _reportFromJson(
+    Map<String, dynamic> json, {
+    DateTime? startDate,
+    DateTime? endDate,
+    String? walletId,
+  }) {
+    final summary = json['summary'] is Map
+        ? Map<String, dynamic>.from(json['summary'] as Map)
+        : <String, dynamic>{};
+
+    return AnalyticsReport(
+      summary: AnalyticsSummary(
+        totalIncome: _asDouble(summary['total_income']),
+        totalExpenses: _asDouble(summary['total_expenses']),
+      ),
+      incomeCategories: _analyticsListFromJson(
+        json['income_categories'],
+        fallbackType: 'Income',
+      ),
+      expenseCategories: _analyticsListFromJson(
+        json['expense_categories'],
+        fallbackType: 'Expense',
+      ),
+      startDate: startDate,
+      endDate: endDate,
+      walletId: walletId,
+    );
+  }
+
+  List<CategoryAnalytics> _analyticsListFromJson(
+    dynamic value, {
+    required String fallbackType,
+  }) {
+    if (value is! List) return [];
+
+    return value.whereType<Map>().map((item) {
+      final json = Map<String, dynamic>.from(item);
+      return CategoryAnalytics(
+        categoryId: json['category_id']?.toString() ?? 'uncategorized',
+        categoryName: json['category_name']?.toString() ?? 'Uncategorized',
+        totalAmount: _asDouble(json['total_amount']),
+        percentage: _asDouble(json['percentage']),
+        type: json['type']?.toString() ?? fallbackType,
+        icon: json['icon']?.toString(),
+        colorHex: json['color']?.toString() ?? json['color_hex']?.toString(),
+      );
+    }).toList();
+  }
+
+  double _asDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
 
   Future<List<Map<String, dynamic>>> _fetchFilteredTransactions({

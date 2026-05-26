@@ -36,11 +36,72 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
   String _searchText = '';
   String _typeFilter = 'All';
   bool _showHidden = false;
+  final List<Map<String, dynamic>> _transactions = [];
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  String? _transactionsError;
+  int _page = 0;
+  static const int _pageSize = 25;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTransactions(reset: true);
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadTransactions({bool reset = false}) async {
+    if (_isLoadingMore) return;
+
+    if (reset) {
+      setState(() {
+        _page = 0;
+        _hasMore = true;
+        _transactionsError = null;
+        _isLoading = _transactions.isEmpty;
+      });
+    } else if (!_hasMore) {
+      return;
+    }
+
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final page = reset ? 0 : _page;
+      final rows = await _supabaseService.getTransactionsPage(
+        page: page,
+        pageSize: _pageSize,
+        includeHidden: _showHidden,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        if (reset) _transactions.clear();
+        _transactions.addAll(rows);
+        _page = page + 1;
+        _hasMore = rows.length == _pageSize;
+        _isLoading = false;
+        _isLoadingMore = false;
+        _transactionsError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+        _transactionsError = error.toString();
+      });
+    }
+  }
+
+  Future<void> _refreshTransactions() {
+    return _loadTransactions(reset: true);
   }
 
   /// Applies text search, type filters, and internal transfer filtering.
@@ -207,12 +268,12 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         await _supabaseService.hideTransaction(
                           tx['id'].toString(),
                         );
-                        if (mounted) setState(() {});
+                        if (mounted) await _refreshTransactions();
                       } else if (value == 'unhide') {
                         await _supabaseService.unhideTransaction(
                           tx['id'].toString(),
                         );
-                        if (mounted) setState(() {});
+                        if (mounted) await _refreshTransactions();
                       } else if (value == 'delete') {
                         await _deleteTransactionWithConfirm(tx);
                       }
@@ -389,7 +450,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
 
     try {
       await _supabaseService.deleteTransactionSmart(tx);
-      if (mounted) setState(() {});
+      if (mounted) await _refreshTransactions();
     } catch (e) {
       _showSnack(context.t("Delete failed: $e", "فشل الحذف: $e"));
     }
@@ -594,7 +655,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                           if (sheetContext.mounted) {
                             Navigator.pop(sheetContext);
                           }
-                          if (mounted) setState(() {});
+                          if (mounted) await _refreshTransactions();
                         } catch (e) {
                           _showSnack(
                             context.t("Update failed: $e", "فشل التحديث: $e"),
@@ -735,7 +796,10 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
             tooltip: _showHidden
                 ? context.t("Hide hidden", "إخفاء المخفية")
                 : context.t("Show hidden", "إظهار المخفية"),
-            onPressed: () => setState(() => _showHidden = !_showHidden),
+            onPressed: () {
+              setState(() => _showHidden = !_showHidden);
+              _refreshTransactions();
+            },
           ),
         ],
       ),
@@ -783,13 +847,40 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
           const SizedBox(height: 12),
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _supabaseService.getTransactionsStream(
-                includeHidden: _showHidden,
-              ),
+              stream: Stream.value(_transactions),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) {
+                if (_isLoading) {
                   return Center(
                     child: CircularProgressIndicator(color: _accentGreen),
+                  );
+                }
+
+                if (_transactionsError != null) {
+                  return Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          context.t(
+                            "Could not load transactions.",
+                            "ØªØ¹Ø°Ø± ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ø­Ø±ÙƒØ§Øª.",
+                          ),
+                          style: TextStyle(color: _mutedTextColor),
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: _refreshTransactions,
+                          icon: Icon(Icons.refresh, color: _colors.onPrimary),
+                          label: Text(
+                            context.t("Retry", "Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ù…Ø­Ø§ÙˆÙ„Ø©"),
+                            style: TextStyle(color: _colors.onPrimary),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _accentGreen,
+                          ),
+                        ),
+                      ],
+                    ),
                   );
                 }
 
@@ -819,6 +910,41 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
           ),
         ],
       ),
+      bottomNavigationBar: (_hasMore || _isLoadingMore) && !_isLoading
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: ElevatedButton.icon(
+                  onPressed: _isLoadingMore
+                      ? null
+                      : () => _loadTransactions(reset: false),
+                  icon: _isLoadingMore
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            color: _colors.onPrimary,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Icon(Icons.expand_more, color: _colors.onPrimary),
+                  label: Text(
+                    _isLoadingMore
+                        ? context.t("Loading...", "Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù…ÙŠÙ„...")
+                        : context.t("Load more", "ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ù…Ø²ÙŠØ¯"),
+                    style: TextStyle(
+                      color: _colors.onPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accentGreen,
+                    minimumSize: const Size(double.infinity, 48),
+                  ),
+                ),
+              ),
+            )
+          : null,
     );
   }
 }

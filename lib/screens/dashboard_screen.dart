@@ -2,6 +2,8 @@
 
 // ignore_for_file: deprecated_member_use
 
+import 'dart:async';
+
 import 'package:final_project/screens/ai_assistant_screen.dart';
 import 'package:final_project/screens/analytics_screen.dart';
 import 'package:final_project/screens/settings_screen.dart';
@@ -11,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_text.dart';
 import '../core/app_theme.dart';
+import '../models/dashboard_summary_model.dart';
 import '../models/category_model.dart';
 import '../models/wallet_model.dart';
 import '../services/notification_service.dart';
@@ -165,8 +168,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   // Services and streams are owned by the dashboard content area.
   final _supabaseService = SupabaseService();
   final NotificationService _notificationService = NotificationService();
-  late Stream<Map<String, double>> _balancesStream;
-  late Stream<List<Map<String, dynamic>>> _transactionsStream;
+  DashboardSummary? _dashboardSummary;
+  bool _isDashboardLoading = true;
+  bool _isDashboardRefreshing = false;
+  String? _dashboardError;
 
   // UI-only preferences for the current dashboard session.
   bool _showHidden = false;
@@ -185,23 +190,23 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   Color get _textColor => _colors.textPrimary;
   Color get _secondaryTextColor => _colors.textSecondary;
   Color get _mutedTextColor => _colors.textMuted;
+  Stream<Map<String, double>> get _balancesStream => Stream.value({
+    'Total': _dashboardSummary?.totalBalance ?? 0.0,
+    'Bank': _dashboardSummary?.bankBalance ?? 0.0,
+    'Cash': _dashboardSummary?.cashBalance ?? 0.0,
+  });
+  Stream<List<Map<String, dynamic>>> get _transactionsStream =>
+      Stream.value(_dashboardSummary?.recentTransactions ?? const []);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Keep balance and transaction cards reactive to Supabase changes.
-    _balancesStream = _supabaseService.getBalancesStream();
-    _transactionsStream = _supabaseService.getTransactionsStream(
-      includeHidden: true,
-    );
+    unawaited(_loadDashboardSummary());
     loadCurrencyPreference();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(
-        const Duration(seconds: 1),
-        _syncSmsAutomationFromSettings,
-      );
+      unawaited(_syncSmsAutomationFromSettings());
     });
   }
 
@@ -216,7 +221,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     if (state == AppLifecycleState.resumed) {
       // debugPrint("App resumed. Running automatic SMS sync.");
 
-      _syncSmsAutomationFromSettings();
+      unawaited(_syncSmsAutomationFromSettings());
 
       if (mounted) {
         setState(() {});
@@ -242,15 +247,51 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     }
   }
 
+  Future<void> _loadDashboardSummary({bool forceRefresh = false}) async {
+    if (!forceRefresh) {
+      final cached = await _supabaseService.getCachedDashboardSummary();
+      if (cached != null && mounted) {
+        setState(() {
+          _dashboardSummary = cached;
+          _isDashboardLoading = false;
+        });
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isDashboardRefreshing = true;
+      _dashboardError = null;
+      _isDashboardLoading = _dashboardSummary == null;
+    });
+
+    try {
+      final summary = await _supabaseService.getDashboardSummary(
+        recentLimit: 10,
+        includeHidden: _showHidden,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _dashboardSummary = summary;
+        _dashboardError = null;
+        _isDashboardLoading = false;
+        _isDashboardRefreshing = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _dashboardError = error.toString();
+        _isDashboardLoading = false;
+        _isDashboardRefreshing = false;
+      });
+    }
+  }
+
   /// Rebuilds live streams after a manual refresh or a transaction mutation.
   void refreshDashboard() {
     loadCurrencyPreference();
-    setState(() {
-      _balancesStream = _supabaseService.getBalancesStream();
-      _transactionsStream = _supabaseService.getTransactionsStream(
-        includeHidden: true,
-      );
-    });
+    unawaited(_loadDashboardSummary(forceRefresh: true));
   }
 
   /// Loads the preferred display currency used by dashboard totals.
@@ -335,11 +376,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () async {
-        setState(() {
-          SMSListenerService.lastSyncStatus = "Syncing";
-        });
+        SMSListenerService().markManualSyncStarted();
 
-        await SMSListenerService().syncNow(force: true);
+        await SMSListenerService()
+            .syncNow(force: true)
+            .timeout(
+              const Duration(seconds: 20),
+              onTimeout: SMSListenerService().markManualSyncTimedOut,
+            );
 
         if (mounted) {
           setState(() {});
@@ -384,6 +428,66 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     );
   }
 
+  Widget _buildDashboardStatusLine() {
+    if (!_isDashboardLoading &&
+        !_isDashboardRefreshing &&
+        _dashboardError == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: (_dashboardError == null ? _accentGreen : _expenseRed)
+              .withOpacity(0.16),
+        ),
+      ),
+      child: Row(
+        children: [
+          if (_dashboardError == null)
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                color: _accentGreen,
+                strokeWidth: 2,
+              ),
+            )
+          else
+            Icon(Icons.error_outline, color: _expenseRed, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _dashboardError == null
+                  ? context.t(
+                      "Refreshing dashboard...",
+                      "Ø¬Ø§Ø±ÙŠ ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù„ÙˆØ­Ø©...",
+                    )
+                  : context.t(
+                      "Could not refresh dashboard. Showing last data.",
+                      "ØªØ¹Ø°Ø± ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù„ÙˆØ­Ø©. Ø³ÙŠØªÙ… Ø¹Ø±Ø¶ Ø¢Ø®Ø± Ø¨ÙŠØ§Ù†Ø§Øª.",
+                    ),
+              style: TextStyle(
+                color: _dashboardError == null
+                    ? _secondaryTextColor
+                    : _expenseRed,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Main layout
   // ---------------------------------------------------------------------------
@@ -412,7 +516,8 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       body: RefreshIndicator(
         color: _accentGreen,
         onRefresh: () async {
-          refreshDashboard();
+          loadCurrencyPreference();
+          await _loadDashboardSummary(forceRefresh: true);
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -420,7 +525,11 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           child: Column(
             children: [
               _buildLiveTotalBalanceCard(),
-              _buildSmsSyncStatusLine(),
+              ValueListenableBuilder<int>(
+                valueListenable: SMSListenerService.statusVersion,
+                builder: (context, _, __) => _buildSmsSyncStatusLine(),
+              ),
+              _buildDashboardStatusLine(),
               const SizedBox(height: 20),
               _buildAnalyticsSection(),
               const SizedBox(height: 25),
@@ -516,6 +625,30 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   }
 
   Widget _buildAnalyticsSection() {
+    final remoteSummary = _dashboardSummary;
+    if (remoteSummary != null) {
+      final income = remoteSummary.monthlyIncome;
+      final expense = remoteSummary.monthlyExpenses;
+
+      return Column(
+        children: [
+          _buildProgressCard(
+            context.t("Monthly Income", "Ø§Ù„Ø¯Ø®Ù„ Ø§Ù„Ø´Ù‡Ø±ÙŠ"),
+            "$income|$expense",
+            1.0,
+            _accentGreen,
+          ),
+          const SizedBox.shrink(),
+          _buildProgressCard(
+            context.t("Monthly Expenses", "Ø§Ù„Ù…ØµØ§Ø±ÙŠÙ Ø§Ù„Ø´Ù‡Ø±ÙŠØ©"),
+            _formatAmount(expense),
+            -1.0,
+            _expenseRed,
+          ),
+        ],
+      );
+    }
+
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _transactionsStream,
       builder: (context, snapshot) {
@@ -886,6 +1019,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
               setState(() {
                 _showHidden = !_showHidden;
               });
+              refreshDashboard();
             },
           ),
           TextButton(

@@ -1,18 +1,10 @@
 // lib/services/ai_service.dart
 
 import 'package:flutter/material.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AIService {
-  // Stores the Gemini API key used for the AI assistant only.
-  final String _apiKey = "AIzaSyB3o37ExwfLr8dcI-KeJzU007-3h1IkBOE";
-
-  late final GenerativeModel _model;
-
-  // Initializes the Gemini model once when the service is created.
-  AIService() {
-    _model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: _apiKey);
-  }
+  SupabaseClient get _client => Supabase.instance.client;
 
   // Parses a bank SMS locally without calling Gemini.
   // This is used for SMS automation to avoid API quota and improve reliability.
@@ -543,51 +535,32 @@ class AIService {
     return null;
   }
 
-  // Generates professional financial advice using Gemini and real app context.
+  // Generates professional financial advice through the backend AI function.
   Future<String> getFinancialAdvice(
-    String userMessage,
-    String financialContext,
-  ) async {
+    String userMessage, [
+    String? financialContext,
+  ]) async {
     const int maxRetries = 2;
 
     for (int attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        final prompt = [
-          Content.text("""
-You are FinMind AI, a personal finance assistant inside a finance tracking app.
-
-Respond in the same language as the user. If the user writes Arabic, answer in clear Arabic.
-
-Use only the user's real financial data below:
-$financialContext
-
-User question:
-$userMessage
-
-Core rules:
-- Do not invent numbers, accounts, debts, categories, or transactions.
-- If a required number is missing, say it is not available.
-- Treat wallet/account balances, transactions, analytics, and debts as separate concepts.
-- Debts are not wallet balances and are not transactions.
-- Do not add debts to net worth unless the user explicitly asks for a separate debt-adjusted view.
-- Internal transfers are not real income or real spending.
-- Income category percentages and expense category percentages are calculated separately.
-
-Answer style:
-- Be practical, short, and clear.
-- Mention whether your answer is based on balances, income, expenses, debts, or recent transactions.
-- Use exact numbers only when they appear in the context.
-- For advice, give 2 to 4 actionable steps.
-- If there is risk or uncertainty, mention it gently.
-- Do not provide legal, tax, or investment guarantees.
-"""),
-        ];
-
-        final response = await _model
-            .generateContent(prompt)
+        final response = await _client.functions
+            .invoke(
+              'financial_ai_assistant',
+              body: {
+                'message': userMessage,
+                if (financialContext != null)
+                  'client_context': financialContext,
+              },
+            )
             .timeout(const Duration(seconds: 25));
 
-        return response.text ?? "I could not generate a response right now.";
+        final data = response.data;
+        if (data is Map && data['response'] != null) {
+          return data['response'].toString();
+        }
+
+        return "I could not generate a response right now.";
       } catch (e) {
         debugPrint("FinMind AI attempt $attempt failed: $e");
 
