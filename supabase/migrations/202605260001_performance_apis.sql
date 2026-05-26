@@ -81,6 +81,28 @@ create index if not exists idx_transactions_wallet_id
 create index if not exists idx_transactions_user_date
   on public.transactions (user_id, date desc);
 
+create index if not exists idx_transactions_user_sms_hash
+  on public.transactions (user_id, sms_hash)
+  where sms_hash is not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.transactions
+    where sms_hash is not null
+    group by user_id, sms_hash
+    having count(*) > 1
+  ) and not exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname = 'idx_transactions_user_sms_hash_unique'
+  ) then
+    execute 'create unique index idx_transactions_user_sms_hash_unique on public.transactions (user_id, sms_hash) where sms_hash is not null';
+  end if;
+end $$;
+
 create index if not exists idx_tasks_user_id
   on public.tasks (user_id);
 
@@ -89,6 +111,420 @@ create index if not exists idx_sms_processing_logs_user_id
 
 create index if not exists idx_sms_processing_logs_sms_hash
   on public.sms_processing_logs (sms_hash);
+
+create or replace function public.process_sms_transaction_atomic(
+  p_sms_hash text,
+  p_sender_id text,
+  p_sms_body text default null,
+  p_received_at timestamptz default null,
+  p_wallet_id uuid default null,
+  p_amount numeric default null,
+  p_type text default null,
+  p_available_balance numeric default null,
+  p_transaction_date timestamptz default null,
+  p_sms_kind text default null,
+  p_merchant_name text default null,
+  p_counterparty text default null,
+  p_is_cliq boolean default false
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_log_id uuid;
+  v_existing_status text;
+  v_existing_transaction_id uuid;
+  v_existing_wallet_id uuid;
+  v_wallet record;
+  v_amount numeric;
+  v_type text;
+  v_transaction_date timestamptz;
+  v_category_id int;
+  v_category_name text;
+  v_category_type text;
+  v_category_icon text;
+  v_category_color text;
+  v_description text;
+  v_party text;
+  v_sms_kind text := coalesce(nullif(trim(p_sms_kind), ''), 'Bank Transaction');
+  v_transaction_id uuid;
+  v_delta numeric;
+  v_balance_after numeric;
+  v_is_internal_transfer boolean := false;
+  v_transfer_match record;
+  v_transfer_group_id text;
+  v_transfer_category_id int;
+begin
+  if v_user_id is null then
+    raise exception 'not_authenticated';
+  end if;
+
+  p_sms_hash := nullif(trim(coalesce(p_sms_hash, '')), '');
+  p_sender_id := nullif(trim(coalesce(p_sender_id, '')), '');
+
+  if p_sms_hash is null then
+    raise exception 'invalid_sms_hash';
+  end if;
+
+  insert into public.sms_processing_logs (
+    user_id,
+    sms_hash,
+    sender_id,
+    status,
+    details,
+    updated_at
+  )
+  values (
+    v_user_id,
+    p_sms_hash,
+    p_sender_id,
+    'pending',
+    jsonb_build_object(
+      'received_at', p_received_at,
+      'wallet_id', p_wallet_id
+    ),
+    now()
+  )
+  on conflict (user_id, sms_hash) do nothing
+  returning id into v_log_id;
+
+  if v_log_id is null then
+    select status
+    into v_existing_status
+    from public.sms_processing_logs
+    where user_id = v_user_id
+      and sms_hash = p_sms_hash
+    limit 1;
+
+    select id, wallet_id
+    into v_existing_transaction_id, v_existing_wallet_id
+    from public.transactions
+    where user_id = v_user_id
+      and sms_hash = p_sms_hash
+    limit 1;
+
+    return jsonb_build_object(
+      'status', 'duplicate',
+      'transaction_id', v_existing_transaction_id,
+      'wallet_id', v_existing_wallet_id,
+      'message', 'SMS already processed or already logged.',
+      'log_status', coalesce(v_existing_status, 'unknown')
+    );
+  end if;
+
+  select id, wallet_id
+  into v_existing_transaction_id, v_existing_wallet_id
+  from public.transactions
+  where user_id = v_user_id
+    and sms_hash = p_sms_hash
+  limit 1;
+
+  if v_existing_transaction_id is not null then
+    update public.sms_processing_logs
+    set status = 'processed',
+        details = details || jsonb_build_object(
+          'transaction_id', v_existing_transaction_id,
+          'wallet_id', v_existing_wallet_id,
+          'duplicate_transaction_found', true
+        ),
+        updated_at = now()
+    where user_id = v_user_id
+      and sms_hash = p_sms_hash;
+
+    return jsonb_build_object(
+      'status', 'duplicate',
+      'transaction_id', v_existing_transaction_id,
+      'wallet_id', v_existing_wallet_id,
+      'message', 'SMS transaction already exists.'
+    );
+  end if;
+
+  v_amount := abs(coalesce(p_amount, 0));
+  v_type := case lower(trim(coalesce(p_type, '')))
+    when 'income' then 'Income'
+    when 'expense' then 'Expense'
+    else null
+  end;
+
+  if v_amount <= 0 or v_type is null then
+    update public.sms_processing_logs
+    set status = 'failed_parse',
+        details = details || jsonb_build_object(
+          'reason', 'amount_or_type_not_detected',
+          'sms_body_present', p_sms_body is not null
+        ),
+        updated_at = now()
+    where user_id = v_user_id
+      and sms_hash = p_sms_hash;
+
+    return jsonb_build_object(
+      'status', 'failed_parse',
+      'transaction_id', null,
+      'wallet_id', null,
+      'message', 'SMS could not be parsed into a valid transaction.'
+    );
+  end if;
+
+  if p_wallet_id is not null then
+    select id, name, balance
+    into v_wallet
+    from public.wallets
+    where user_id = v_user_id
+      and id = p_wallet_id
+    limit 1;
+  else
+    select id, name, balance
+    into v_wallet
+    from public.wallets
+    where user_id = v_user_id
+      and sms_sender_id = p_sender_id
+      and account_mode = 'AUTOMATED'
+      and is_active_monitoring = true
+    limit 1;
+  end if;
+
+  if not found then
+    update public.sms_processing_logs
+    set status = 'failed_wallet',
+        details = details || jsonb_build_object('reason', 'no_linked_wallet'),
+        updated_at = now()
+    where user_id = v_user_id
+      and sms_hash = p_sms_hash;
+
+    return jsonb_build_object(
+      'status', 'failed_wallet',
+      'transaction_id', null,
+      'wallet_id', null,
+      'message', 'No linked monitored wallet was found for this SMS.'
+    );
+  end if;
+
+  v_transaction_date := coalesce(p_transaction_date, p_received_at, now());
+
+  if v_type = 'Income' then
+    v_category_name := 'Income';
+    v_category_type := 'Income';
+    v_category_icon := 'trending_up';
+    v_category_color := '#22C55E';
+  elsif lower(v_sms_kind) like '%transfer%' or lower(v_sms_kind) like '%cliq%' then
+    v_category_name := 'Transfer';
+    v_category_type := 'Transfer';
+    v_category_icon := 'swap_horiz';
+    v_category_color := '#3B82F6';
+  elsif lower(v_sms_kind) like '%bill%' then
+    v_category_name := 'Bills';
+    v_category_type := 'Expense';
+    v_category_icon := 'receipt';
+    v_category_color := '#F59E0B';
+  elsif lower(v_sms_kind) like '%card%' or lower(v_sms_kind) like '%pos%' then
+    v_category_name := 'Card Payment';
+    v_category_type := 'Expense';
+    v_category_icon := 'credit_card';
+    v_category_color := '#8B5CF6';
+  else
+    v_category_name := 'General';
+    v_category_type := 'Expense';
+    v_category_icon := 'category';
+    v_category_color := '#94A3B8';
+  end if;
+
+  select id
+  into v_category_id
+  from public.categories
+  where user_id = v_user_id
+    and lower(name) = lower(v_category_name)
+  order by id
+  limit 1;
+
+  if v_category_id is null then
+    insert into public.categories (user_id, name, type, icon, color)
+    values (v_user_id, v_category_name, v_category_type, v_category_icon, v_category_color)
+    returning id into v_category_id;
+  end if;
+
+  v_party := nullif(trim(coalesce(p_counterparty, p_merchant_name, '')), '');
+
+  if p_is_cliq then
+    if v_party is not null then
+      v_description := case when v_type = 'Income' then 'CliQ from ' else 'CliQ to ' end || v_party;
+    else
+      v_description := case when v_type = 'Income' then 'CliQ Transfer In' else 'CliQ Transfer Out' end;
+    end if;
+  elsif nullif(trim(coalesce(p_merchant_name, '')), '') is not null then
+    v_description := v_sms_kind || ' - ' || trim(p_merchant_name);
+  else
+    v_description := v_sms_kind || ' - ' || coalesce(v_wallet.name, p_sender_id, 'Account');
+  end if;
+
+  begin
+    insert into public.transactions (
+      user_id,
+      wallet_id,
+      amount,
+      type,
+      description,
+      category_id,
+      sms_hash,
+      is_internal_transfer,
+      merchant_name,
+      sms_kind,
+      date
+    )
+    values (
+      v_user_id,
+      v_wallet.id,
+      v_amount,
+      v_type,
+      v_description,
+      v_category_id,
+      p_sms_hash,
+      false,
+      nullif(trim(coalesce(p_merchant_name, '')), ''),
+      v_sms_kind,
+      v_transaction_date
+    )
+    returning id into v_transaction_id;
+  exception
+    when unique_violation then
+      select id, wallet_id
+      into v_existing_transaction_id, v_existing_wallet_id
+      from public.transactions
+      where user_id = v_user_id
+        and sms_hash = p_sms_hash
+      limit 1;
+
+      update public.sms_processing_logs
+      set status = 'processed',
+          details = details || jsonb_build_object(
+            'transaction_id', v_existing_transaction_id,
+            'wallet_id', v_existing_wallet_id,
+            'duplicate_transaction_found', true
+          ),
+          updated_at = now()
+      where user_id = v_user_id
+        and sms_hash = p_sms_hash;
+
+      return jsonb_build_object(
+        'status', 'duplicate',
+        'transaction_id', v_existing_transaction_id,
+        'wallet_id', v_existing_wallet_id,
+        'message', 'SMS transaction already exists.'
+      );
+    when others then
+      update public.sms_processing_logs
+      set status = 'failed_transaction',
+          details = details || jsonb_build_object('error', sqlerrm),
+          updated_at = now()
+      where user_id = v_user_id
+        and sms_hash = p_sms_hash;
+
+      return jsonb_build_object(
+        'status', 'failed_transaction',
+        'transaction_id', null,
+        'wallet_id', v_wallet.id,
+        'message', 'Transaction insert failed.'
+      );
+  end;
+
+  select id, wallet_id
+  into v_transfer_match
+  from public.transactions
+  where user_id = v_user_id
+    and id <> v_transaction_id
+    and wallet_id <> v_wallet.id
+    and type = case when v_type = 'Income' then 'Expense' else 'Income' end
+    and amount = v_amount
+    and coalesce(is_internal_transfer, false) = false
+    and date >= v_transaction_date - interval '10 minutes'
+    and date <= v_transaction_date + interval '10 minutes'
+  order by date desc
+  limit 1;
+
+  if found then
+    v_is_internal_transfer := true;
+    v_transfer_group_id := 'transfer_' || replace(gen_random_uuid()::text, '-', '');
+
+    select id
+    into v_transfer_category_id
+    from public.categories
+    where user_id = v_user_id
+      and lower(name) = lower('Transfer')
+    order by id
+    limit 1;
+
+    if v_transfer_category_id is null then
+      insert into public.categories (user_id, name, type, icon, color)
+      values (v_user_id, 'Transfer', 'Transfer', 'swap_horiz', '#3B82F6')
+      returning id into v_transfer_category_id;
+    end if;
+
+    update public.transactions
+    set is_internal_transfer = true,
+        transfer_group_id = v_transfer_group_id,
+        category_id = v_transfer_category_id
+    where user_id = v_user_id
+      and id in (v_transaction_id, v_transfer_match.id);
+  end if;
+
+  if p_available_balance is not null then
+    update public.wallets
+    set balance = p_available_balance
+    where user_id = v_user_id
+      and id = v_wallet.id
+    returning balance into v_balance_after;
+  else
+    v_delta := case when v_type = 'Income' then v_amount else -v_amount end;
+
+    update public.wallets
+    set balance = coalesce(balance, 0) + v_delta
+    where user_id = v_user_id
+      and id = v_wallet.id
+    returning balance into v_balance_after;
+  end if;
+
+  begin
+    update public.users
+    set total_net_worth = (
+      select coalesce(sum(balance), 0)
+      from public.wallets
+      where user_id = v_user_id
+    )
+    where id = v_user_id;
+  exception
+    when others then
+      null;
+  end;
+
+  update public.sms_processing_logs
+  set status = 'processed',
+      details = details || jsonb_build_object(
+        'transaction_id', v_transaction_id,
+        'wallet_id', v_wallet.id,
+        'amount', v_amount,
+        'type', v_type,
+        'is_internal_transfer', v_is_internal_transfer
+      ),
+      updated_at = now()
+  where user_id = v_user_id
+    and sms_hash = p_sms_hash;
+
+  return jsonb_build_object(
+    'status', 'processed',
+    'transaction_id', v_transaction_id,
+    'wallet_id', v_wallet.id,
+    'wallet_name', v_wallet.name,
+    'amount', v_amount,
+    'type', v_type,
+    'description', v_description,
+    'balance_after', v_balance_after,
+    'is_internal_transfer', v_is_internal_transfer,
+    'message', 'SMS transaction processed.'
+  );
+end;
+$$;
 
 create or replace function public.get_monthly_analytics(
   p_start_date timestamptz,
@@ -114,7 +550,7 @@ begin
   with filtered as (
     select
       t.amount,
-      t.type,
+      lower(coalesce(t.type, '')) as transaction_type,
       t.category_id,
       c.name as category_name,
       c.icon,
@@ -127,11 +563,11 @@ begin
       and t.date >= p_start_date
       and t.date <= p_end_date
       and (p_wallet_id is null or t.wallet_id = p_wallet_id)
-      and t.type in ('Income', 'Expense')
+      and lower(coalesce(t.type, '')) in ('income', 'expense')
   )
   select
-    coalesce(sum(abs(amount)) filter (where type = 'Income'), 0),
-    coalesce(sum(abs(amount)) filter (where type = 'Expense'), 0)
+    coalesce(sum(abs(amount)) filter (where transaction_type = 'income'), 0),
+    coalesce(sum(abs(amount)) filter (where transaction_type = 'expense'), 0)
   into v_total_income, v_total_expenses
   from filtered;
 
@@ -150,7 +586,7 @@ begin
       and t.date >= p_start_date
       and t.date <= p_end_date
       and (p_wallet_id is null or t.wallet_id = p_wallet_id)
-      and t.type = 'Income'
+      and lower(coalesce(t.type, '')) = 'income'
     group by coalesce(t.category_id::text, 'uncategorized'), coalesce(c.name, 'Uncategorized')
   )
   select coalesce(
@@ -186,7 +622,7 @@ begin
       and t.date >= p_start_date
       and t.date <= p_end_date
       and (p_wallet_id is null or t.wallet_id = p_wallet_id)
-      and t.type = 'Expense'
+      and lower(coalesce(t.type, '')) = 'expense'
     group by coalesce(t.category_id::text, 'uncategorized'), coalesce(c.name, 'Uncategorized')
   )
   select coalesce(
@@ -318,3 +754,30 @@ begin
   );
 end;
 $$;
+
+grant execute on function public.process_sms_transaction_atomic(
+  text,
+  text,
+  text,
+  timestamptz,
+  uuid,
+  numeric,
+  text,
+  numeric,
+  timestamptz,
+  text,
+  text,
+  text,
+  boolean
+) to authenticated;
+
+grant execute on function public.get_monthly_analytics(
+  timestamptz,
+  timestamptz,
+  uuid
+) to authenticated;
+
+grant execute on function public.get_dashboard_summary(
+  int,
+  boolean
+) to authenticated;

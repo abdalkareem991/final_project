@@ -19,6 +19,19 @@ type ParsedSms = {
   isCliq: boolean;
 };
 
+type AtomicSmsResult = {
+  status: "processed" | "duplicate" | "failed_parse" | "failed_wallet" | "failed_transaction";
+  transaction_id?: string | null;
+  wallet_id?: string | null;
+  wallet_name?: string | null;
+  amount?: number | null;
+  type?: "Income" | "Expense" | null;
+  description?: string | null;
+  balance_after?: number | null;
+  is_internal_transfer?: boolean;
+  message?: string;
+};
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -188,126 +201,17 @@ function parseSms(smsBody: string, receivedAt: string): ParsedSms | null {
   };
 }
 
-function buildDescription(
-  parsed: ParsedSms,
-  senderId: string,
-) {
-  if (parsed.isCliq) {
-    const party = parsed.counterparty ?? parsed.merchantName;
-    if (party) return parsed.type === "Income" ? `CliQ from ${party}` : `CliQ to ${party}`;
-    return parsed.type === "Income" ? "CliQ Transfer In" : "CliQ Transfer Out";
+function normalizeAtomicResult(value: unknown): AtomicSmsResult {
+  if (value && typeof value === "object") {
+    return value as AtomicSmsResult;
   }
 
-  if (parsed.merchantName) return `${parsed.smsKind} - ${parsed.merchantName}`;
-  return `${parsed.smsKind} - ${senderId}`;
-}
-
-async function getOrCreateCategory(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  smsKind: string,
-  merchantName: string | null,
-  type: "Income" | "Expense",
-) {
-  const text = `${smsKind} ${merchantName ?? ""}`.toLowerCase();
-  const category =
-    type === "Income"
-      ? { name: "Income", type: "Income", icon: "trending_up", color: "#22C55E" }
-      : text.includes("cliq") || text.includes("transfer")
-      ? { name: "Transfer", type: "Transfer", icon: "swap_horiz", color: "#3B82F6" }
-      : text.includes("bill") || text.includes("orange") || text.includes("zain")
-      ? { name: "Bills", type: "Expense", icon: "receipt", color: "#F59E0B" }
-      : text.includes("card") || text.includes("visa") || text.includes("pos")
-      ? { name: "Card Payment", type: "Expense", icon: "credit_card", color: "#8B5CF6" }
-      : { name: "General", type: "Expense", icon: "category", color: "#94A3B8" };
-
-  const existing = await supabase
-    .from("categories")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("name", category.name)
-    .maybeSingle();
-
-  if (existing.data?.id) return existing.data.id;
-
-  const inserted = await supabase
-    .from("categories")
-    .insert({ user_id: userId, ...category })
-    .select("id")
-    .single();
-
-  if (inserted.error) throw inserted.error;
-  return inserted.data.id;
-}
-
-async function markInternalTransferIfMatched(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  newTransactionId: string,
-  walletId: string,
-  amount: number,
-  type: "Income" | "Expense",
-  transactionDate: string,
-) {
-  const oppositeType = type === "Income" ? "Expense" : "Income";
-  const date = new Date(transactionDate);
-  const windowStart = new Date(date.getTime() - 10 * 60 * 1000).toISOString();
-  const windowEnd = new Date(date.getTime() + 10 * 60 * 1000).toISOString();
-
-  const match = await supabase
-    .from("transactions")
-    .select("id, wallet_id")
-    .eq("user_id", userId)
-    .eq("type", oppositeType)
-    .eq("amount", amount)
-    .eq("is_internal_transfer", false)
-    .neq("wallet_id", walletId)
-    .gte("date", windowStart)
-    .lte("date", windowEnd)
-    .order("date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!match.data?.id) return false;
-
-  const categoryId = await getOrCreateCategory(
-    supabase,
-    userId,
-    "Transfer",
-    null,
-    "Expense",
-  );
-  const groupId = `transfer_${Date.now()}`;
-
-  const currentWallet = await supabase
-    .from("wallets")
-    .select("name")
-    .eq("id", walletId)
-    .maybeSingle();
-  const matchedWallet = await supabase
-    .from("wallets")
-    .select("name")
-    .eq("id", match.data.wallet_id)
-    .maybeSingle();
-
-  const currentName = currentWallet.data?.name ?? "Current Account";
-  const matchedName = matchedWallet.data?.name ?? "Matched Account";
-  const description = type === "Income"
-    ? `Transfer from ${matchedName} to ${currentName}`
-    : `Transfer from ${currentName} to ${matchedName}`;
-
-  const update = await supabase
-    .from("transactions")
-    .update({
-      is_internal_transfer: true,
-      transfer_group_id: groupId,
-      category_id: categoryId,
-      description,
-    })
-    .in("id", [newTransactionId, match.data.id]);
-
-  if (update.error) throw update.error;
-  return true;
+  return {
+    status: "failed_transaction",
+    transaction_id: null,
+    wallet_id: null,
+    message: "Invalid RPC response.",
+  };
 }
 
 serve(async (req) => {
@@ -315,201 +219,78 @@ serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405);
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const authHeader = req.headers.get("Authorization") ?? "";
 
-    const authedClient = createClient(supabaseUrl, anonKey, {
+    if (!supabaseUrl || !anonKey) {
+      return jsonResponse({ error: "server_not_configured" }, 500);
+    }
+
+    const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-    const { data: authData, error: authError } = await authedClient.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData.user) {
       return jsonResponse({ error: "not_authenticated" }, 401);
     }
 
     const payload = await req.json();
-    const userId = String(payload.user_id ?? "");
     const senderId = String(payload.sender_id ?? "").trim();
     const smsBody = String(payload.sms_body ?? "");
+    const walletId = payload.wallet_id ? String(payload.wallet_id) : null;
     const receivedAt = payload.received_at
       ? new Date(payload.received_at).toISOString()
       : new Date().toISOString();
 
-    if (userId !== authData.user.id) return jsonResponse({ error: "forbidden" }, 403);
     if (!senderId || !smsBody.trim()) {
       return jsonResponse({ error: "invalid_sms_input" }, 400);
     }
 
     const smsHash = stableSmsHash(senderId, smsBody, receivedAt);
-
-    const existingLog = await adminClient
-      .from("sms_processing_logs")
-      .select("status")
-      .eq("user_id", userId)
-      .eq("sms_hash", smsHash)
-      .maybeSingle();
-
-    if (existingLog.data?.status === "processed") {
-      return jsonResponse({ status: "duplicate", sms_hash: smsHash, processed: false });
-    }
-
-    await adminClient.from("sms_processing_logs").upsert({
-      user_id: userId,
-      sms_hash: smsHash,
-      sender_id: senderId,
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id,sms_hash" });
-
     const parsed = parseSms(smsBody, receivedAt);
-    if (!parsed) {
-      await adminClient.from("sms_processing_logs").upsert({
-        user_id: userId,
-        sms_hash: smsHash,
-        sender_id: senderId,
-        status: "parse_failed",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id,sms_hash" });
 
-      return jsonResponse({ status: "parse_failed", sms_hash: smsHash, processed: false });
-    }
-
-    const wallet = await adminClient
-      .from("wallets")
-      .select("id, name, balance")
-      .eq("user_id", userId)
-      .eq("sms_sender_id", senderId)
-      .eq("account_mode", "AUTOMATED")
-      .eq("is_active_monitoring", true)
-      .maybeSingle();
-
-    if (!wallet.data?.id) {
-      await adminClient.from("sms_processing_logs").upsert({
-        user_id: userId,
-        sms_hash: smsHash,
-        sender_id: senderId,
-        status: "no_linked_wallet",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id,sms_hash" });
-
-      return jsonResponse({ status: "no_linked_wallet", sms_hash: smsHash, processed: false });
-    }
-
-    const existingTx = await adminClient
-      .from("transactions")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("sms_hash", smsHash)
-      .maybeSingle();
-
-    if (existingTx.data?.id) {
-      await adminClient.from("sms_processing_logs").upsert({
-        user_id: userId,
-        sms_hash: smsHash,
-        sender_id: senderId,
-        status: "processed",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id,sms_hash" });
-
-      return jsonResponse({ status: "duplicate", sms_hash: smsHash, processed: false });
-    }
-
-    const categoryId = await getOrCreateCategory(
-      adminClient,
-      userId,
-      parsed.smsKind,
-      parsed.merchantName,
-      parsed.type,
-    );
-    const description = buildDescription(parsed, senderId);
-
-    const inserted = await adminClient
-      .from("transactions")
-      .insert({
-        user_id: userId,
-        wallet_id: wallet.data.id,
-        amount: parsed.amount,
-        type: parsed.type,
-        description,
-        category_id: categoryId,
-        sms_hash: smsHash,
-        merchant_name: parsed.merchantName,
-        sms_kind: parsed.smsKind,
-        date: parsed.transactionDate,
-      })
-      .select("id")
-      .single();
-
-    if (inserted.error) throw inserted.error;
-
-    const currentBalance = Number(wallet.data.balance ?? 0);
-    let nextBalance = parsed.type === "Income"
-      ? currentBalance + parsed.amount
-      : currentBalance - parsed.amount;
-
-    if (parsed.balanceAfter != null) {
-      const newer = await adminClient
-        .from("transactions")
-        .select("id")
-        .eq("wallet_id", wallet.data.id)
-        .gt("date", parsed.transactionDate)
-        .limit(1);
-
-      if (!newer.data?.length) nextBalance = parsed.balanceAfter;
-    }
-
-    const walletUpdate = await adminClient
-      .from("wallets")
-      .update({ balance: nextBalance })
-      .eq("id", wallet.data.id)
-      .eq("user_id", userId);
-    if (walletUpdate.error) throw walletUpdate.error;
-
-    const isInternalTransfer = await markInternalTransferIfMatched(
-      adminClient,
-      userId,
-      inserted.data.id,
-      wallet.data.id,
-      parsed.amount,
-      parsed.type,
-      parsed.transactionDate,
-    );
-
-    await adminClient.from("sms_processing_logs").upsert({
-      user_id: userId,
-      sms_hash: smsHash,
-      sender_id: senderId,
-      status: "processed",
-      details: {
-        transaction_id: inserted.data.id,
-        wallet_id: wallet.data.id,
-        type: parsed.type,
-        amount: parsed.amount,
-        is_internal_transfer: isInternalTransfer,
-      },
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id,sms_hash" });
-
-    return jsonResponse({
-      status: "processed",
-      processed: true,
-      sms_hash: smsHash,
-      transaction_id: inserted.data.id,
-      wallet_name: wallet.data.name,
-      type: parsed.type,
-      amount: parsed.amount,
-      description,
-      balance_after: nextBalance,
-      is_internal_transfer: isInternalTransfer,
+    const { data, error } = await supabase.rpc("process_sms_transaction_atomic", {
+      p_sms_hash: smsHash,
+      p_sender_id: senderId,
+      p_sms_body: smsBody,
+      p_received_at: receivedAt,
+      p_wallet_id: walletId,
+      p_amount: parsed?.amount ?? null,
+      p_type: parsed?.type ?? null,
+      p_available_balance: parsed?.balanceAfter ?? null,
+      p_transaction_date: parsed?.transactionDate ?? receivedAt,
+      p_sms_kind: parsed?.smsKind ?? null,
+      p_merchant_name: parsed?.merchantName ?? null,
+      p_counterparty: parsed?.counterparty ?? null,
+      p_is_cliq: parsed?.isCliq ?? false,
     });
+
+    if (error) {
+      console.error("process_sms_transaction RPC failed", error.message);
+      return jsonResponse(
+        {
+          status: "failed_transaction",
+          transaction_id: null,
+          wallet_id: walletId,
+          message: "Atomic SMS processing failed.",
+        },
+        500,
+      );
+    }
+
+    return jsonResponse(normalizeAtomicResult(data));
   } catch (error) {
-    console.error("process_sms_transaction failed", error);
-    const message = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("process_sms_transaction failed", message);
     return jsonResponse(
-      { error: "processing_failed", message },
+      {
+        status: "failed_transaction",
+        transaction_id: null,
+        wallet_id: null,
+        message: "SMS processing failed.",
+      },
       500,
     );
   }

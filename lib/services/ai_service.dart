@@ -545,14 +545,7 @@ class AIService {
     for (int attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         final response = await _client.functions
-            .invoke(
-              'financial_ai_assistant',
-              body: {
-                'message': userMessage,
-                if (financialContext != null)
-                  'client_context': financialContext,
-              },
-            )
+            .invoke('financial_ai_assistant', body: {'message': userMessage})
             .timeout(const Duration(seconds: 25));
 
         final data = response.data;

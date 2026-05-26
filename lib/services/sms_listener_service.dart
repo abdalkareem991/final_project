@@ -195,6 +195,7 @@ class SMSListenerService {
             await _processSmsMessageForSender(
               message: message,
               sender: sender,
+              walletId: wallet.id,
             ).timeout(
               _singleSmsTimeout,
               onTimeout: () {
@@ -298,53 +299,62 @@ class SMSListenerService {
     required String sender,
     required String body,
     required int smsDate,
+    required String walletId,
   }) async {
     try {
-      final alreadyProcessed = await _supabaseService.isSmsAlreadyProcessed(
-        localSmsKey,
-      );
-      if (alreadyProcessed) {
-        _processedInMemory.add(localSmsKey);
-        debugPrint("[$_smsLogTag] SMS duplicate skipped locally.");
-        return false;
-      }
-
-      final walletId = await _supabaseService.findWalletBySmsSender(sender);
-      if (walletId == null) {
-        await _supabaseService.recordSmsProcessingIssue(
-          smsHash: localSmsKey,
-          senderId: sender,
-          status: 'no_linked_wallet',
-        );
-        _ignoredInMemory.add(localSmsKey);
-        return false;
-      }
-
       final parsedData = _aiService.parseBankSmsLocally(body, sender: sender);
+      final receivedAt = smsDate > 0
+          ? DateTime.fromMillisecondsSinceEpoch(smsDate)
+          : DateTime.now();
 
       if (parsedData == null) {
-        await _supabaseService.recordSmsProcessingIssue(
-          smsHash: localSmsKey,
-          senderId: sender,
-          status: 'parse_failed',
+        final result = await _supabaseService
+            .processParsedSmsTransactionAtomically(
+              smsHash: localSmsKey,
+              senderId: sender,
+              smsBody: body,
+              receivedAt: receivedAt,
+              walletId: walletId,
+            )
+            .timeout(const Duration(seconds: 20));
+        if (result.isDuplicate) {
+          _processedInMemory.add(localSmsKey);
+        } else {
+          _ignoredInMemory.add(localSmsKey);
+        }
+        debugPrint(
+          "[$_smsLogTag] Local parser failed; atomic RPC status: ${result.status}",
         );
-        _ignoredInMemory.add(localSmsKey);
         return false;
       }
 
       parsedData['sms_timestamp'] = smsDate;
 
-      await _supabaseService
-          .processAutomatedTransaction(
-            parsedData,
-            sender,
+      final result = await _supabaseService
+          .processParsedSmsTransactionAtomically(
             smsHash: localSmsKey,
-            matchedWalletId: walletId,
-            smsAlreadyChecked: true,
+            senderId: sender,
+            smsBody: body,
+            receivedAt: receivedAt,
+            walletId: walletId,
+            parsedData: parsedData,
           )
           .timeout(const Duration(seconds: 20));
 
+      if (result.isDuplicate) {
+        _processedInMemory.add(localSmsKey);
+        debugPrint("[$_smsLogTag] SMS duplicate skipped by atomic RPC.");
+        return false;
+      }
+
+      if (!result.processed) {
+        _ignoredInMemory.add(localSmsKey);
+        debugPrint("[$_smsLogTag] Atomic RPC status: ${result.status}");
+        return false;
+      }
+
       _processedInMemory.add(localSmsKey);
+      await _showProcessedSmsNotification(result);
       return true;
     } catch (error) {
       debugPrint("[$_smsLogTag] Local SMS processing failed: $error");
@@ -356,9 +366,26 @@ class SMSListenerService {
     }
   }
 
+  Future<void> _showProcessedSmsNotification(SmsProcessingResult result) async {
+    if (result.isInternalTransfer ||
+        result.type == null ||
+        result.amount == null) {
+      return;
+    }
+
+    await NotificationService().showTransactionNotification(
+      type: result.type!,
+      amount: result.amount!,
+      walletName: result.walletName ?? 'Account',
+      description: result.description,
+      balanceAfter: result.balanceAfter,
+    );
+  }
+
   Future<bool> _processSmsMessageForSender({
     required SmsMessage message,
     required String sender,
+    required String walletId,
   }) async {
     final String? body = message.body?.replaceAll(RegExp(r'\s+'), ' ').trim();
 
@@ -385,23 +412,21 @@ class SMSListenerService {
         sender: sender,
         body: body,
         smsDate: smsDate,
+        walletId: walletId,
       );
     }
 
     try {
-      final userId = _supabaseService.client.auth.currentUser?.id;
-      if (userId == null) return false;
-
       final receivedAt = smsDate > 0
           ? DateTime.fromMillisecondsSinceEpoch(smsDate)
           : DateTime.now();
 
       final result = await _supabaseService
           .processSmsTransactionRemotely(
-            userId: userId,
             senderId: sender,
             smsBody: body,
             receivedAt: receivedAt,
+            walletId: walletId,
           )
           .timeout(_singleSmsTimeout);
 
@@ -412,8 +437,7 @@ class SMSListenerService {
       }
 
       if (!result.processed) {
-        if (result.status == 'parse_failed' ||
-            result.status == 'invalid_response') {
+        if (result.status == 'invalid_response') {
           debugPrint(
             "[$_smsLogTag] SMS backend status: ${result.status}; trying local parser.",
           );
@@ -422,6 +446,7 @@ class SMSListenerService {
             sender: sender,
             body: body,
             smsDate: smsDate,
+            walletId: walletId,
           );
         }
 
@@ -431,18 +456,7 @@ class SMSListenerService {
       }
 
       _processedInMemory.add(localSmsKey);
-
-      if (!result.isInternalTransfer &&
-          result.type != null &&
-          result.amount != null) {
-        await NotificationService().showTransactionNotification(
-          type: result.type!,
-          amount: result.amount!,
-          walletName: result.walletName ?? 'Account',
-          description: result.description,
-          balanceAfter: result.balanceAfter,
-        );
-      }
+      await _showProcessedSmsNotification(result);
 
       return true;
     } catch (e) {
@@ -460,6 +474,7 @@ class SMSListenerService {
         sender: sender,
         body: body,
         smsDate: smsDate,
+        walletId: walletId,
       );
     }
   }
@@ -559,6 +574,7 @@ class SMSListenerService {
                 await _processSmsMessageForSender(
                   message: message,
                   sender: sender,
+                  walletId: wallet.id,
                 ).timeout(
                   _singleSmsTimeout + const Duration(seconds: 2),
                   onTimeout: () {

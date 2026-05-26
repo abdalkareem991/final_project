@@ -27,9 +27,12 @@ class SmsProcessingResult {
   final bool processed;
   final bool isDuplicate;
   final bool isInternalTransfer;
+  final String? transactionId;
+  final String? walletId;
   final String? walletName;
   final String? type;
   final String? description;
+  final String? message;
   final double? amount;
   final double? balanceAfter;
 
@@ -38,9 +41,12 @@ class SmsProcessingResult {
     required this.processed,
     this.isDuplicate = false,
     this.isInternalTransfer = false,
+    this.transactionId,
+    this.walletId,
     this.walletName,
     this.type,
     this.description,
+    this.message,
     this.amount,
     this.balanceAfter,
   });
@@ -49,12 +55,15 @@ class SmsProcessingResult {
     final status = json['status']?.toString() ?? 'unknown';
     return SmsProcessingResult(
       status: status,
-      processed: json['processed'] == true,
+      processed: status == 'processed' || json['processed'] == true,
       isDuplicate: status == 'duplicate',
       isInternalTransfer: json['is_internal_transfer'] == true,
+      transactionId: json['transaction_id']?.toString(),
+      walletId: json['wallet_id']?.toString(),
       walletName: json['wallet_name']?.toString(),
       type: json['type']?.toString(),
       description: json['description']?.toString(),
+      message: json['message']?.toString(),
       amount: (json['amount'] as num?)?.toDouble(),
       balanceAfter: (json['balance_after'] as num?)?.toDouble(),
     );
@@ -1783,19 +1792,19 @@ class SupabaseService {
   }
 
   Future<SmsProcessingResult> processSmsTransactionRemotely({
-    required String userId,
     required String senderId,
     required String smsBody,
     required DateTime receivedAt,
+    String? walletId,
   }) async {
     try {
       final response = await client.functions.invoke(
         'process_sms_transaction',
         body: {
-          'user_id': userId,
           'sender_id': senderId,
           'sms_body': smsBody,
           'received_at': receivedAt.toUtc().toIso8601String(),
+          if (walletId != null) 'wallet_id': walletId,
         },
       );
 
@@ -1814,192 +1823,54 @@ class SupabaseService {
     }
   }
 
-  Future<void> processAutomatedTransaction(
-    Map<String, dynamic> aiData,
-    String senderId, {
-    String? smsHash,
-    String? matchedWalletId,
-    bool smsAlreadyChecked = false,
+  Future<SmsProcessingResult> processParsedSmsTransactionAtomically({
+    required String smsHash,
+    required String senderId,
+    required String smsBody,
+    required DateTime receivedAt,
+    String? walletId,
+    Map<String, dynamic>? parsedData,
   }) async {
     try {
-      final String? walletId =
-          matchedWalletId ?? await findWalletBySmsSender(senderId);
-
-      if (walletId == null) {
-        debugPrint("No linked wallet found for SMS sender.");
-        if (smsHash != null) {
-          await recordSmsProcessingStatus(
-            smsHash: smsHash,
-            senderId: senderId,
-            status: 'no_linked_wallet',
-          );
-        }
-        return;
-      }
-
-      if (smsHash != null && !smsAlreadyChecked) {
-        final alreadyProcessed = await isSmsAlreadyProcessed(smsHash);
-        if (alreadyProcessed) {
-          debugPrint("[$_smsLogTag] SMS duplicate skipped.");
-          return;
-        }
-      }
-
-      final double amount = (aiData['amount'] as num).toDouble();
-      final String type = aiData['type'] ?? 'Expense';
-      final String bank = aiData['bank'] ?? senderId;
-      final bool isCliq = aiData['is_cliq'] == true;
-      final String smsKind =
-          aiData['sms_kind']?.toString() ?? 'Bank Transaction';
-      final String? merchantName = aiData['merchant_name']?.toString();
-      final String? counterparty = aiData['counterparty']?.toString();
-
-      final double? balanceAfter = (aiData['available_balance'] as num?)
-          ?.toDouble();
-
-      DateTime? transactionDate;
-      final smsTimestamp = aiData['sms_timestamp'];
-
+      DateTime transactionDate = receivedAt;
+      final smsTimestamp = parsedData?['sms_timestamp'];
       if (smsTimestamp is int && smsTimestamp > 0) {
         transactionDate = DateTime.fromMillisecondsSinceEpoch(smsTimestamp);
       }
 
-      final int categoryId = await getAutoCategoryIdForSms(
-        smsKind: smsKind,
-        merchantName: merchantName,
+      final response = await client.rpc(
+        'process_sms_transaction_atomic',
+        params: {
+          'p_sms_hash': smsHash,
+          'p_sender_id': senderId,
+          'p_sms_body': smsBody,
+          'p_received_at': receivedAt.toUtc().toIso8601String(),
+          'p_wallet_id': walletId,
+          'p_amount': parsedData?['amount'],
+          'p_type': parsedData?['type'],
+          'p_available_balance': parsedData?['available_balance'],
+          'p_transaction_date': transactionDate.toUtc().toIso8601String(),
+          'p_sms_kind': parsedData?['sms_kind'],
+          'p_merchant_name': parsedData?['merchant_name'],
+          'p_counterparty': parsedData?['counterparty'],
+          'p_is_cliq': parsedData?['is_cliq'] == true,
+        },
       );
 
-      final String description = _buildAutomatedTransactionDescription(
-        type: type,
-        bank: bank,
-        smsKind: smsKind,
-        merchantName: merchantName,
-        counterparty: counterparty,
-        isCliq: isCliq,
-      );
-
-      final String? transactionId = await createTransaction(
-        walletId: walletId,
-        amount: amount,
-        type: type,
-        description: description,
-        categoryId: categoryId,
-        smsHash: smsHash,
-        balanceAfter: balanceAfter,
-        merchantName: merchantName,
-        smsKind: smsKind,
-        transactionDate: transactionDate,
-      );
-
-      if (transactionId == null) {
-        debugPrint(
-          "[$_smsLogTag] SMS processing failed: transaction not created.",
-        );
-        if (smsHash != null) {
-          await recordSmsProcessingStatus(
-            smsHash: smsHash,
-            senderId: senderId,
-            status: 'transaction_not_created',
-          );
-        }
-        return;
-      }
-
-      final String walletName = await getWalletNameById(walletId);
-
-      // Send notification only after the transaction is saved successfully.
-      try {
-        final savedTransaction = await client
-            .from('transactions')
-            .select('is_internal_transfer')
-            .eq('id', transactionId)
-            .maybeSingle();
-
-        final bool isInternalTransfer =
-            savedTransaction?['is_internal_transfer'] == true;
-
-        if (!isInternalTransfer) {
-          await NotificationService().showTransactionNotification(
-            type: type,
-            amount: amount,
-            walletName: walletName,
-            description: description,
-            balanceAfter: balanceAfter,
-          );
-        }
-      } catch (e) {
-        debugPrint("Transaction notification error: $e");
-      }
-
-      if (smsHash != null) {
-        await recordSmsProcessingStatus(
-          smsHash: smsHash,
-          senderId: senderId,
-          status: 'processed',
+      if (response is Map) {
+        return SmsProcessingResult.fromJson(
+          Map<String, dynamic>.from(response),
         );
       }
 
-      debugPrint("SMS transaction added to dashboard successfully.");
-    } catch (e) {
-      debugPrint("[$_smsLogTag] SMS processing failed: $e");
-      if (smsHash != null) {
-        await recordSmsProcessingStatus(
-          smsHash: smsHash,
-          senderId: senderId,
-          status: 'processing_failed',
-        );
-      }
+      return const SmsProcessingResult(
+        status: 'invalid_response',
+        processed: false,
+      );
+    } catch (error) {
+      debugPrint("[$_smsLogTag] Atomic SMS RPC failed: $error");
+      rethrow;
     }
-  }
-
-  String _buildAutomatedTransactionDescription({
-    required String type,
-    required String bank,
-    required String smsKind,
-    required String? merchantName,
-    required String? counterparty,
-    required bool isCliq,
-  }) {
-    final cleanMerchant = _cleanDescriptionPart(merchantName);
-    final cleanCounterparty = _cleanDescriptionPart(counterparty);
-    final cleanBank = _cleanDescriptionPart(bank) ?? 'Bank';
-    final cleanKind = _cleanDescriptionPart(smsKind) ?? 'Bank Transaction';
-
-    if (isCliq) {
-      final party = cleanCounterparty ?? cleanMerchant;
-      if (party != null) {
-        return type == 'Income' ? "CliQ from $party" : "CliQ to $party";
-      }
-      return type == 'Income' ? "CliQ Transfer In" : "CliQ Transfer Out";
-    }
-
-    if (cleanMerchant != null && cleanMerchant != cleanBank) {
-      return "$cleanKind - $cleanMerchant";
-    }
-
-    return "$cleanKind - $cleanBank";
-  }
-
-  String? _cleanDescriptionPart(String? value) {
-    if (value == null) return null;
-
-    final cleaned = value
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceAll(
-          RegExp(r'\bavailable balance\b.*', caseSensitive: false),
-          '',
-        )
-        .replaceAll(RegExp(r'\bbalance\b.*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\bauthorization\b.*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\baccount\b.*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'الرصيد.*'), '')
-        .replaceAll(RegExp(r'الحساب.*'), '')
-        .trim();
-
-    if (cleaned.isEmpty) return null;
-
-    if (cleaned.length <= 42) return cleaned;
-    return "${cleaned.substring(0, 39).trim()}...";
   }
 
   Future<bool> isSmsAlreadyProcessed(String smsHash) async {

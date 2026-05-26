@@ -8,6 +8,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const rateLimitWindowMs = 60_000;
+const rateLimitMaxRequests = 10;
+const requestLogByUser = new Map<string, number[]>();
+
+type JsonMap = Record<string, unknown>;
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -20,129 +26,116 @@ function amount(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function formatCategoryRows(rows: Array<Record<string, unknown>>, total: number) {
+function asMap(value: unknown): JsonMap {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonMap
+    : {};
+}
+
+function asArray(value: unknown): JsonMap[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonMap => item && typeof item === "object")
+    : [];
+}
+
+function checkRateLimit(userId: string) {
+  const now = Date.now();
+  const active = (requestLogByUser.get(userId) ?? []).filter(
+    (timestamp) => now - timestamp < rateLimitWindowMs,
+  );
+
+  if (active.length >= rateLimitMaxRequests) {
+    requestLogByUser.set(userId, active);
+    return false;
+  }
+
+  active.push(now);
+  requestLogByUser.set(userId, active);
+  return true;
+}
+
+function formatCategoryRows(rows: JsonMap[]) {
   if (!rows.length) return "- No category data.";
 
   return rows.slice(0, 8).map((row) => {
-    const categoryTotal = amount(row.total_amount);
-    const percentage = total > 0 ? (categoryTotal / total) * 100 : 0;
-    return `- ${row.category_name ?? "Uncategorized"}: ${categoryTotal.toFixed(2)} JOD (${percentage.toFixed(1)}%)`;
+    const total = amount(row.total_amount);
+    const percentage = amount(row.percentage);
+    return `- ${row.category_name ?? "Uncategorized"}: ${total.toFixed(2)} JOD (${percentage.toFixed(1)}%)`;
+  }).join("\n");
+}
+
+function formatRecentTransactions(rows: JsonMap[]) {
+  if (!rows.length) return "- No recent visible transactions found.";
+
+  return rows.slice(0, 8).map((tx) => {
+    const type = tx.is_internal_transfer === true
+      ? `Internal Transfer (${tx.type ?? "Transaction"})`
+      : tx.type ?? "Transaction";
+    return `- ${type} ${amount(tx.amount).toFixed(2)} JOD, wallet: ${tx.wallet_name ?? "Unknown"}, category: ${tx.category_name ?? "Uncategorized"}, date: ${tx.date ?? "unknown"}, description: ${tx.description ?? ""}`;
   }).join("\n");
 }
 
 async function buildFinancialContext(
   supabase: ReturnType<typeof createClient>,
-  userId: string,
 ) {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
-  const [profile, wallets, transactions, debts] = await Promise.all([
-    supabase.from("users").select("full_name, total_net_worth").eq("id", userId).maybeSingle(),
-    supabase.from("wallets").select("name, balance, currency, type").eq("user_id", userId),
-    supabase
-      .from("transactions")
-      .select("amount, type, description, date, is_internal_transfer, wallets(name), categories(name)")
-      .eq("user_id", userId)
-      .eq("is_hidden", false)
-      .order("date", { ascending: false })
-      .limit(20),
-    supabase.from("debts").select("person_name, amount, type, due_date, note").eq("user_id", userId).eq("status", "active"),
+  const [dashboard, analytics, profile, wallets] = await Promise.all([
+    supabase.rpc("get_dashboard_summary", {
+      p_recent_limit: 8,
+      p_include_hidden: false,
+    }),
+    supabase.rpc("get_monthly_analytics", {
+      p_start_date: monthStart.toISOString(),
+      p_end_date: monthEnd.toISOString(),
+      p_wallet_id: null,
+    }),
+    supabase.from("users").select("full_name, total_net_worth").maybeSingle(),
+    supabase.from("wallets").select("name, balance, currency, type").limit(20),
   ]);
 
-  const txRows = transactions.data ?? [];
-  const monthlyRows = txRows.filter((tx) => {
-    const date = new Date(String(tx.date ?? ""));
-    return date >= monthStart && date <= monthEnd && tx.is_internal_transfer !== true;
-  });
+  if (dashboard.error) throw dashboard.error;
+  if (analytics.error) throw analytics.error;
 
-  const totalIncome = monthlyRows
-    .filter((tx) => tx.type === "Income")
-    .reduce((sum, tx) => sum + Math.abs(amount(tx.amount)), 0);
-  const totalExpenses = monthlyRows
-    .filter((tx) => tx.type === "Expense")
-    .reduce((sum, tx) => sum + Math.abs(amount(tx.amount)), 0);
+  const dashboardData = asMap(dashboard.data);
+  const analyticsData = asMap(analytics.data);
+  const summary = asMap(analyticsData.summary);
+  const debts = asMap(dashboardData.debts_summary);
 
-  const categoryBuckets = new Map<string, Record<string, unknown>>();
-  for (const tx of monthlyRows) {
-    if (tx.type !== "Income" && tx.type !== "Expense") continue;
-
-    const nestedCategory = tx.categories as Record<string, unknown> | null;
-    const key = `${tx.type}:${nestedCategory?.name ?? "Uncategorized"}`;
-    const current = categoryBuckets.get(key) ?? {
-      type: tx.type,
-      category_name: nestedCategory?.name ?? "Uncategorized",
-      total_amount: 0,
-    };
-    current.total_amount = amount(current.total_amount) + Math.abs(amount(tx.amount));
-    categoryBuckets.set(key, current);
-  }
-
-  const incomeCategories = Array.from(categoryBuckets.values())
-    .filter((row) => row.type === "Income")
-    .sort((a, b) => amount(b.total_amount) - amount(a.total_amount));
-  const expenseCategories = Array.from(categoryBuckets.values())
-    .filter((row) => row.type === "Expense")
-    .sort((a, b) => amount(b.total_amount) - amount(a.total_amount));
-
-  const walletText = (wallets.data ?? []).length
-    ? (wallets.data ?? []).map((wallet) =>
+  const walletRows = Array.isArray(wallets.data) ? wallets.data : [];
+  const walletText = walletRows.length
+    ? walletRows.map((wallet) =>
       `- ${wallet.name}: ${amount(wallet.balance).toFixed(2)} ${wallet.currency ?? "JOD"}, type: ${wallet.type ?? "Account"}`
     ).join("\n")
     : "- No wallets/accounts found.";
 
-  const debtRows = debts.data ?? [];
-  const debtorTotal = debtRows
-    .filter((debt) => debt.type === "debtor")
-    .reduce((sum, debt) => sum + amount(debt.amount), 0);
-  const creditorTotal = debtRows
-    .filter((debt) => debt.type === "creditor")
-    .reduce((sum, debt) => sum + amount(debt.amount), 0);
-  const debtList = debtRows.length
-    ? debtRows.slice(0, 10).map((debt) =>
-      `- ${debt.person_name}: ${debt.type === "debtor" ? "owes the user" : "user owes this person"}, ${amount(debt.amount).toFixed(2)} JOD, due: ${debt.due_date ?? "no due date"}`
-    ).join("\n")
-    : "- No active debts.";
-
-  const recentTransactions = txRows.length
-    ? txRows.slice(0, 10).map((tx) => {
-      const wallet = tx.wallets as Record<string, unknown> | null;
-      const category = tx.categories as Record<string, unknown> | null;
-      const type = tx.is_internal_transfer === true
-        ? `Internal Transfer (${tx.type})`
-        : tx.type;
-      return `- ${type} ${amount(tx.amount).toFixed(2)} JOD, wallet: ${wallet?.name ?? "Unknown"}, category: ${category?.name ?? "Uncategorized"}, date: ${tx.date}, description: ${tx.description ?? ""}`;
-    }).join("\n")
-    : "- No recent visible transactions found.";
-
   return `
-User name: ${profile.data?.full_name ?? "Financial Mind User"}
-Current wallet/account net worth: ${amount(profile.data?.total_net_worth).toFixed(2)} JOD
+User name: ${profile.data?.full_name ?? "FinMind User"}
+Current wallet/account net worth: ${amount(dashboardData.total_balance).toFixed(2)} JOD
+Profile net worth field: ${amount(profile.data?.total_net_worth).toFixed(2)} JOD
 Current month period: ${monthStart.toISOString().slice(0, 10)} to ${monthEnd.toISOString().slice(0, 10)}
-Monthly income, excluding internal transfers: ${totalIncome.toFixed(2)} JOD
-Monthly expenses, excluding internal transfers: ${totalExpenses.toFixed(2)} JOD
+Monthly income, excluding internal transfers: ${amount(summary.total_income).toFixed(2)} JOD
+Monthly expenses, excluding internal transfers: ${amount(summary.total_expenses).toFixed(2)} JOD
 
 Wallets:
 ${walletText}
 
 Income by category this month:
-${formatCategoryRows(incomeCategories, totalIncome)}
+${formatCategoryRows(asArray(analyticsData.income_categories))}
 
 Expenses by category this month:
-${formatCategoryRows(expenseCategories, totalExpenses)}
+${formatCategoryRows(asArray(analyticsData.expense_categories))}
 
-Debt tracking:
-- Money owed to user: ${debtorTotal.toFixed(2)} JOD
-- Money user owes: ${creditorTotal.toFixed(2)} JOD
-- Net debt position: ${(debtorTotal - creditorTotal).toFixed(2)} JOD
+Debt summary:
+- Money owed to user: ${amount(debts.total_debtor_amount).toFixed(2)} JOD
+- Money user owes: ${amount(debts.total_creditor_amount).toFixed(2)} JOD
+- Net debt position: ${amount(debts.net_debt).toFixed(2)} JOD
 - Debts are separate from wallet/account balances and are not transactions.
 
-Active debt list:
-${debtList}
-
-Recent transactions:
-${recentTransactions}
+Recent visible transactions:
+${formatRecentTransactions(asArray(dashboardData.recent_transactions))}
 `;
 }
 
@@ -167,8 +160,7 @@ async function callGemini(prompt: string) {
   );
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`AI provider failed: ${response.status} ${text}`);
+    throw new Error(`AI provider failed: ${response.status}`);
   }
 
   const data = await response.json();
@@ -183,32 +175,44 @@ serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405);
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const authHeader = req.headers.get("Authorization") ?? "";
 
-    const authedClient = createClient(supabaseUrl, anonKey, {
+    if (!supabaseUrl || !anonKey) {
+      return jsonResponse({ error: "server_not_configured" }, 500);
+    }
+
+    const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-    const { data: authData, error: authError } = await authedClient.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData.user) {
       return jsonResponse({ error: "not_authenticated" }, 401);
+    }
+
+    if (!checkRateLimit(authData.user.id)) {
+      return jsonResponse(
+        {
+          error: "rate_limited",
+          response: "Too many AI requests. Please wait a moment and try again.",
+        },
+        429,
+      );
     }
 
     const payload = await req.json();
     const message = String(payload.message ?? "").trim();
     if (!message) return jsonResponse({ error: "empty_message" }, 400);
 
-    const financialContext = await buildFinancialContext(adminClient, authData.user.id);
+    const financialContext = await buildFinancialContext(supabase);
     const prompt = `
 You are FinMind AI, a personal finance assistant inside a finance tracking app.
 
 Respond in the same language as the user. If the user writes Arabic, answer in clear Arabic.
 
-Use only the user's real financial data below:
+Use only the user's summarized financial data below:
 ${financialContext}
 
 User question:
@@ -235,7 +239,8 @@ Answer style:
     const answer = await callGemini(prompt);
     return jsonResponse({ response: answer });
   } catch (error) {
-    console.error("financial_ai_assistant failed", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("financial_ai_assistant failed", message);
     return jsonResponse(
       {
         error: "ai_failed",
