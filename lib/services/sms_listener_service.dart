@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telephony/telephony.dart';
 
 import '../core/supabase_config.dart';
+import '../models/wallet_model.dart';
 import 'ai_service.dart';
 import 'notification_service.dart';
 import 'sms_hash_service.dart';
@@ -53,6 +54,7 @@ class SMSListenerService with WidgetsBindingObserver {
 
   final Set<String> _processedInMemory = {};
   final Set<String> _ignoredInMemory = {};
+  final Set<String> _processingHashes = {};
 
   bool _isStarted = false;
   bool _isSyncing = false;
@@ -254,6 +256,10 @@ class SMSListenerService with WidgetsBindingObserver {
     if (address == null || address.isEmpty) return false;
 
     debugPrint("[$_smsLogTag] Incoming SMS received");
+    debugPrint("[$_smsLogTag] Raw sender: $address");
+    debugPrint(
+      "[$_smsLogTag] Normalized sender: ${SmsHashService.normalizeSender(address)}",
+    );
 
     try {
       final wallets = await _supabaseService.getWallets().timeout(
@@ -264,41 +270,59 @@ class SMSListenerService with WidgetsBindingObserver {
             wallet.isActiveMonitoring == true &&
             wallet.smsSenderId != null &&
             wallet.smsSenderId!.trim().isNotEmpty;
-      });
+      }).toList();
 
+      debugPrint(
+        "[$_smsLogTag] Monitored senders: ${_formatMonitoredSenders(automatedWallets)}",
+      );
+
+      WalletModel? matchedWallet;
+      String? matchedSender;
       for (final wallet in automatedWallets) {
         final sender = wallet.smsSenderId!.trim();
-        if (!SmsHashService.senderMatches(sender, address)) {
-          debugPrint("[$_smsLogTag] Sender ignored: $address");
-          continue;
+        if (SmsHashService.senderMatches(sender, address)) {
+          matchedWallet = wallet;
+          matchedSender = sender;
+          break;
         }
-
-        debugPrint("[$_smsLogTag] Matched monitored sender: $sender");
-        _setStatus("Syncing");
-        final processed =
-            await _processSmsMessageForSender(
-              message: message,
-              sender: sender,
-              walletId: wallet.id,
-            ).timeout(
-              _singleSmsTimeout,
-              onTimeout: () {
-                debugPrint("[$_smsLogTag] Incoming SMS processing timed out.");
-                _lastNetworkErrorAt = DateTime.now();
-                _setStatus("Timed out");
-                return false;
-              },
-            );
-
-        if (_lastNetworkErrorAt != null) {
-          return false;
-        }
-
-        _lastNetworkErrorAt = null;
-        _setSyncResult(status: "Active", processedCount: processed ? 1 : 0);
-
-        return processed;
       }
+
+      if (matchedWallet == null || matchedSender == null) {
+        debugPrint(
+          "[$_smsLogTag] Matched wallet or ignored sender: ignored $address",
+        );
+        debugPrint("[$_smsLogTag] Sender ignored: $address");
+        return false;
+      }
+
+      debugPrint(
+        "[$_smsLogTag] Matched wallet or ignored sender: ${matchedWallet.name} ($matchedSender)",
+      );
+      debugPrint("[$_smsLogTag] Matched monitored sender: $matchedSender");
+      _setStatus("Syncing");
+      final processed =
+          await _processSmsMessageForSender(
+            message: message,
+            sender: matchedSender,
+            walletId: matchedWallet.id,
+          ).timeout(
+            _singleSmsTimeout,
+            onTimeout: () {
+              debugPrint("[$_smsLogTag] Incoming SMS processing timed out.");
+              _lastNetworkErrorAt = DateTime.now();
+              _setStatus("Timed out");
+              return false;
+            },
+          );
+
+      if (_lastNetworkErrorAt != null) {
+        return false;
+      }
+
+      _lastNetworkErrorAt = null;
+      _setSyncResult(status: "Active", processedCount: processed ? 1 : 0);
+
+      return processed;
     } catch (e, stackTrace) {
       final errorText = e.toString();
       if (errorText.contains("Failed host lookup") ||
@@ -342,6 +366,17 @@ class SMSListenerService with WidgetsBindingObserver {
       trimmed.toUpperCase(),
       noSpaces.toUpperCase(),
     }.where((value) => value.isNotEmpty).toList();
+  }
+
+  String _formatMonitoredSenders(List<WalletModel> wallets) {
+    if (wallets.isEmpty) return 'none';
+
+    return wallets
+        .map((wallet) {
+          final raw = wallet.smsSenderId?.trim() ?? '';
+          return '${wallet.name}:$raw=>${SmsHashService.normalizeSender(raw)}';
+        })
+        .join(', ');
   }
 
   bool get _canUseRemoteSmsProcessing {
@@ -422,7 +457,9 @@ class SMSListenerService with WidgetsBindingObserver {
       debugPrint(
         "[$_smsLogTag] Transaction created: ${result.transactionId ?? 'unknown'}",
       );
-      await _showProcessedSmsNotification(result);
+      if (result.status == 'created') {
+        await _showProcessedSmsNotification(result);
+      }
       return true;
     } catch (error, stackTrace) {
       _setErrorStatus("Error", error, stackTrace);
@@ -456,6 +493,9 @@ class SMSListenerService with WidgetsBindingObserver {
     required String walletId,
   }) async {
     final String? body = message.body?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final rawSender = message.address?.trim().isNotEmpty == true
+        ? message.address!.trim()
+        : sender;
 
     final int smsDate = message.date ?? 0;
 
@@ -464,37 +504,60 @@ class SMSListenerService with WidgetsBindingObserver {
     }
 
     final String localSmsKey = SmsHashService.stableSmsHash(
-      sender: sender,
-      smsDate: smsDate,
+      sender: rawSender,
       body: body,
+    );
+    debugPrint("[$_smsLogTag] Raw sender: $rawSender");
+    debugPrint(
+      "[$_smsLogTag] Normalized sender: ${SmsHashService.normalizeSender(rawSender)}",
     );
     debugPrint("[$_smsLogTag] SMS hash: $localSmsKey");
 
-    if (_processedInMemory.contains(localSmsKey) ||
-        _ignoredInMemory.contains(localSmsKey)) {
+    if (_processingHashes.contains(localSmsKey)) {
       lastDuplicateCount++;
       debugPrint("[$_smsLogTag] Duplicate skipped");
       return false;
     }
 
-    if (await _supabaseService.isSmsAlreadyProcessed(localSmsKey)) {
-      _processedInMemory.add(localSmsKey);
-      lastDuplicateCount++;
-      debugPrint("[$_smsLogTag] Duplicate skipped");
-      return false;
-    }
+    _processingHashes.add(localSmsKey);
+    try {
+      if (_processedInMemory.contains(localSmsKey) ||
+          _ignoredInMemory.contains(localSmsKey)) {
+        lastDuplicateCount++;
+        debugPrint("[$_smsLogTag] Duplicate skipped");
+        return false;
+      }
 
-    if (!_canUseRemoteSmsProcessing) {
-      return _processSmsLocally(
-        localSmsKey: localSmsKey,
-        sender: sender,
+      if (await _supabaseService.isSmsAlreadyProcessed(localSmsKey)) {
+        _processedInMemory.add(localSmsKey);
+        lastDuplicateCount++;
+        debugPrint("[$_smsLogTag] Duplicate skipped");
+        return false;
+      }
+
+      if (await _wasProcessedWithLegacyTimestampHash(
+        stableSmsKey: localSmsKey,
+        rawSender: rawSender,
+        monitoredSender: sender,
         body: body,
         smsDate: smsDate,
-        walletId: walletId,
-      );
-    }
+      )) {
+        _processedInMemory.add(localSmsKey);
+        lastDuplicateCount++;
+        debugPrint("[$_smsLogTag] Duplicate skipped");
+        return false;
+      }
 
-    try {
+      if (!_canUseRemoteSmsProcessing) {
+        return _processSmsLocally(
+          localSmsKey: localSmsKey,
+          sender: sender,
+          body: body,
+          smsDate: smsDate,
+          walletId: walletId,
+        );
+      }
+
       final receivedAt = smsDate > 0
           ? DateTime.fromMillisecondsSinceEpoch(smsDate)
           : DateTime.now();
@@ -533,7 +596,9 @@ class SMSListenerService with WidgetsBindingObserver {
       debugPrint(
         "[$_smsLogTag] Transaction created: ${result.transactionId ?? 'unknown'}",
       );
-      await _showProcessedSmsNotification(result);
+      if (result.status == 'created') {
+        await _showProcessedSmsNotification(result);
+      }
 
       return true;
     } catch (e, stackTrace) {
@@ -553,7 +618,41 @@ class SMSListenerService with WidgetsBindingObserver {
         smsDate: smsDate,
         walletId: walletId,
       );
+    } finally {
+      _processingHashes.remove(localSmsKey);
     }
+  }
+
+  Future<bool> _wasProcessedWithLegacyTimestampHash({
+    required String stableSmsKey,
+    required String rawSender,
+    required String monitoredSender,
+    required String body,
+    required int smsDate,
+  }) async {
+    if (smsDate <= 0) return false;
+
+    final legacyHashes = <String>{
+      SmsHashService.legacyTimestampedSmsHashForLookup(
+        sender: rawSender,
+        body: body,
+        smsDate: smsDate,
+      ),
+      SmsHashService.legacyTimestampedSmsHashForLookup(
+        sender: monitoredSender,
+        body: body,
+        smsDate: smsDate,
+      ),
+    }..remove(stableSmsKey);
+
+    for (final legacyHash in legacyHashes) {
+      if (await _supabaseService.isSmsAlreadyProcessed(legacyHash)) {
+        debugPrint("[$_smsLogTag] Duplicate skipped using legacy SMS hash.");
+        return true;
+      }
+    }
+
+    return false;
   }
 
   Future<List<SmsMessage>> _getMessagesForSender(String sender) async {
@@ -582,7 +681,6 @@ class SMSListenerService with WidgetsBindingObserver {
           final key = SmsHashService.stableSmsHash(
             sender: message.address ?? candidate,
             body: body,
-            smsDate: message.date ?? 0,
           );
           uniqueMessages[key] = message;
         }
@@ -635,6 +733,10 @@ class SMSListenerService with WidgetsBindingObserver {
             wallet.smsSenderId != null &&
             wallet.smsSenderId!.trim().isNotEmpty;
       }).toList();
+
+      debugPrint(
+        "[$_smsLogTag] Monitored senders: ${_formatMonitoredSenders(automatedWallets)}",
+      );
 
       for (final wallet in automatedWallets) {
         final String sender = wallet.smsSenderId!.trim();

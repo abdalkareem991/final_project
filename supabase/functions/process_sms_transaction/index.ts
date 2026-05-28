@@ -72,17 +72,10 @@ function localStableHash(body: string) {
   return hash;
 }
 
-function stableSmsHash(
-  senderId: string,
-  smsBody: string,
-  receivedAt: string,
-) {
-  const smsDate = Number.isFinite(Date.parse(receivedAt))
-    ? Date.parse(receivedAt)
-    : 0;
+function stableSmsHash(senderId: string, smsBody: string) {
   const normalizedSender = senderId.trim().replace(/\s+/g, "").toLowerCase();
   const normalizedBody = smsBody.toLowerCase().replace(/\s+/g, " ").trim();
-  return `${normalizedSender}_${smsDate}_${localStableHash(normalizedBody)}`;
+  return `${normalizedSender}_${localStableHash(normalizedBody)}`;
 }
 
 function firstNumber(text: string, patterns: RegExp[]) {
@@ -121,6 +114,9 @@ function extractBalance(text: string) {
 }
 
 function detectType(text: string): "Income" | "Expense" | null {
+  if (/transferred by cliq from account/i.test(text)) return "Expense";
+  if (/transferred by cliq to account/i.test(text)) return "Income";
+
   if (
     /(credited|credit|deposit|deposited|received|salary|refund|cashback|reversal|reversed|ايداع|وارد|استلام|استقبال)/i
       .test(text)
@@ -181,7 +177,10 @@ function extractParty(text: string) {
       continue;
     }
 
-    return value.length > 42 ? `${value.slice(0, 39).trim()}...` : value;
+    const cleaned = value.replace(/[.,]+$/g, "");
+    return cleaned.length > 42
+      ? `${cleaned.slice(0, 39).trim()}...`
+      : cleaned;
   }
 
   return null;
@@ -263,8 +262,7 @@ serve(async (req) => {
       return jsonResponse({ error: "invalid_sms_input" }, 400);
     }
 
-    const smsHash = providedSmsHash ||
-      stableSmsHash(senderId, smsBody, receivedAt);
+    const smsHash = providedSmsHash || stableSmsHash(senderId, smsBody);
     const parsed = parseSms(smsBody, receivedAt);
 
     const { data, error } = await supabase.rpc("process_sms_transaction_atomic", {

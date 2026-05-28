@@ -15,7 +15,14 @@ class SmsHashService {
     return saved.isNotEmpty && saved == incoming;
   }
 
-  static String stableSmsHash({
+  static String stableSmsHash({required String sender, required String body}) {
+    final normalizedSender = normalizeSender(sender);
+    final normalizedBody = normalizeBody(body);
+    return '${normalizedSender}_${_jenkinsHash(normalizedBody)}';
+  }
+
+  // Lookup only: recognizes hashes produced before timestamp-free hashes.
+  static String legacyTimestampedSmsHashForLookup({
     required String sender,
     required String body,
     required int smsDate,

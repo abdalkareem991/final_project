@@ -1246,13 +1246,20 @@ class SupabaseService {
       final String transferDescription =
           "تحويل من $fromWalletName إلى $toWalletName";
 
+      final String normalizedTransferDescription = transferDescription
+          .replaceFirst(
+            transferDescription,
+            "Transfer from $fromWalletName to $toWalletName",
+          );
+
       await client
           .from('transactions')
           .update({
+            'type': 'Transfer',
             'is_internal_transfer': true,
             'transfer_group_id': transferGroupId,
             'category_id': transferCategoryId,
-            'description': transferDescription,
+            'description': normalizedTransferDescription,
           })
           .inFilter('id', [newTransactionId, matchedId]);
 
@@ -1266,7 +1273,7 @@ class SupabaseService {
         debugPrint("Internal transfer notification error: $notificationError");
       }
 
-      debugPrint("Internal transfer detected: $transferDescription");
+      debugPrint("Internal transfer detected: $normalizedTransferDescription");
       debugPrint("Internal transfer detected and linked.");
     } catch (e) {
       debugPrint("Internal transfer detection error: $e");
@@ -1836,7 +1843,17 @@ class SupabaseService {
           .eq('is_active_monitoring', true);
 
       debugPrint("Matching automated wallet by SMS sender.");
+      debugPrint("[$_smsLogTag] Raw sender: $senderId");
+      debugPrint(
+        "[$_smsLogTag] Normalized sender: ${SmsHashService.normalizeSender(senderId)}",
+      );
       final wallets = List<Map<String, dynamic>>.from(response as List);
+      debugPrint(
+        "[$_smsLogTag] Monitored senders: ${wallets.map((wallet) {
+          final raw = wallet['sms_sender_id']?.toString() ?? '';
+          return '$raw=>${SmsHashService.normalizeSender(raw)}';
+        }).join(', ')}",
+      );
       final matched = wallets.cast<Map<String, dynamic>?>().firstWhere((
         wallet,
       ) {
@@ -1846,6 +1863,9 @@ class SupabaseService {
       }, orElse: () => null);
 
       debugPrint("Automated wallet match found: ${matched != null}");
+      debugPrint(
+        "[$_smsLogTag] Matched wallet or ignored sender: ${matched == null ? 'ignored $senderId' : matched['name']}",
+      );
 
       return matched != null ? matched['id'] as String : null;
     } catch (e, stackTrace) {
@@ -1974,9 +1994,12 @@ class SupabaseService {
           .select('id')
           .eq('user_id', user.id)
           .eq('sms_hash', smsHash)
-          .maybeSingle();
+          .limit(1);
 
-      if (response != null) return true;
+      if ((response as List).isNotEmpty) {
+        debugPrint("[$_smsLogTag] Duplicate skipped using transaction hash.");
+        return true;
+      }
 
       try {
         final logged = await client
@@ -1984,10 +2007,11 @@ class SupabaseService {
             .select('id, status')
             .eq('user_id', user.id)
             .eq('sms_hash', smsHash)
-            .maybeSingle();
+            .limit(1);
 
-        if (logged != null) {
-          final status = logged['status']?.toString();
+        final logs = List<Map<String, dynamic>>.from(logged as List);
+        if (logs.isNotEmpty) {
+          final status = logs.first['status']?.toString();
           debugPrint(
             "[$_smsLogTag] Duplicate skipped using log status: ${status ?? 'unknown'}.",
           );

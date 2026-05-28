@@ -19,7 +19,7 @@ void main() {
       expect(parsed!['type'], 'Income');
       expect(parsed['amount'], 124.072);
       expect(parsed['available_balance'], 129.072);
-      expect(parsed['sms_kind'], 'Reflect Credit');
+      expect(parsed['sms_kind'], 'Bank Transaction');
     });
 
     test('parses Reflect Arabic outgoing transfer messages', () {
@@ -115,6 +115,32 @@ void main() {
       expect(parsed['counterparty'], '00962792386665');
       expect(parsed['is_cliq'], true);
       expect(parsed['sms_kind'], 'CliQ Transfer');
+    });
+
+    test('parses exact Reflect and HousingBank transfer pair messages', () {
+      final reflect = service.parseBankSmsLocally(
+        'JOD 2.000 has been credited to your Reflect account on 28/05 17:12. Available balance 5.793 JOD. More details under "Transactions"',
+        sender: 'Reflect',
+      );
+
+      final housing = service.parseBankSmsLocally(
+        'JOD 2.000 has been transferred by CliQ from account XXXXX6800110001 on 28/05/2026 05:12 PM to AB-DARABIC. Available balance JOD 18.136',
+        sender: 'HousingBank',
+      );
+
+      expect(reflect, isNotNull);
+      expect(reflect!['amount'], 2.0);
+      expect(reflect['type'], 'Income');
+      expect(reflect['sms_kind'], 'Bank Transaction');
+      expect(reflect['available_balance'], 5.793);
+
+      expect(housing, isNotNull);
+      expect(housing!['amount'], 2.0);
+      expect(housing['type'], 'Expense');
+      expect(housing['sms_kind'], 'CliQ Transfer');
+      expect(housing['is_cliq'], true);
+      expect(housing['available_balance'], 18.136);
+      expect(housing['counterparty'], 'ab-darabic');
     });
 
     test('parses ATM deposits and withdrawals', () {

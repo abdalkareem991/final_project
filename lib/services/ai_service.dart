@@ -299,7 +299,7 @@ class AIService {
     }
 
     if (text.contains('credited to your reflect account')) {
-      return 'Reflect Credit';
+      return 'Bank Transaction';
     }
 
     return 'Reflect Transaction';
@@ -394,17 +394,17 @@ class AIService {
         caseSensitive: false,
       ).firstMatch(text);
 
-      return match?.group(1)?.trim();
+      return _cleanCounterparty(match?.group(1));
     }
 
     if (text.contains('transferred by cliq from account') &&
         type == 'Expense') {
       final match = RegExp(
-        r'\sto\s+([a-z0-9]+)(?:\.| available|$)',
+        r'\sto\s+([a-z0-9._-]+)(?:\.| available|$)',
         caseSensitive: false,
       ).firstMatch(text);
 
-      return match?.group(1)?.trim();
+      return _cleanCounterparty(match?.group(1));
     }
 
     return null;
@@ -439,6 +439,11 @@ class AIService {
     }
 
     return null;
+  }
+
+  String? _cleanCounterparty(String? value) {
+    final cleaned = value?.trim().replaceAll(RegExp(r'[.,]+$'), '');
+    return cleaned == null || cleaned.isEmpty ? null : cleaned;
   }
 
   // Extracts Reflect-specific counterparty marker.
