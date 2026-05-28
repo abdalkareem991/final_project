@@ -175,6 +175,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
 
   // UI-only preferences for the current dashboard session.
   bool _showHidden = false;
+  bool _isSmsSyncButtonLoading = false;
 
   // Currency preference is applied at render time without changing stored data.
   String _currencySymbol = "JD";
@@ -365,66 +366,106 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
   // ---------------------------------------------------------------------------
 
   Widget _buildSmsSyncStatusLine() {
-    final lastSync = SMSListenerService.lastSyncTime;
-    final status = SMSListenerService.lastSyncStatus;
-    final count = SMSListenerService.lastProcessedCount;
+    return ValueListenableBuilder<int>(
+      valueListenable: SMSListenerService.statusVersion,
+      builder: (_, __, ____) {
+        final lastSync = SMSListenerService.lastSyncTime;
+        final status = SMSListenerService.lastSyncStatus;
+        final processedCount = SMSListenerService.lastProcessedCount;
+        final duplicateCount = SMSListenerService.lastDuplicateCount;
+        final ignoredCount = SMSListenerService.lastIgnoredCount;
+        final errorCount = SMSListenerService.lastErrorCount;
 
-    final String lastSyncText = lastSync == null
-        ? "Not synced"
-        : _formatTimeOnly12(lastSync.toIso8601String());
+        final String lastSyncText = lastSync == null
+            ? "Not synced"
+            : _formatTimeOnly12(lastSync.toIso8601String());
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: () async {
-        SMSListenerService().markManualSyncStarted();
+        final String summary = [
+          if (processedCount > 0) "$processedCount new",
+          if (duplicateCount > 0) "$duplicateCount dup",
+          if (ignoredCount > 0) "$ignoredCount ignored",
+          if (errorCount > 0) "$errorCount err",
+        ].join(' • ');
 
-        await SMSListenerService()
-            .syncNow(force: true)
-            .timeout(
-              const Duration(seconds: 20),
-              onTimeout: SMSListenerService().markManualSyncTimedOut,
-            );
-
-        if (mounted) {
-          setState(() {});
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(top: 8, bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: _cardColor,
+        return InkWell(
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _accentGreen.withOpacity(0.16)),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              status == "Syncing" ? Icons.sync : Icons.sync_outlined,
-              color: _accentGreen,
-              size: 18,
+          onTap: _isSmsSyncButtonLoading
+              ? null
+              : () async {
+                  setState(() => _isSmsSyncButtonLoading = true);
+                  SMSListenerService.instance.markManualSyncStarted();
+
+                  final result = await SMSListenerService.instance
+                      .syncNow(reason: 'manual', force: true)
+                      .timeout(
+                        const Duration(seconds: 20),
+                        onTimeout:
+                            SMSListenerService.instance.markManualSyncTimedOut,
+                      );
+
+                  if (!mounted) return;
+                  await _loadDashboardSummary(forceRefresh: true);
+                  if (!mounted) return;
+                  setState(() => _isSmsSyncButtonLoading = false);
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        context.t(
+                          "SMS Sync: ${result.processedCount} processed, ${result.duplicateCount} duplicates, ${result.ignoredCount} ignored, ${result.errorCount} errors",
+                          "مزامنة الرسائل: ${result.processedCount} جديد، ${result.duplicateCount} مكرر، ${result.ignoredCount} متجاهل، ${result.errorCount} أخطاء",
+                        ),
+                      ),
+                      backgroundColor: result.errorCount > 0
+                          ? _expenseRed
+                          : _accentGreen,
+                    ),
+                  );
+                },
+          child: Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 8, bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: _cardColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _accentGreen.withOpacity(0.16)),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                context.t(
-                  "SMS Sync: $status • $lastSyncText • $count new",
-                  "مزامنة الرسائل: $status • $lastSyncText • $count جديد",
+            child: Row(
+              children: [
+                if (_isSmsSyncButtonLoading || status == "Syncing")
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      color: _accentGreen,
+                      strokeWidth: 2,
+                    ),
+                  )
+                else
+                  Icon(Icons.sync_outlined, color: _accentGreen, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    context.t(
+                      "SMS Sync: $status • $lastSyncText${summary.isEmpty ? '' : ' • $summary'}",
+                      "مزامنة الرسائل: $status • $lastSyncText${summary.isEmpty ? '' : ' • $summary'}",
+                    ),
+                    style: TextStyle(
+                      color: _secondaryTextColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                style: TextStyle(
-                  color: _secondaryTextColor,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+                Icon(Icons.touch_app, color: _mutedTextColor, size: 15),
+              ],
             ),
-            Icon(Icons.touch_app, color: _mutedTextColor, size: 15),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

@@ -16,6 +16,145 @@ import 'supabase_service.dart';
 
 const String _smsLogTag = 'FinMindSMS';
 
+class SmsSyncStatus {
+  final bool isRunning;
+  final bool listenerRunning;
+  final bool autoSyncEnabled;
+  final DateTime? lastStartedAt;
+  final DateTime? lastFinishedAt;
+  final String status;
+  final int processedCount;
+  final int duplicateCount;
+  final int ignoredCount;
+  final int errorCount;
+  final String? lastError;
+
+  const SmsSyncStatus({
+    required this.isRunning,
+    required this.listenerRunning,
+    required this.autoSyncEnabled,
+    required this.lastStartedAt,
+    required this.lastFinishedAt,
+    required this.status,
+    required this.processedCount,
+    required this.duplicateCount,
+    required this.ignoredCount,
+    required this.errorCount,
+    required this.lastError,
+  });
+
+  factory SmsSyncStatus.initial() {
+    return const SmsSyncStatus(
+      isRunning: false,
+      listenerRunning: false,
+      autoSyncEnabled: false,
+      lastStartedAt: null,
+      lastFinishedAt: null,
+      status: 'Not started',
+      processedCount: 0,
+      duplicateCount: 0,
+      ignoredCount: 0,
+      errorCount: 0,
+      lastError: null,
+    );
+  }
+
+  SmsSyncStatus copyWith({
+    bool? isRunning,
+    bool? listenerRunning,
+    bool? autoSyncEnabled,
+    DateTime? lastStartedAt,
+    DateTime? lastFinishedAt,
+    String? status,
+    int? processedCount,
+    int? duplicateCount,
+    int? ignoredCount,
+    int? errorCount,
+    String? lastError,
+  }) {
+    return SmsSyncStatus(
+      isRunning: isRunning ?? this.isRunning,
+      listenerRunning: listenerRunning ?? this.listenerRunning,
+      autoSyncEnabled: autoSyncEnabled ?? this.autoSyncEnabled,
+      lastStartedAt: lastStartedAt ?? this.lastStartedAt,
+      lastFinishedAt: lastFinishedAt ?? this.lastFinishedAt,
+      status: status ?? this.status,
+      processedCount: processedCount ?? this.processedCount,
+      duplicateCount: duplicateCount ?? this.duplicateCount,
+      ignoredCount: ignoredCount ?? this.ignoredCount,
+      errorCount: errorCount ?? this.errorCount,
+      lastError: lastError ?? this.lastError,
+    );
+  }
+}
+
+class SmsSyncResult {
+  final bool success;
+  final bool skipped;
+  final String reason;
+  final int processedCount;
+  final int duplicateCount;
+  final int ignoredCount;
+  final int errorCount;
+  final String status;
+
+  const SmsSyncResult({
+    required this.success,
+    required this.skipped,
+    required this.reason,
+    required this.processedCount,
+    required this.duplicateCount,
+    required this.ignoredCount,
+    required this.errorCount,
+    required this.status,
+  });
+
+  factory SmsSyncResult.skippedAlreadyRunning() {
+    return const SmsSyncResult(
+      success: false,
+      skipped: true,
+      reason: 'already_running',
+      processedCount: 0,
+      duplicateCount: 0,
+      ignoredCount: 0,
+      errorCount: 0,
+      status: 'Skipped - already running',
+    );
+  }
+
+  factory SmsSyncResult.skippedTooSoon() {
+    return const SmsSyncResult(
+      success: false,
+      skipped: true,
+      reason: 'too_soon',
+      processedCount: 0,
+      duplicateCount: 0,
+      ignoredCount: 0,
+      errorCount: 0,
+      status: 'Skipped - too soon',
+    );
+  }
+
+  factory SmsSyncResult.success({
+    required int processedCount,
+    required int duplicateCount,
+    required int ignoredCount,
+    required int errorCount,
+    required String status,
+  }) {
+    return SmsSyncResult(
+      success: true,
+      skipped: false,
+      reason: 'success',
+      processedCount: processedCount,
+      duplicateCount: duplicateCount,
+      ignoredCount: ignoredCount,
+      errorCount: errorCount,
+      status: status,
+    );
+  }
+}
+
 @pragma('vm:entry-point')
 Future<void> finmindBackgroundSmsHandler(SmsMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +180,7 @@ Future<void> finmindBackgroundSmsHandler(SmsMessage message) async {
 
 class SMSListenerService with WidgetsBindingObserver {
   static final SMSListenerService _instance = SMSListenerService._internal();
+  static SMSListenerService get instance => _instance;
 
   factory SMSListenerService() => _instance;
 
@@ -64,14 +204,24 @@ class SMSListenerService with WidgetsBindingObserver {
   DateTime? _remoteSmsUnavailableUntil;
   bool _lifecycleObserverRegistered = false;
 
-  static DateTime? lastSyncTime;
-  static int lastProcessedCount = 0;
-  static int lastDuplicateCount = 0;
-  static String? lastErrorMessage;
-  static String lastSyncStatus = "Not started";
+  static SmsSyncStatus currentStatus = SmsSyncStatus.initial();
   static final ValueNotifier<int> statusVersion = ValueNotifier<int>(0);
 
-  static const Duration _syncInterval = Duration(seconds: 20);
+  static DateTime? get lastSyncTime => currentStatus.lastFinishedAt;
+  static int get lastProcessedCount => currentStatus.processedCount;
+  static int get lastDuplicateCount => currentStatus.duplicateCount;
+  static int get lastIgnoredCount => currentStatus.ignoredCount;
+  static int get lastErrorCount => currentStatus.errorCount;
+  static String? get lastErrorMessage => currentStatus.lastError;
+  static String get lastSyncStatus => currentStatus.status;
+  static bool get listenerRunning => currentStatus.listenerRunning;
+  static bool get autoSyncEnabled => currentStatus.autoSyncEnabled;
+
+  // Android reality: this 30-second timer is reliable while the Flutter process
+  // is alive/foreground. If Android kills or heavily backgrounds the app, timer
+  // ticks can stop; RECEIVE_SMS broadcast handling remains the best-effort path
+  // for incoming messages unless a foreground service/WorkManager is added.
+  static const Duration _syncInterval = Duration(seconds: 30);
   static const Duration _minSyncGap = Duration(seconds: 10);
   static const Duration _networkCooldown = Duration(seconds: 15);
   static const Duration _remoteSmsCooldown = Duration(minutes: 3);
@@ -81,7 +231,7 @@ class SMSListenerService with WidgetsBindingObserver {
   bool get isRunning => _isStarted && _smsSyncTimer != null;
 
   void _setStatus(String status) {
-    lastSyncStatus = status;
+    currentStatus = currentStatus.copyWith(status: status);
     statusVersion.value++;
     unawaited(_persistSyncStatus());
   }
@@ -90,21 +240,30 @@ class SMSListenerService with WidgetsBindingObserver {
     required String status,
     required int processedCount,
     int duplicateCount = 0,
+    int ignoredCount = 0,
+    int errorCount = 0,
     DateTime? syncTime,
   }) {
-    lastSyncStatus = status;
-    lastProcessedCount = processedCount;
-    lastDuplicateCount = duplicateCount;
-    lastErrorMessage = null;
-    lastSyncTime = syncTime ?? DateTime.now();
+    currentStatus = currentStatus.copyWith(
+      status: status,
+      processedCount: processedCount,
+      duplicateCount: duplicateCount,
+      ignoredCount: ignoredCount,
+      errorCount: errorCount,
+      lastError: null,
+      lastFinishedAt: syncTime ?? DateTime.now(),
+    );
     statusVersion.value++;
     unawaited(_persistSyncStatus());
   }
 
   void _setErrorStatus(String status, Object error, [StackTrace? stackTrace]) {
-    lastSyncStatus = status;
-    lastErrorMessage = error.toString();
-    lastSyncTime = DateTime.now();
+    currentStatus = currentStatus.copyWith(
+      status: status,
+      lastError: error.toString(),
+      errorCount: currentStatus.errorCount + 1,
+      lastFinishedAt: DateTime.now(),
+    );
     statusVersion.value++;
     debugPrint("[$_smsLogTag] Error with full exception: $error");
     if (stackTrace != null) {
@@ -113,20 +272,57 @@ class SMSListenerService with WidgetsBindingObserver {
     unawaited(_persistSyncStatus());
   }
 
+  void _incrementDuplicateCount() {
+    currentStatus = currentStatus.copyWith(
+      duplicateCount: currentStatus.duplicateCount + 1,
+    );
+    statusVersion.value++;
+    unawaited(_persistSyncStatus());
+  }
+
+  void _incrementIgnoredCount() {
+    currentStatus = currentStatus.copyWith(
+      ignoredCount: currentStatus.ignoredCount + 1,
+    );
+    statusVersion.value++;
+    unawaited(_persistSyncStatus());
+  }
+
   Future<void> _persistSyncStatus() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('sms_sync_status', lastSyncStatus);
-      await prefs.setInt('sms_sync_processed_count', lastProcessedCount);
-      await prefs.setInt('sms_sync_duplicate_count', lastDuplicateCount);
-      await prefs.setBool('sms_listener_running', isRunning);
-      if (lastSyncTime != null) {
+      await prefs.setString('sms_sync_status', currentStatus.status);
+      await prefs.setInt(
+        'sms_sync_processed_count',
+        currentStatus.processedCount,
+      );
+      await prefs.setInt(
+        'sms_sync_duplicate_count',
+        currentStatus.duplicateCount,
+      );
+      await prefs.setInt('sms_sync_ignored_count', currentStatus.ignoredCount);
+      await prefs.setInt('sms_sync_error_count', currentStatus.errorCount);
+      await prefs.setBool(
+        'sms_listener_running',
+        currentStatus.listenerRunning,
+      );
+      await prefs.setBool(
+        'sms_auto_sync_enabled',
+        currentStatus.autoSyncEnabled,
+      );
+      if (currentStatus.lastStartedAt != null) {
         await prefs.setString(
-          'sms_sync_last_scan_time',
-          lastSyncTime!.toIso8601String(),
+          'sms_sync_last_started_at',
+          currentStatus.lastStartedAt!.toIso8601String(),
         );
       }
-      final error = lastErrorMessage;
+      if (currentStatus.lastFinishedAt != null) {
+        await prefs.setString(
+          'sms_sync_last_scan_time',
+          currentStatus.lastFinishedAt!.toIso8601String(),
+        );
+      }
+      final error = currentStatus.lastError;
       if (error == null || error.isEmpty) {
         await prefs.remove('sms_sync_last_error');
       } else {
@@ -137,10 +333,28 @@ class SMSListenerService with WidgetsBindingObserver {
     }
   }
 
-  void markManualSyncStarted() => _setStatus("Syncing");
+  void markManualSyncStarted() {
+    currentStatus = currentStatus.copyWith(
+      lastStartedAt: DateTime.now(),
+      status: "Syncing",
+      isRunning: true,
+    );
+    _setStatus("Syncing");
+  }
 
-  void markManualSyncTimedOut() =>
-      _setSyncResult(status: "Timed out", processedCount: 0);
+  SmsSyncResult markManualSyncTimedOut() {
+    _setSyncResult(status: "Timed out", processedCount: 0, errorCount: 1);
+    return const SmsSyncResult(
+      success: false,
+      skipped: false,
+      reason: 'timeout',
+      processedCount: 0,
+      duplicateCount: 0,
+      ignoredCount: 0,
+      errorCount: 1,
+      status: 'Timed out',
+    );
+  }
 
   bool _isTransientNetworkError(Object error) {
     final text = error.toString();
@@ -172,6 +386,11 @@ class SMSListenerService with WidgetsBindingObserver {
     }
 
     _isStarted = true;
+    currentStatus = currentStatus.copyWith(
+      listenerRunning: true,
+      autoSyncEnabled: true,
+      lastStartedAt: DateTime.now(),
+    );
     _setStatus("Starting");
 
     debugPrint("[$_smsLogTag] Checking SMS permission");
@@ -339,19 +558,43 @@ class SMSListenerService with WidgetsBindingObserver {
     return false;
   }
 
-  Future<void> syncNow({bool force = false}) async {
+  Future<SmsSyncResult> syncNow({
+    String reason = 'manual',
+    bool force = false,
+  }) async {
     final now = DateTime.now();
+
+    if (_isSyncing) {
+      debugPrint("SMS sync skipped: previous sync still running.");
+      return SmsSyncResult.skippedAlreadyRunning();
+    }
 
     if (!force && _lastSyncAttemptAt != null) {
       final diff = now.difference(_lastSyncAttemptAt!);
       if (diff < _minSyncGap) {
         debugPrint("SMS sync skipped: too soon.");
-        return;
+        return SmsSyncResult.skippedTooSoon();
       }
     }
 
     _lastSyncAttemptAt = now;
-    await _syncLatestBankSms();
+    currentStatus = currentStatus.copyWith(
+      lastStartedAt: now,
+      status: 'Syncing',
+    );
+    _setStatus('Syncing');
+
+    if (reason == 'manual') {
+      debugPrint("[$_smsLogTag] Manual sync started");
+    }
+
+    final result = await _syncLatestBankSms(reason: reason);
+    if (reason == 'manual') {
+      debugPrint(
+        "[$_smsLogTag] Manual sync finished. Processed: ${result.processedCount}, duplicates: ${result.duplicateCount}, ignored: ${result.ignoredCount}, errors: ${result.errorCount}",
+      );
+    }
+    return result;
   }
 
   List<String> _senderCandidates(String sender) {
@@ -394,7 +637,7 @@ class SMSListenerService with WidgetsBindingObserver {
     try {
       if (await _supabaseService.isSmsAlreadyProcessed(localSmsKey)) {
         _processedInMemory.add(localSmsKey);
-        lastDuplicateCount++;
+        _incrementDuplicateCount();
         debugPrint("[$_smsLogTag] Duplicate skipped");
         return false;
       }
@@ -421,6 +664,7 @@ class SMSListenerService with WidgetsBindingObserver {
           _processedInMemory.add(localSmsKey);
         } else {
           _ignoredInMemory.add(localSmsKey);
+          _incrementIgnoredCount();
         }
         debugPrint(
           "[$_smsLogTag] Local parser failed; atomic RPC status: ${result.status}",
@@ -449,6 +693,7 @@ class SMSListenerService with WidgetsBindingObserver {
 
       if (!result.processed) {
         _ignoredInMemory.add(localSmsKey);
+        _incrementIgnoredCount();
         debugPrint("[$_smsLogTag] Atomic RPC status: ${result.status}");
         return false;
       }
@@ -504,33 +749,36 @@ class SMSListenerService with WidgetsBindingObserver {
     }
 
     final String localSmsKey = SmsHashService.stableSmsHash(
-      sender: rawSender,
+      sender: sender,
       body: body,
     );
     debugPrint("[$_smsLogTag] Raw sender: $rawSender");
+    debugPrint("[$_smsLogTag] Monitored sender: $sender");
     debugPrint(
       "[$_smsLogTag] Normalized sender: ${SmsHashService.normalizeSender(rawSender)}",
+    );
+    debugPrint(
+      "[$_smsLogTag] Normalized monitored sender: ${SmsHashService.normalizeSender(sender)}",
     );
     debugPrint("[$_smsLogTag] SMS hash: $localSmsKey");
 
     if (_processingHashes.contains(localSmsKey)) {
-      lastDuplicateCount++;
+      _incrementDuplicateCount();
       debugPrint("[$_smsLogTag] Duplicate skipped");
       return false;
     }
-
     _processingHashes.add(localSmsKey);
     try {
       if (_processedInMemory.contains(localSmsKey) ||
           _ignoredInMemory.contains(localSmsKey)) {
-        lastDuplicateCount++;
+        _incrementDuplicateCount();
         debugPrint("[$_smsLogTag] Duplicate skipped");
         return false;
       }
 
       if (await _supabaseService.isSmsAlreadyProcessed(localSmsKey)) {
         _processedInMemory.add(localSmsKey);
-        lastDuplicateCount++;
+        _incrementDuplicateCount();
         debugPrint("[$_smsLogTag] Duplicate skipped");
         return false;
       }
@@ -543,7 +791,7 @@ class SMSListenerService with WidgetsBindingObserver {
         smsDate: smsDate,
       )) {
         _processedInMemory.add(localSmsKey);
-        lastDuplicateCount++;
+        _incrementDuplicateCount();
         debugPrint("[$_smsLogTag] Duplicate skipped");
         return false;
       }
@@ -575,19 +823,21 @@ class SMSListenerService with WidgetsBindingObserver {
 
       if (result.isDuplicate) {
         _processedInMemory.add(localSmsKey);
-        lastDuplicateCount++;
+        _incrementDuplicateCount();
         debugPrint("[$_smsLogTag] Duplicate skipped");
         return false;
       }
 
       if (result.isSkipped) {
         _ignoredInMemory.add(localSmsKey);
+        _incrementIgnoredCount();
         debugPrint("[$_smsLogTag] SMS backend skipped: ${result.message}");
         return false;
       }
 
       if (!result.processed) {
         _ignoredInMemory.add(localSmsKey);
+        _incrementIgnoredCount();
         debugPrint("[$_smsLogTag] SMS backend status: ${result.status}");
         return false;
       }
@@ -678,10 +928,7 @@ class SMSListenerService with WidgetsBindingObserver {
         for (final message in messages) {
           final body = message.body;
           if (body == null || body.trim().isEmpty) continue;
-          final key = SmsHashService.stableSmsHash(
-            sender: message.address ?? candidate,
-            body: body,
-          );
+          final key = SmsHashService.stableSmsHash(sender: sender, body: body);
           uniqueMessages[key] = message;
         }
 
@@ -702,25 +949,28 @@ class SMSListenerService with WidgetsBindingObserver {
     return result;
   }
 
-  Future<void> _syncLatestBankSms() async {
+  Future<SmsSyncResult> _syncLatestBankSms({String reason = 'manual'}) async {
     if (_isSyncing) {
       debugPrint("SMS sync skipped: previous sync still running.");
-      return;
+      return SmsSyncResult.skippedAlreadyRunning();
     }
 
     if (_lastNetworkErrorAt != null) {
       final diff = DateTime.now().difference(_lastNetworkErrorAt!);
       if (diff < _networkCooldown) {
         _setStatus("Offline");
-        return;
+        return SmsSyncResult.skippedTooSoon();
       }
     }
 
     _isSyncing = true;
+    currentStatus = currentStatus.copyWith(isRunning: true, status: "Syncing");
     _setStatus("Syncing");
 
     int processedCount = 0;
-    final duplicateCountBefore = lastDuplicateCount;
+    int ignoredCount = currentStatus.ignoredCount;
+    int duplicateCountBefore = currentStatus.duplicateCount;
+    int errorCount = currentStatus.errorCount;
 
     try {
       final wallets = await _supabaseService.getWallets().timeout(
@@ -743,10 +993,7 @@ class SMSListenerService with WidgetsBindingObserver {
         debugPrint("[$_smsLogTag] Reading inbox for monitored sender: $sender");
 
         try {
-          final messages = await _getMessagesForSender(
-            sender,
-          ); // This method now handles multiple sender candidates and deduplicates messages
-
+          final messages = await _getMessagesForSender(sender);
           if (messages.isEmpty) continue;
 
           final recentMessages = messages.length > _recentMessagesLimit
@@ -768,10 +1015,20 @@ class SMSListenerService with WidgetsBindingObserver {
                     return false;
                   },
                 );
+
             if (_lastNetworkErrorAt != null) {
-              return;
+              return SmsSyncResult.success(
+                processedCount: processedCount,
+                duplicateCount:
+                    currentStatus.duplicateCount - duplicateCountBefore,
+                ignoredCount: currentStatus.ignoredCount - ignoredCount,
+                errorCount: currentStatus.errorCount - errorCount,
+                status: currentStatus.status,
+              );
             }
-            if (processed) processedCount++;
+            if (processed) {
+              processedCount++;
+            }
           }
         } catch (walletError, stackTrace) {
           _setErrorStatus("Error", walletError, stackTrace);
@@ -783,29 +1040,49 @@ class SMSListenerService with WidgetsBindingObserver {
       _setSyncResult(
         status: "Active",
         processedCount: processedCount,
-        duplicateCount: lastDuplicateCount - duplicateCountBefore,
+        duplicateCount: currentStatus.duplicateCount - duplicateCountBefore,
+        ignoredCount: currentStatus.ignoredCount - ignoredCount,
+        errorCount: currentStatus.errorCount - errorCount,
+      );
+
+      final result = SmsSyncResult.success(
+        processedCount: processedCount,
+        duplicateCount: currentStatus.duplicateCount - duplicateCountBefore,
+        ignoredCount: currentStatus.ignoredCount - ignoredCount,
+        errorCount: currentStatus.errorCount - errorCount,
+        status: currentStatus.status,
       );
 
       debugPrint(
-        "[$_smsLogTag] SMS sync finished. Processed: $processedCount, duplicates: ${lastDuplicateCount - duplicateCountBefore}",
+        "[$_smsLogTag] SMS sync finished. Processed: $processedCount, duplicates: ${result.duplicateCount}, ignored: ${result.ignoredCount}, errors: ${result.errorCount}",
       );
+      return result;
     } catch (e, stackTrace) {
       final errorText = e.toString();
-
       if (errorText.contains("Failed host lookup") ||
           errorText.contains("SocketException") ||
           errorText.contains("Connection timed out")) {
         _lastNetworkErrorAt = DateTime.now();
         _setStatus("Offline");
-
         _setErrorStatus("Offline", e, stackTrace);
       } else {
         _setStatus("Error");
-
         _setErrorStatus("Error", e, stackTrace);
       }
+      return SmsSyncResult.success(
+        processedCount: processedCount,
+        duplicateCount: currentStatus.duplicateCount - duplicateCountBefore,
+        ignoredCount: currentStatus.ignoredCount - ignoredCount,
+        errorCount: currentStatus.errorCount - errorCount,
+        status: currentStatus.status,
+      );
     } finally {
       _isSyncing = false;
+      currentStatus = currentStatus.copyWith(
+        isRunning: false,
+        lastFinishedAt: DateTime.now(),
+      );
+      statusVersion.value++;
     }
   }
 
@@ -816,6 +1093,13 @@ class SMSListenerService with WidgetsBindingObserver {
     _isStarted = false;
     _isSyncing = false;
     _lastSyncAttemptAt = null;
+    currentStatus = currentStatus.copyWith(
+      isRunning: false,
+      listenerRunning: false,
+      autoSyncEnabled: false,
+      status: 'Stopped',
+    );
+    _setStatus("Stopped");
     try {
       telephony.listenIncomingSms(
         listenInBackground: false,
@@ -829,7 +1113,6 @@ class SMSListenerService with WidgetsBindingObserver {
       WidgetsBinding.instance.removeObserver(this);
       _lifecycleObserverRegistered = false;
     }
-    _setStatus("Stopped");
     debugPrint("[$_smsLogTag] Listener stopped");
   }
 }

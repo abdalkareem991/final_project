@@ -2,7 +2,25 @@ class SmsHashService {
   const SmsHashService._();
 
   static String normalizeSender(String sender) {
-    return sender.trim().replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    var normalized = sender.trim().toLowerCase();
+    normalized = normalized.replaceAll(
+      RegExp(r'[\u200B-\u200F\uFEFF\u2060-\u2064]'),
+      '',
+    );
+    normalized = normalized.replaceAll(RegExp(r'\s+'), '');
+
+    if (normalized.startsWith('sms:')) {
+      normalized = normalized.substring(4);
+    }
+
+    if (normalized.startsWith('+')) {
+      normalized = normalized.substring(1);
+    } else if (normalized.startsWith('00')) {
+      normalized = normalized.substring(2);
+    }
+
+    normalized = normalized.replaceAll(RegExp(r'[^a-z0-9\u0600-\u06FF]'), '');
+    return normalized;
   }
 
   static String normalizeBody(String body) {
@@ -12,7 +30,10 @@ class SmsHashService {
   static bool senderMatches(String savedSender, String incomingSender) {
     final saved = normalizeSender(savedSender);
     final incoming = normalizeSender(incomingSender);
-    return saved.isNotEmpty && saved == incoming;
+    if (saved.isEmpty || incoming.isEmpty) return false;
+    return saved == incoming ||
+        incoming.contains(saved) ||
+        saved.contains(incoming);
   }
 
   static String stableSmsHash({required String sender, required String body}) {

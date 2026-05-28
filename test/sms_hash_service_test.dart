@@ -53,4 +53,15 @@ void main() {
   test('sender match normalizes case and spaces', () {
     expect(SmsHashService.senderMatches('Housing Bank', 'housingbank'), isTrue);
   });
+
+  test('sender match supports safe prefixes and suffixes', () {
+    expect(
+      SmsHashService.senderMatches('+HousingBank', 'housing bank'),
+      isTrue,
+    );
+    expect(
+      SmsHashService.senderMatches('sms:Orange Money', 'orangemoney'),
+      isTrue,
+    );
+  });
 }

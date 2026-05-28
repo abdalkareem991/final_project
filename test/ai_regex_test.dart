@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:final_project/services/ai_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -202,6 +204,43 @@ void main() {
 
       expect(scam, isNull);
       expect(serviceOutage, isNull);
+    });
+
+    test('validates sample fixture messages', () {
+      final fixtureFile = File('test/fixtures/bank_sms_samples.txt');
+      final lines = fixtureFile
+          .readAsLinesSync()
+          .where((line) => line.trim().isNotEmpty)
+          .toList();
+
+      expect(lines.length, greaterThan(8));
+
+      for (final line in lines) {
+        final sender =
+            line.contains('Reflect') || line.contains('Reflect account')
+            ? 'Reflect'
+            : line.contains('Orange Money') || line.contains('OrangeMoney')
+            ? 'OrangeMoney'
+            : 'HousingBank';
+
+        final parsed = service.parseBankSmsLocally(line, sender: sender);
+        if (line.toLowerCase().contains('otp') ||
+            line.toLowerCase().contains('رمز التحقق') ||
+            line.toLowerCase().contains('scam') ||
+            line.toLowerCase().contains('system updates')) {
+          expect(
+            parsed,
+            isNull,
+            reason: 'Expected fixture to be ignored: $line',
+          );
+        } else {
+          expect(
+            parsed,
+            isNotNull,
+            reason: 'Expected parser to recognize fixture SMS: $line',
+          );
+        }
+      }
     });
   });
 }
