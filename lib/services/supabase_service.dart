@@ -19,13 +19,50 @@ import '../models/wallet_model.dart';
 import 'analytics_service.dart';
 import 'debts_service.dart';
 import 'notification_service.dart';
+import 'sms_hash_service.dart';
 
 const String _smsLogTag = 'FinMindSMS';
+const String _dbLogTag = 'FinMindDB';
+const String _rpcLogTag = 'FinMindRPC';
+const String _dashboardLogTag = 'FinMindDashboard';
+
+void _logSupabaseIssue(
+  String tag,
+  String operation,
+  Object error, [
+  StackTrace? stackTrace,
+]) {
+  debugPrint('[$tag] $operation failed: $error');
+
+  final dynamic dynamicError = error;
+  try {
+    final code = dynamicError.code;
+    if (code != null) debugPrint('[$tag] code: $code');
+  } catch (_) {}
+  try {
+    final details = dynamicError.details;
+    if (details != null) debugPrint('[$tag] details: $details');
+  } catch (_) {}
+  try {
+    final hint = dynamicError.hint;
+    if (hint != null) debugPrint('[$tag] hint: $hint');
+  } catch (_) {}
+  try {
+    final message = dynamicError.message;
+    if (message != null) debugPrint('[$tag] message: $message');
+  } catch (_) {}
+
+  if (stackTrace != null) {
+    debugPrint('[$tag] stackTrace: $stackTrace');
+  }
+}
 
 class SmsProcessingResult {
+  final bool success;
   final String status;
   final bool processed;
   final bool isDuplicate;
+  final bool isSkipped;
   final bool isInternalTransfer;
   final String? transactionId;
   final String? walletId;
@@ -37,9 +74,11 @@ class SmsProcessingResult {
   final double? balanceAfter;
 
   const SmsProcessingResult({
+    this.success = false,
     required this.status,
     required this.processed,
     this.isDuplicate = false,
+    this.isSkipped = false,
     this.isInternalTransfer = false,
     this.transactionId,
     this.walletId,
@@ -53,10 +92,19 @@ class SmsProcessingResult {
 
   factory SmsProcessingResult.fromJson(Map<String, dynamic> json) {
     final status = json['status']?.toString() ?? 'unknown';
+    final success = json['success'] == true;
+    final isDuplicate = status == 'duplicate';
+    final isSkipped = status == 'skipped';
     return SmsProcessingResult(
+      success: success,
       status: status,
-      processed: status == 'processed' || json['processed'] == true,
-      isDuplicate: status == 'duplicate',
+      processed:
+          status == 'processed' ||
+          status == 'created' ||
+          json['processed'] == true ||
+          (success && status != 'duplicate' && status != 'skipped'),
+      isDuplicate: isDuplicate,
+      isSkipped: isSkipped,
       isInternalTransfer: json['is_internal_transfer'] == true,
       transactionId: json['transaction_id']?.toString(),
       walletId: json['wallet_id']?.toString(),
@@ -572,8 +620,13 @@ class SupabaseService {
       );
       await _cacheDashboardSummary(summary);
       return summary;
-    } catch (error) {
-      debugPrint('Dashboard summary API error: $error');
+    } catch (error, stackTrace) {
+      _logSupabaseIssue(
+        _dashboardLogTag,
+        'get_dashboard_summary RPC',
+        error,
+        stackTrace,
+      );
       if (!allowLocalFallback) rethrow;
       return _buildDashboardSummaryFallback(
         recentLimit: recentLimit,
@@ -680,8 +733,13 @@ class SupabaseService {
           'category_name': categoryName ?? 'Uncategorized',
         };
       }).toList();
-    } catch (error) {
-      debugPrint('Fetch transactions page error: $error');
+    } catch (error, stackTrace) {
+      _logSupabaseIssue(
+        _dbLogTag,
+        'fetch transactions page',
+        error,
+        stackTrace,
+      );
       return [];
     }
   }
@@ -1671,24 +1729,37 @@ class SupabaseService {
           break;
       }
 
-      final response = await client
+      var query = client
           .from('transactions')
-          .select('amount, type')
+          .select('amount, type, sms_kind')
           .eq('user_id', user.id)
-          .eq('is_internal_transfer', false)
           .gte('date', startDate.toUtc().toIso8601String());
+
+      query = query.or('is_hidden.is.null,is_hidden.eq.false');
+      query = query.or(
+        'is_internal_transfer.is.null,is_internal_transfer.eq.false',
+      );
+
+      final response = await query;
 
       Map<String, double> summary = {'Income': 0.0, 'Expense': 0.0};
 
       for (var item in response as List) {
-        String type = item['type'];
+        String type = item['type']?.toString() ?? '';
+        final smsKind = item['sms_kind']?.toString().toLowerCase().trim();
+        if (type.toLowerCase().trim() == 'transfer' ||
+            smsKind == 'possible transfer') {
+          continue;
+        }
+        if (type != 'Income' && type != 'Expense') continue;
         double amount = (item['amount'] as num).toDouble();
         if (summary.containsKey(type)) {
           summary[type] = (summary[type] ?? 0) + amount;
         }
       }
       return summary;
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _logSupabaseIssue(_dbLogTag, 'get filtered summary', error, stackTrace);
       return {'Income': 0.0, 'Expense': 0.0};
     }
   }
@@ -1761,17 +1832,24 @@ class SupabaseService {
           .from('wallets')
           .select('id, name, sms_sender_id, account_mode, is_active_monitoring')
           .eq('user_id', user.id)
-          .eq('sms_sender_id', senderId)
           .eq('account_mode', 'AUTOMATED')
-          .eq('is_active_monitoring', true)
-          .maybeSingle();
+          .eq('is_active_monitoring', true);
 
       debugPrint("Matching automated wallet by SMS sender.");
-      debugPrint("Automated wallet match found: ${response != null}");
+      final wallets = List<Map<String, dynamic>>.from(response as List);
+      final matched = wallets.cast<Map<String, dynamic>?>().firstWhere((
+        wallet,
+      ) {
+        final savedSender = wallet?['sms_sender_id']?.toString();
+        return savedSender != null &&
+            SmsHashService.senderMatches(savedSender, senderId);
+      }, orElse: () => null);
 
-      return response != null ? response['id'] as String : null;
-    } catch (e) {
-      debugPrint("Error finding wallet by sender: $e");
+      debugPrint("Automated wallet match found: ${matched != null}");
+
+      return matched != null ? matched['id'] as String : null;
+    } catch (e, stackTrace) {
+      _logSupabaseIssue(_dbLogTag, 'find wallet by SMS sender', e, stackTrace);
       return null;
     }
   }
@@ -1792,15 +1870,18 @@ class SupabaseService {
   }
 
   Future<SmsProcessingResult> processSmsTransactionRemotely({
+    required String smsHash,
     required String senderId,
     required String smsBody,
     required DateTime receivedAt,
     String? walletId,
   }) async {
     try {
+      debugPrint("[$_smsLogTag] Calling process_sms_transaction");
       final response = await client.functions.invoke(
         'process_sms_transaction',
         body: {
+          'sms_hash': smsHash,
           'sender_id': senderId,
           'sms_body': smsBody,
           'received_at': receivedAt.toUtc().toIso8601String(),
@@ -1817,8 +1898,13 @@ class SupabaseService {
         status: 'invalid_response',
         processed: false,
       );
-    } catch (error) {
-      debugPrint("[$_smsLogTag] Remote SMS processing failed: $error");
+    } catch (error, stackTrace) {
+      _logSupabaseIssue(
+        _rpcLogTag,
+        'process_sms_transaction edge function',
+        error,
+        stackTrace,
+      );
       rethrow;
     }
   }
@@ -1867,8 +1953,13 @@ class SupabaseService {
         status: 'invalid_response',
         processed: false,
       );
-    } catch (error) {
-      debugPrint("[$_smsLogTag] Atomic SMS RPC failed: $error");
+    } catch (error, stackTrace) {
+      _logSupabaseIssue(
+        _rpcLogTag,
+        'process_sms_transaction_atomic RPC',
+        error,
+        stackTrace,
+      );
       rethrow;
     }
   }
@@ -1897,24 +1988,22 @@ class SupabaseService {
 
         if (logged != null) {
           final status = logged['status']?.toString();
-          if (status == 'processed') {
-            debugPrint(
-              "[$_smsLogTag] SMS duplicate skipped using log status: $status.",
-            );
-            return true;
-          }
-
           debugPrint(
-            "[$_smsLogTag] SMS retrying previous log status: ${status ?? 'unknown'}.",
+            "[$_smsLogTag] Duplicate skipped using log status: ${status ?? 'unknown'}.",
           );
-          return false;
+          return true;
         }
-      } catch (logError) {
-        debugPrint("[$_smsLogTag] SMS log duplicate check unavailable.");
+      } catch (logError, stackTrace) {
+        _logSupabaseIssue(
+          _dbLogTag,
+          'SMS log duplicate check',
+          logError,
+          stackTrace,
+        );
       }
 
       return false;
-    } catch (e) {
+    } catch (e, stackTrace) {
       if (_isTransientNetworkError(e)) {
         debugPrint(
           "[$_smsLogTag] SMS duplicate check temporarily unavailable: $e",
@@ -1922,7 +2011,7 @@ class SupabaseService {
         rethrow;
       }
 
-      debugPrint("[$_smsLogTag] SMS duplicate check unavailable: $e");
+      _logSupabaseIssue(_dbLogTag, 'SMS duplicate check', e, stackTrace);
       return false;
     }
   }
@@ -1953,8 +2042,13 @@ class SupabaseService {
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'user_id,sms_hash');
       debugPrint("[$_smsLogTag] SMS processing status logged: $status.");
-    } catch (e) {
-      debugPrint("[$_smsLogTag] SMS processing log unavailable: $e");
+    } catch (e, stackTrace) {
+      _logSupabaseIssue(
+        _dbLogTag,
+        'record SMS processing status',
+        e,
+        stackTrace,
+      );
     }
   }
 

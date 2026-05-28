@@ -3,6 +3,36 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/analytics_model.dart';
 
+const String _analyticsLogTag = 'FinMindAnalytics';
+
+void _logAnalyticsIssue(
+  String operation,
+  Object error, [
+  StackTrace? stackTrace,
+]) {
+  debugPrint('[$_analyticsLogTag] $operation failed: $error');
+  final dynamic dynamicError = error;
+  try {
+    final code = dynamicError.code;
+    if (code != null) debugPrint('[$_analyticsLogTag] code: $code');
+  } catch (_) {}
+  try {
+    final details = dynamicError.details;
+    if (details != null) debugPrint('[$_analyticsLogTag] details: $details');
+  } catch (_) {}
+  try {
+    final hint = dynamicError.hint;
+    if (hint != null) debugPrint('[$_analyticsLogTag] hint: $hint');
+  } catch (_) {}
+  try {
+    final message = dynamicError.message;
+    if (message != null) debugPrint('[$_analyticsLogTag] message: $message');
+  } catch (_) {}
+  if (stackTrace != null) {
+    debugPrint('[$_analyticsLogTag] stackTrace: $stackTrace');
+  }
+}
+
 class AnalyticsService {
   final SupabaseClient _client = Supabase.instance.client;
 
@@ -93,8 +123,8 @@ class AnalyticsService {
         endDate: endDate,
         walletId: walletId,
       );
-    } catch (error) {
-      debugPrint('Analytics report error: $error');
+    } catch (error, stackTrace) {
+      _logAnalyticsIssue('analytics report', error, stackTrace);
       rethrow;
     }
   }
@@ -122,8 +152,8 @@ class AnalyticsService {
         endDate: endDate,
         walletId: walletId,
       );
-    } catch (error) {
-      debugPrint('Remote analytics unavailable, using local fallback: $error');
+    } catch (error, stackTrace) {
+      _logAnalyticsIssue('remote analytics RPC', error, stackTrace);
       return null;
     }
   }
@@ -191,7 +221,7 @@ class AnalyticsService {
     var query = _client
         .from('transactions')
         .select(
-          'amount, type, category_id, wallet_id, date, is_hidden, '
+          'amount, type, sms_kind, category_id, wallet_id, date, is_hidden, '
           'is_internal_transfer, categories(id, name, icon, color)',
         )
         .eq('user_id', userId);
@@ -203,6 +233,11 @@ class AnalyticsService {
     if (endDate != null) {
       query = query.lte('date', endDate.toUtc().toIso8601String());
     }
+
+    query = query.or('is_hidden.is.null,is_hidden.eq.false');
+    query = query.or(
+      'is_internal_transfer.is.null,is_internal_transfer.eq.false',
+    );
 
     if (walletId != null && walletId.isNotEmpty) {
       query = query.eq('wallet_id', walletId);
@@ -230,6 +265,12 @@ class AnalyticsService {
       }
 
       final rawType = transaction['type']?.toString() ?? '';
+      final smsKind = transaction['sms_kind']?.toString().toLowerCase().trim();
+      if (rawType.toLowerCase().trim() == 'transfer' ||
+          smsKind == 'possible transfer') {
+        continue;
+      }
+
       final type = _normalizeType(rawType);
       if (type != 'Income' && type != 'Expense') continue;
 

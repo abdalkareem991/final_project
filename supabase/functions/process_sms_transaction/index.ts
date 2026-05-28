@@ -20,12 +20,21 @@ type ParsedSms = {
 };
 
 type AtomicSmsResult = {
-  status: "processed" | "duplicate" | "failed_parse" | "failed_wallet" | "failed_transaction";
+  success?: boolean;
+  status:
+    | "created"
+    | "processed"
+    | "duplicate"
+    | "skipped"
+    | "error"
+    | "failed_parse"
+    | "failed_wallet"
+    | "failed_transaction";
   transaction_id?: string | null;
   wallet_id?: string | null;
   wallet_name?: string | null;
   amount?: number | null;
-  type?: "Income" | "Expense" | null;
+  type?: "Income" | "Expense" | "Transfer" | null;
   description?: string | null;
   balance_after?: number | null;
   is_internal_transfer?: boolean;
@@ -71,8 +80,9 @@ function stableSmsHash(
   const smsDate = Number.isFinite(Date.parse(receivedAt))
     ? Date.parse(receivedAt)
     : 0;
+  const normalizedSender = senderId.trim().replace(/\s+/g, "").toLowerCase();
   const normalizedBody = smsBody.toLowerCase().replace(/\s+/g, " ").trim();
-  return `${senderId.trim().toLowerCase()}_${smsDate}_${localStableHash(normalizedBody)}`;
+  return `${normalizedSender}_${smsDate}_${localStableHash(normalizedBody)}`;
 }
 
 function firstNumber(text: string, patterns: RegExp[]) {
@@ -227,6 +237,10 @@ serve(async (req) => {
       return jsonResponse({ error: "server_not_configured" }, 500);
     }
 
+    if (!authHeader.toLowerCase().startsWith("bearer ")) {
+      return jsonResponse({ error: "missing_authorization" }, 401);
+    }
+
     const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -237,6 +251,7 @@ serve(async (req) => {
     }
 
     const payload = await req.json();
+    const providedSmsHash = String(payload.sms_hash ?? "").trim();
     const senderId = String(payload.sender_id ?? "").trim();
     const smsBody = String(payload.sms_body ?? "");
     const walletId = payload.wallet_id ? String(payload.wallet_id) : null;
@@ -248,7 +263,8 @@ serve(async (req) => {
       return jsonResponse({ error: "invalid_sms_input" }, 400);
     }
 
-    const smsHash = stableSmsHash(senderId, smsBody, receivedAt);
+    const smsHash = providedSmsHash ||
+      stableSmsHash(senderId, smsBody, receivedAt);
     const parsed = parseSms(smsBody, receivedAt);
 
     const { data, error } = await supabase.rpc("process_sms_transaction_atomic", {
@@ -268,13 +284,22 @@ serve(async (req) => {
     });
 
     if (error) {
-      console.error("process_sms_transaction RPC failed", error.message);
+      console.error("process_sms_transaction RPC failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
       return jsonResponse(
         {
-          status: "failed_transaction",
+          success: false,
+          status: "error",
           transaction_id: null,
           wallet_id: walletId,
-          message: "Atomic SMS processing failed.",
+          message: error.message ?? "Atomic SMS processing failed.",
+          code: error.code ?? null,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
         },
         500,
       );
@@ -286,10 +311,12 @@ serve(async (req) => {
     console.error("process_sms_transaction failed", message);
     return jsonResponse(
       {
-        status: "failed_transaction",
+        success: false,
+        status: "error",
         transaction_id: null,
         wallet_id: null,
         message: "SMS processing failed.",
+        details: message,
       },
       500,
     );

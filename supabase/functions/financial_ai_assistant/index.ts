@@ -10,6 +10,9 @@ const corsHeaders = {
 
 const rateLimitWindowMs = 60_000;
 const rateLimitMaxRequests = 10;
+// Best-effort per-instance throttle. For multi-instance production deployments,
+// back this with a database table or Redis-compatible store so limits survive
+// cold starts and parallel Edge Function instances.
 const requestLogByUser = new Map<string, number[]>();
 
 type JsonMap = Record<string, unknown>;
@@ -77,6 +80,7 @@ function formatRecentTransactions(rows: JsonMap[]) {
 
 async function buildFinancialContext(
   supabase: ReturnType<typeof createClient>,
+  userId: string,
 ) {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -92,12 +96,31 @@ async function buildFinancialContext(
       p_end_date: monthEnd.toISOString(),
       p_wallet_id: null,
     }),
-    supabase.from("users").select("full_name, total_net_worth").maybeSingle(),
+    supabase.from("users")
+      .select("full_name, total_net_worth")
+      .eq("id", userId)
+      .maybeSingle(),
     supabase.from("wallets").select("name, balance, currency, type").limit(20),
   ]);
 
-  if (dashboard.error) throw dashboard.error;
-  if (analytics.error) throw analytics.error;
+  if (dashboard.error) {
+    console.error("dashboard summary RPC failed", {
+      message: dashboard.error.message,
+      code: dashboard.error.code,
+      details: dashboard.error.details,
+      hint: dashboard.error.hint,
+    });
+    throw dashboard.error;
+  }
+  if (analytics.error) {
+    console.error("monthly analytics RPC failed", {
+      message: analytics.error.message,
+      code: analytics.error.code,
+      details: analytics.error.details,
+      hint: analytics.error.hint,
+    });
+    throw analytics.error;
+  }
 
   const dashboardData = asMap(dashboard.data);
   const analyticsData = asMap(analytics.data);
@@ -183,6 +206,10 @@ serve(async (req) => {
       return jsonResponse({ error: "server_not_configured" }, 500);
     }
 
+    if (!authHeader.toLowerCase().startsWith("bearer ")) {
+      return jsonResponse({ error: "missing_authorization" }, 401);
+    }
+
     const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -206,7 +233,10 @@ serve(async (req) => {
     const message = String(payload.message ?? "").trim();
     if (!message) return jsonResponse({ error: "empty_message" }, 400);
 
-    const financialContext = await buildFinancialContext(supabase);
+    const financialContext = await buildFinancialContext(
+      supabase,
+      authData.user.id,
+    );
     const prompt = `
 You are FinMind AI, a personal finance assistant inside a finance tracking app.
 

@@ -151,6 +151,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
       await _supabaseService.ensureUserProfile(userId: user.id);
       await _storage.write(key: 'email', value: email);
+      // TODO(security): Replace password-backed biometric login with a
+      // Supabase session/refresh-token unlock flow after the current release.
       await _storage.write(key: 'password', value: password);
 
       if (mounted) {
