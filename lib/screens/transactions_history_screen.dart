@@ -863,7 +863,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                         Text(
                           context.t(
                             "Could not load transactions.",
-                            "ØªØ¹Ø°Ø± ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ø­Ø±ÙƒØ§Øª.",
+                            "تعذر تحميل الحركات.",
                           ),
                           style: TextStyle(color: _mutedTextColor),
                         ),
@@ -872,7 +872,7 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                           onPressed: _refreshTransactions,
                           icon: Icon(Icons.refresh, color: _colors.onPrimary),
                           label: Text(
-                            context.t("Retry", "Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ù…Ø­Ø§ÙˆÙ„Ø©"),
+                            context.t("Retry", "إعادة المحاولة"),
                             style: TextStyle(color: _colors.onPrimary),
                           ),
                           style: ElevatedButton.styleFrom(
@@ -930,8 +930,8 @@ class _TransactionsHistoryScreenState extends State<TransactionsHistoryScreen> {
                       : Icon(Icons.expand_more, color: _colors.onPrimary),
                   label: Text(
                     _isLoadingMore
-                        ? context.t("Loading...", "Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù…ÙŠÙ„...")
-                        : context.t("Load more", "ØªØ­Ù…ÙŠÙ„ Ø§Ù„Ù…Ø²ÙŠØ¯"),
+                        ? context.t("Loading...", "جاري التحميل...")
+                        : context.t("Load more", "تحميل المزيد"),
                     style: TextStyle(
                       color: _colors.onPrimary,
                       fontWeight: FontWeight.bold,

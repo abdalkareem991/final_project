@@ -291,8 +291,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
 
   /// Rebuilds live streams after a manual refresh or a transaction mutation.
   void refreshDashboard() {
-    loadCurrencyPreference();
-    unawaited(_loadDashboardSummary(forceRefresh: true));
+    unawaited(_refreshDashboardData());
   }
 
   /// Loads the preferred display currency used by dashboard totals.
@@ -300,6 +299,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     final prefs = await SharedPreferences.getInstance();
     String savedCurrency = prefs.getString('currency') ?? "JOD (JD)";
 
+    if (!mounted) return;
     setState(() {
       if (savedCurrency.contains("USD")) {
         _currencySymbol = "\$";
@@ -309,6 +309,73 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         _exchangeRate = 1.0;
       }
     });
+  }
+
+  Future<void> _refreshDashboardData() async {
+    await loadCurrencyPreference();
+    if (!mounted) return;
+    await _loadDashboardSummary(forceRefresh: true);
+  }
+
+  Future<void> _syncSmsAndRefreshDashboard({bool showSnackBar = false}) async {
+    if (_isSmsSyncButtonLoading || SMSListenerService.currentStatus.isRunning) {
+      await _refreshDashboardData();
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _isSmsSyncButtonLoading = true);
+    }
+    SMSListenerService.instance.markManualSyncStarted();
+
+    SmsSyncResult result;
+    try {
+      result = await SMSListenerService.instance
+          .syncNow(reason: 'manual', force: true)
+          .timeout(
+            const Duration(seconds: 20),
+            onTimeout: SMSListenerService.instance.markManualSyncTimedOut,
+          );
+    } catch (_) {
+      result = const SmsSyncResult(
+        success: false,
+        skipped: false,
+        reason: 'error',
+        processedCount: 0,
+        duplicateCount: 0,
+        ignoredCount: 0,
+        errorCount: 1,
+        status: 'Error',
+      );
+    } finally {
+      await _refreshDashboardData();
+      if (mounted) {
+        setState(() => _isSmsSyncButtonLoading = false);
+      }
+    }
+
+    if (!mounted || !showSnackBar) return;
+
+    final hasError =
+        result.errorCount > 0 || (!result.success && !result.skipped);
+    final message = hasError
+        ? context.t(
+            "SMS sync failed. Please try again",
+            "فشلت مزامنة الرسائل. يرجى المحاولة مرة أخرى",
+          )
+        : result.processedCount > 0
+        ? context.t("SMS sync completed", "اكتملت مزامنة الرسائل")
+        : context.t(
+            "No new SMS transactions found",
+            "لم يتم العثور على معاملات رسائل جديدة",
+          );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: hasError ? _expenseRed : _accentGreen,
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -362,60 +429,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           borderRadius: BorderRadius.circular(14),
           onTap: _isSmsSyncButtonLoading
               ? null
-              : () async {
-                  setState(() => _isSmsSyncButtonLoading = true);
-                  SMSListenerService.instance.markManualSyncStarted();
-
-                  SmsSyncResult result;
-                  try {
-                    result = await SMSListenerService.instance
-                        .syncNow(reason: 'manual', force: true)
-                        .timeout(
-                          const Duration(seconds: 20),
-                          onTimeout: SMSListenerService
-                              .instance
-                              .markManualSyncTimedOut,
-                        );
-                  } catch (_) {
-                    result = const SmsSyncResult(
-                      success: false,
-                      skipped: false,
-                      reason: 'error',
-                      processedCount: 0,
-                      duplicateCount: 0,
-                      ignoredCount: 0,
-                      errorCount: 1,
-                      status: 'Error',
-                    );
-                  }
-
-                  if (!mounted) return;
-                  await _loadDashboardSummary(forceRefresh: true);
-                  if (!mounted) return;
-                  setState(() => _isSmsSyncButtonLoading = false);
-
-                  final hasError =
-                      result.errorCount > 0 ||
-                      (!result.success && !result.skipped);
-                  final message = hasError
-                      ? context.t(
-                          "SMS sync failed. Please try again",
-                          "فشلت مزامنة الرسائل. يرجى المحاولة مرة أخرى",
-                        )
-                      : result.processedCount > 0
-                      ? context.t("SMS sync completed", "اكتملت مزامنة الرسائل")
-                      : context.t(
-                          "No new SMS transactions found",
-                          "لم يتم العثور على معاملات رسائل جديدة",
-                        );
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(message),
-                      backgroundColor: hasError ? _expenseRed : _accentGreen,
-                    ),
-                  );
-                },
+              : () => _syncSmsAndRefreshDashboard(showSnackBar: true),
           child: Container(
             width: double.infinity,
             margin: const EdgeInsets.only(top: 8, bottom: 12),
@@ -496,13 +510,10 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
           Expanded(
             child: Text(
               _dashboardError == null
-                  ? context.t(
-                      "Refreshing dashboard...",
-                      "Ø¬Ø§Ø±ÙŠ ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù„ÙˆØ­Ø©...",
-                    )
+                  ? context.t("Refreshing dashboard...", "جاري تحديث اللوحة...")
                   : context.t(
                       "Could not refresh dashboard. Showing last data.",
-                      "ØªØ¹Ø°Ø± ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù„ÙˆØ­Ø©. Ø³ÙŠØªÙ… Ø¹Ø±Ø¶ Ø¢Ø®Ø± Ø¨ÙŠØ§Ù†Ø§Øª.",
+                      "تعذر تحديث اللوحة. سيتم عرض آخر بيانات.",
                     ),
               style: TextStyle(
                 color: _dashboardError == null
@@ -547,20 +558,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       ),
       body: RefreshIndicator(
         color: _accentGreen,
-        onRefresh: () async {
-          loadCurrencyPreference();
-          await _loadDashboardSummary(forceRefresh: true);
-        },
+        onRefresh: () => _syncSmsAndRefreshDashboard(),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
               _buildLiveTotalBalanceCard(),
-              ValueListenableBuilder<int>(
-                valueListenable: SMSListenerService.statusVersion,
-                builder: (context, _, __) => _buildSmsSyncStatusLine(),
-              ),
+              _buildSmsSyncStatusLine(),
               _buildDashboardStatusLine(),
               const SizedBox(height: 20),
               _buildAnalyticsSection(),
@@ -665,14 +670,14 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
       return Column(
         children: [
           _buildProgressCard(
-            context.t("Monthly Income", "Ø§Ù„Ø¯Ø®Ù„ Ø§Ù„Ø´Ù‡Ø±ÙŠ"),
+            context.t("Monthly Income", "الدخل الشهري"),
             "$income|$expense",
             1.0,
             _accentGreen,
           ),
           const SizedBox.shrink(),
           _buildProgressCard(
-            context.t("Monthly Expenses", "Ø§Ù„Ù…ØµØ§Ø±ÙŠÙ Ø§Ù„Ø´Ù‡Ø±ÙŠØ©"),
+            context.t("Monthly Expenses", "المصاريف الشهرية"),
             _formatAmount(expense),
             -1.0,
             _expenseRed,
