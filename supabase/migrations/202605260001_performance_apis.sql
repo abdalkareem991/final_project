@@ -1,0 +1,4 @@
+﻿-- Placeholder migration.
+-- Remote Supabase already has migration version 202605260001 applied.
+-- This file is kept locally only to keep migration history consistent.
+-- Do not put new schema changes here.

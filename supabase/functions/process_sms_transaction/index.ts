@@ -14,7 +14,6 @@ type ParsedSms = {
   balanceAfter: number | null;
   transactionDate: string;
   smsKind: string;
-  categoryHint: string;
   merchantName: string | null;
   counterparty: string | null;
   isCliq: boolean;
@@ -153,49 +152,6 @@ function prefixAtm(value: string | null | undefined) {
   return cleaned.startsWith("atm ") ? cleaned : `atm ${cleaned}`;
 }
 
-function containsAny(text: string, needles: string[]) {
-  return needles.some((needle) => text.includes(needle));
-}
-
-function categoryForBiller(biller: string | null) {
-  const value = (biller ?? "").toLowerCase();
-  if (containsAny(value, ["zain", "umniah", "orange mobile", "orange"])) {
-    return "Bills - Telecom";
-  }
-  if (containsAny(value, ["jordan electricity", "electricity distribution co"])) {
-    return "Bills - Electricity";
-  }
-  if (containsAny(value, ["water_miyahuna", "miyahuna"])) {
-    return "Bills - Water";
-  }
-  if (value.includes("ministry of health")) return "Healthcare";
-  if (value.includes("world islamic sciences and education university")) {
-    return "Education";
-  }
-  if (value.includes("damamax")) return "Bills - Internet";
-  if (value.includes("sadad logistics")) return "Services";
-  if (containsAny(value, ["al tas heelat", "tasheelat"])) {
-    return "Financing / Installments";
-  }
-  return "General Expense";
-}
-
-function categoryForMerchant(
-  merchant: string | null,
-  options: { isCardPayment?: boolean; isVoucher?: boolean } = {},
-) {
-  const value = (merchant ?? "").toLowerCase();
-  if (options.isVoucher || value.includes("freefire")) {
-    return "Gaming / Vouchers";
-  }
-  if (containsAny(value, ["zain", "umniah", "orange"])) {
-    return "Bills - Telecom";
-  }
-  if (value.includes("talabat")) return "Food & Delivery";
-  if (containsAny(value, ["paypal", "google"])) return "Online Services";
-  return options.isCardPayment ? "Shopping" : "General Expense";
-}
-
 function shouldIgnore(text: string) {
   return (
     /(?:\botp\b|one time password|verification|verify|auth code|authorization code|please enter the following code|please do not share|do not share|do not share this otp)/i
@@ -237,7 +193,6 @@ function parsedSms(params: {
   receivedAt: string;
   balanceAfter?: number | null;
   smsKind: string;
-  categoryHint: string;
   merchantName?: string | null;
   counterparty?: string | null;
   isCliq?: boolean;
@@ -248,7 +203,6 @@ function parsedSms(params: {
     balanceAfter: params.balanceAfter ?? null,
     transactionDate: new Date(params.receivedAt).toISOString(),
     smsKind: params.smsKind,
-    categoryHint: params.categoryHint,
     merchantName: params.merchantName ?? null,
     counterparty: params.counterparty ?? null,
     isCliq: params.isCliq ?? false,
@@ -277,7 +231,6 @@ function matchReflect(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Bank Credit",
-      categoryHint: "Bank Credit",
       merchantName: "reflect",
     });
   }
@@ -293,7 +246,6 @@ function matchReflect(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Refund/Reversal",
-      categoryHint: "Refund",
       merchantName: cleanParty(match.merchant),
     });
   }
@@ -309,7 +261,6 @@ function matchReflect(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Refund/Reversal",
-      categoryHint: "Refund",
       merchantName: "reflect",
       counterparty: "reflect account",
       isCliq: true,
@@ -327,7 +278,6 @@ function matchReflect(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "CliQ Transfer",
-      categoryHint: "CliQ Transfer Out",
       counterparty: "Reflect Account",
       isCliq: true,
     });
@@ -348,7 +298,6 @@ function matchOrangeMoney(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Mobile Wallet Transfer",
-      categoryHint: "Wallet Transfer In",
       counterparty: cleanParty(match.counterparty),
     });
   }
@@ -364,7 +313,6 @@ function matchOrangeMoney(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Mobile Wallet Transfer",
-      categoryHint: "Wallet Transfer Out",
       counterparty: cleanParty(match.counterparty),
     });
   }
@@ -384,7 +332,6 @@ function matchHousingBank(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "CliQ Transfer",
-      categoryHint: "CliQ Transfer In",
       counterparty: cleanParty(match.counterparty),
       isCliq: true,
     });
@@ -401,7 +348,6 @@ function matchHousingBank(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "CliQ Transfer",
-      categoryHint: "CliQ Transfer Out",
       counterparty: cleanParty(match.counterparty),
       isCliq: true,
     });
@@ -418,7 +364,6 @@ function matchHousingBank(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "ATM Deposit",
-      categoryHint: "ATM Deposit",
       merchantName: prefixAtm(match.merchant),
     });
   }
@@ -434,7 +379,6 @@ function matchHousingBank(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "ATM Withdrawal",
-      categoryHint: "ATM Withdrawal",
       merchantName: prefixAtm(match.merchant),
     });
   }
@@ -450,7 +394,6 @@ function matchHousingBank(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Bank Fee",
-      categoryHint: "Bank Fees",
       merchantName: cleanParty(match.merchant),
     });
   }
@@ -460,15 +403,13 @@ function matchHousingBank(text: string, receivedAt: string): ParsedSms | null {
     amountRx(String.raw`تم\s+دفع\s+فاتوره?\s+(?<merchant>.+?)\s+رقم\s+(?<billNo>\S+)\s+بقيمه?\s+(?<amount>{{amount}})\s*دينار`),
   );
   if (match) {
-    const biller = cleanParty(match.merchant);
     return parsedSms({
       amount: match.amount,
       type: "Expense",
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Bill Payment",
-      categoryHint: categoryForBiller(biller),
-      merchantName: biller,
+      merchantName: cleanParty(match.merchant),
     });
   }
 
@@ -487,7 +428,6 @@ function matchGeneric(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "CliQ Transfer",
-      categoryHint: "CliQ Transfer In",
       counterparty: cleanParty(match.counterparty),
       isCliq: true,
     });
@@ -504,7 +444,6 @@ function matchGeneric(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "CliQ Transfer",
-      categoryHint: "CliQ Transfer Out",
       counterparty: cleanParty(match.counterparty),
       isCliq: true,
     });
@@ -515,15 +454,13 @@ function matchGeneric(text: string, receivedAt: string): ParsedSms | null {
     amountRx(String.raw`(?<amount>{{amount}})\s*jod\s+at\s+(?<merchant>.+?)\.\s+card\s+(?<card>\d+)\.\s+available\s+balance`),
   );
   if (match) {
-    const merchant = cleanParty(match.merchant);
     return parsedSms({
       amount: match.amount,
       type: "Expense",
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Card Payment",
-      categoryHint: categoryForMerchant(merchant, { isCardPayment: true }),
-      merchantName: merchant,
+      merchantName: cleanParty(match.merchant),
     });
   }
 
@@ -532,15 +469,13 @@ function matchGeneric(text: string, receivedAt: string): ParsedSms | null {
     amountRx(String.raw`bill\s+no\.\s+(?<billNo>\S+)\s+of\s+(?<amount>{{amount}})\s*jod\s+has\s+been\s+paid\s+to\s+(?<merchant>.+?)\.\s+ref\s+no\.`),
   );
   if (match) {
-    const biller = cleanParty(match.merchant);
     return parsedSms({
       amount: match.amount,
       type: "Expense",
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Bill Payment",
-      categoryHint: categoryForBiller(biller),
-      merchantName: biller,
+      merchantName: cleanParty(match.merchant),
     });
   }
 
@@ -555,7 +490,6 @@ function matchGeneric(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Refund/Reversal",
-      categoryHint: "Refund",
       merchantName: cleanParty(match.merchant),
     });
   }
@@ -571,7 +505,6 @@ function matchGeneric(text: string, receivedAt: string): ParsedSms | null {
       receivedAt,
       balanceAfter: match.balance ?? extractBalance(text),
       smsKind: "Voucher Purchase",
-      categoryHint: categoryForMerchant(match.merchant, { isVoucher: true }),
       merchantName: cleanParty(match.merchant),
     });
   }
@@ -609,37 +542,6 @@ function fallbackSmsKind(text: string) {
   if (/purchase|pos|card|visa|شراء/i.test(text)) return "Card Payment";
   if (/credited|credit/i.test(text)) return "Bank Credit";
   return "Bank Transaction";
-}
-
-function categoryForKind(
-  smsKind: string,
-  type: "Income" | "Expense",
-  merchantName: string | null,
-) {
-  switch (smsKind) {
-    case "Bank Credit":
-      return "Bank Credit";
-    case "CliQ Transfer":
-      return type === "Income" ? "CliQ Transfer In" : "CliQ Transfer Out";
-    case "Mobile Wallet Transfer":
-      return type === "Income" ? "Wallet Transfer In" : "Wallet Transfer Out";
-    case "ATM Deposit":
-      return "ATM Deposit";
-    case "ATM Withdrawal":
-      return "ATM Withdrawal";
-    case "Bank Fee":
-      return "Bank Fees";
-    case "Bill Payment":
-      return categoryForBiller(merchantName);
-    case "Card Payment":
-      return categoryForMerchant(merchantName, { isCardPayment: true });
-    case "Voucher Purchase":
-      return categoryForMerchant(merchantName, { isVoucher: true });
-    case "Refund/Reversal":
-      return "Refund";
-    default:
-      return type === "Income" ? "Income" : "General Expense";
-  }
 }
 
 function extractMerchantName(text: string) {
@@ -688,7 +590,6 @@ function matchFallback(text: string, receivedAt: string): ParsedSms | null {
     receivedAt,
     balanceAfter: extractBalance(text),
     smsKind,
-    categoryHint: categoryForKind(smsKind, type, merchantName),
     merchantName,
     isCliq: /cliq|كليك/i.test(text),
   });
@@ -788,7 +689,6 @@ serve(async (req) => {
       p_available_balance: parsed?.balanceAfter ?? null,
       p_transaction_date: parsed?.transactionDate ?? receivedAt,
       p_sms_kind: parsed?.smsKind ?? null,
-      p_category_hint: parsed?.categoryHint ?? null,
       p_merchant_name: parsed?.merchantName ?? null,
       p_counterparty: parsed?.counterparty ?? null,
       p_is_cliq: parsed?.isCliq ?? false,

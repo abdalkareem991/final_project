@@ -27,7 +27,11 @@ void main() {
         final data = parsed!;
         expect(data['type'], sample.type, reason: sample.name);
         expect(data['sms_kind'], sample.smsKind, reason: sample.name);
-        expect(data['category_hint'], sample.categoryHint, reason: sample.name);
+        expect(
+          _categoryNameForParsedSms(data),
+          sample.categoryName,
+          reason: sample.name,
+        );
         expect(
           data['amount'],
           closeTo(sample.amount!, 0.000001),
@@ -95,7 +99,7 @@ class SmsSample {
   final String? type;
   final double? balanceAfter;
   final String? smsKind;
-  final String? categoryHint;
+  final String? categoryName;
   final String? merchantName;
   final String? counterparty;
   final bool isCliq;
@@ -109,11 +113,68 @@ class SmsSample {
     this.type,
     this.balanceAfter,
     this.smsKind,
-    this.categoryHint,
+    this.categoryName,
     this.merchantName,
     this.counterparty,
     this.isCliq = false,
   });
+}
+
+String _categoryNameForParsedSms(Map<String, dynamic> data) {
+  final smsKind = data['sms_kind']?.toString() ?? '';
+  final type = data['type']?.toString() ?? '';
+  final merchant = data['merchant_name']?.toString().toLowerCase() ?? '';
+
+  if ((smsKind == 'Bank Transaction' || smsKind == 'Bank Credit') &&
+      type == 'Income') {
+    return 'Bank Credit';
+  }
+  if (smsKind == 'CliQ Transfer') {
+    return type == 'Income' ? 'CliQ Transfer In' : 'CliQ Transfer Out';
+  }
+  if (smsKind == 'Mobile Wallet Transfer') {
+    return type == 'Income' ? 'Wallet Transfer In' : 'Wallet Transfer Out';
+  }
+  if (smsKind == 'ATM Deposit') return 'ATM Deposit';
+  if (smsKind == 'ATM Withdrawal') return 'ATM Withdrawal';
+  if (smsKind == 'Bank Fee') return 'Bank Fees';
+  if (smsKind == 'Refund/Reversal') return 'Refund';
+  if (smsKind == 'Voucher Purchase' || merchant.contains('freefire')) {
+    return 'Gaming / Vouchers';
+  }
+  if (merchant.contains('talabat')) return 'Food & Delivery';
+  if (merchant.contains('paypal') || merchant.contains('google')) {
+    return 'Online Services';
+  }
+  if (smsKind == 'Bill Payment') {
+    if (merchant.contains('zain') ||
+        merchant.contains('umniah') ||
+        merchant.contains('orange')) {
+      return 'Bills - Telecom';
+    }
+    if (merchant.contains('jordan electricity') ||
+        merchant.contains('electricity distribution co')) {
+      return 'Bills - Electricity';
+    }
+    if (merchant.contains('water_miyahuna') || merchant.contains('miyahuna')) {
+      return 'Bills - Water';
+    }
+    if (merchant.contains('damamax')) return 'Bills - Internet';
+    if (merchant.contains('ministry of health')) return 'Healthcare';
+    if (merchant.contains('world islamic sciences and education university')) {
+      return 'Education';
+    }
+  }
+  if (smsKind == 'Card Payment') {
+    if (merchant.contains('zain') ||
+        merchant.contains('umniah') ||
+        merchant.contains('orange')) {
+      return 'Bills - Telecom';
+    }
+    return 'Shopping';
+  }
+
+  return type == 'Income' ? 'Income' : 'General Expense';
 }
 
 const _samples = [
@@ -126,7 +187,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 5.0,
     smsKind: 'Bank Credit',
-    categoryHint: 'Bank Credit',
+    categoryName: 'Bank Credit',
     merchantName: 'reflect',
   ),
   SmsSample(
@@ -138,7 +199,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 5.0,
     smsKind: 'Refund/Reversal',
-    categoryHint: 'Refund',
+    categoryName: 'Refund',
     merchantName: 'googletemporary hold',
   ),
   SmsSample(
@@ -149,7 +210,7 @@ const _samples = [
     amount: 5.0,
     type: 'Income',
     smsKind: 'Refund/Reversal',
-    categoryHint: 'Refund',
+    categoryName: 'Refund',
     merchantName: 'reflect',
     counterparty: 'reflect account',
     isCliq: true,
@@ -163,7 +224,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 29.0,
     smsKind: 'Mobile Wallet Transfer',
-    categoryHint: 'Wallet Transfer In',
+    categoryName: 'Wallet Transfer In',
     counterparty: '00962788625307',
   ),
   SmsSample(
@@ -175,7 +236,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 40.0,
     smsKind: 'CliQ Transfer',
-    categoryHint: 'CliQ Transfer In',
+    categoryName: 'CliQ Transfer In',
     counterparty: 'jo29arab9000030025369444874500',
     isCliq: true,
   ),
@@ -188,7 +249,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 50.0,
     smsKind: 'ATM Deposit',
-    categoryHint: 'ATM Deposit',
+    categoryName: 'ATM Deposit',
     merchantName: 'atm juwaida',
   ),
   SmsSample(
@@ -200,7 +261,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 138.158,
     smsKind: 'CliQ Transfer',
-    categoryHint: 'CliQ Transfer In',
+    categoryName: 'CliQ Transfer In',
     counterparty: 'abdalkareem yousef saleh alarjan',
     isCliq: true,
   ),
@@ -213,7 +274,7 @@ const _samples = [
     type: 'Income',
     balanceAfter: 1561.35,
     smsKind: 'Refund/Reversal',
-    categoryHint: 'Refund',
+    categoryName: 'Refund',
     merchantName: 'paypal ale',
   ),
   SmsSample(
@@ -225,7 +286,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 0.0,
     smsKind: 'CliQ Transfer',
-    categoryHint: 'CliQ Transfer Out',
+    categoryName: 'CliQ Transfer Out',
     counterparty: 'Reflect Account',
     isCliq: true,
   ),
@@ -238,7 +299,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 29.0,
     smsKind: 'Mobile Wallet Transfer',
-    categoryHint: 'Wallet Transfer Out',
+    categoryName: 'Wallet Transfer Out',
     counterparty: '00962772432565',
   ),
   SmsSample(
@@ -250,7 +311,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 30.0,
     smsKind: 'CliQ Transfer',
-    categoryHint: 'CliQ Transfer Out',
+    categoryName: 'CliQ Transfer Out',
     counterparty: 'abdarabic',
     isCliq: true,
   ),
@@ -263,7 +324,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 98.423,
     smsKind: 'ATM Withdrawal',
-    categoryHint: 'ATM Withdrawal',
+    categoryName: 'ATM Withdrawal',
     merchantName: 'atm juwaida',
   ),
   SmsSample(
@@ -274,7 +335,7 @@ const _samples = [
     amount: 0.5,
     type: 'Expense',
     smsKind: 'Bank Fee',
-    categoryHint: 'Bank Fees',
+    categoryName: 'Bank Fees',
     merchantName: 'digital banking services fee',
   ),
   SmsSample(
@@ -285,7 +346,7 @@ const _samples = [
     amount: 50.0,
     type: 'Expense',
     smsKind: 'Bill Payment',
-    categoryHint: 'Bills - Telecom',
+    categoryName: 'Bills - Telecom',
     merchantName: 'umniah',
   ),
   SmsSample(
@@ -297,7 +358,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 20.008,
     smsKind: 'CliQ Transfer',
-    categoryHint: 'CliQ Transfer Out',
+    categoryName: 'CliQ Transfer Out',
     counterparty: 'abdalkareem alarjan',
     isCliq: true,
   ),
@@ -309,7 +370,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 22.608,
     smsKind: 'Card Payment',
-    categoryHint: 'Bills - Telecom',
+    categoryName: 'Bills - Telecom',
     merchantName: 'umniah',
   ),
   SmsSample(
@@ -320,7 +381,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 12.0,
     smsKind: 'Card Payment',
-    categoryHint: 'Food & Delivery',
+    categoryName: 'Food & Delivery',
     merchantName: 'talabat',
   ),
   SmsSample(
@@ -331,7 +392,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 10.01,
     smsKind: 'Card Payment',
-    categoryHint: 'Online Services',
+    categoryName: 'Online Services',
     merchantName: 'google play',
   ),
   SmsSample(
@@ -343,7 +404,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 41.408,
     smsKind: 'Bill Payment',
-    categoryHint: 'Bills - Telecom',
+    categoryName: 'Bills - Telecom',
     merchantName: 'zain',
   ),
   SmsSample(
@@ -355,7 +416,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 100.0,
     smsKind: 'Bill Payment',
-    categoryHint: 'Bills - Electricity',
+    categoryName: 'Bills - Electricity',
     merchantName: 'jordan electricity',
   ),
   SmsSample(
@@ -367,7 +428,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 87.5,
     smsKind: 'Bill Payment',
-    categoryHint: 'Bills - Water',
+    categoryName: 'Bills - Water',
     merchantName: 'water_miyahuna amman',
   ),
   SmsSample(
@@ -379,7 +440,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 81.5,
     smsKind: 'Bill Payment',
-    categoryHint: 'Healthcare',
+    categoryName: 'Healthcare',
     merchantName: 'ministry of health patients eservices',
   ),
   SmsSample(
@@ -391,7 +452,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 50.0,
     smsKind: 'Bill Payment',
-    categoryHint: 'Education',
+    categoryName: 'Education',
     merchantName: 'world islamic sciences and education university',
   ),
   SmsSample(
@@ -403,7 +464,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 28.0,
     smsKind: 'Bill Payment',
-    categoryHint: 'Bills - Internet',
+    categoryName: 'Bills - Internet',
     merchantName: 'damamax',
   ),
   SmsSample(
@@ -415,7 +476,7 @@ const _samples = [
     type: 'Expense',
     balanceAfter: 1004.442,
     smsKind: 'Voucher Purchase',
-    categoryHint: 'Gaming / Vouchers',
+    categoryName: 'Gaming / Vouchers',
     merchantName: 'freefire',
   ),
   SmsSample(

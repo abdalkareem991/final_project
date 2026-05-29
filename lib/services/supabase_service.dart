@@ -1957,7 +1957,6 @@ class SupabaseService {
           'p_available_balance': parsedData?['available_balance'],
           'p_transaction_date': transactionDate.toUtc().toIso8601String(),
           'p_sms_kind': parsedData?['sms_kind'],
-          'p_category_hint': parsedData?['category_hint'],
           'p_merchant_name': parsedData?['merchant_name'],
           'p_counterparty': parsedData?['counterparty'],
           'p_is_cliq': parsedData?['is_cliq'] == true,

@@ -40,7 +40,6 @@ class AIService {
       'is_cliq': parsed.isCliq,
       'sms_kind': parsed.smsKind,
       'merchant_name': parsed.merchantName,
-      'category_hint': parsed.categoryHint,
     };
   }
 
@@ -149,7 +148,6 @@ class AIService {
         type: 'Income',
         balanceAfter: reflectedCredit.balance ?? extractBalanceLocally(text),
         smsKind: 'Bank Credit',
-        categoryHint: 'Bank Credit',
         merchantName: 'reflect',
       );
     }
@@ -167,7 +165,6 @@ class AIService {
         type: 'Income',
         balanceAfter: purchaseReversal.balance ?? extractBalanceLocally(text),
         smsKind: 'Refund/Reversal',
-        categoryHint: 'Refund',
         merchantName: _cleanParty(purchaseReversal.merchant),
       );
     }
@@ -185,7 +182,6 @@ class AIService {
         type: 'Income',
         balanceAfter: cliqReversal.balance ?? extractBalanceLocally(text),
         smsKind: 'Refund/Reversal',
-        categoryHint: 'Refund',
         merchantName: 'reflect',
         counterparty: 'reflect account',
         isCliq: true,
@@ -204,7 +200,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: outgoing.balance ?? extractBalanceLocally(text),
         smsKind: 'CliQ Transfer',
-        categoryHint: 'CliQ Transfer Out',
         counterparty: 'Reflect Account',
         isCliq: true,
       );
@@ -226,7 +221,6 @@ class AIService {
         type: 'Income',
         balanceAfter: incoming.balance ?? extractBalanceLocally(text),
         smsKind: 'Mobile Wallet Transfer',
-        categoryHint: 'Wallet Transfer In',
         counterparty: _cleanParty(incoming.counterparty),
       );
     }
@@ -243,7 +237,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: outgoing.balance ?? extractBalanceLocally(text),
         smsKind: 'Mobile Wallet Transfer',
-        categoryHint: 'Wallet Transfer Out',
         counterparty: _cleanParty(outgoing.counterparty),
       );
     }
@@ -265,7 +258,6 @@ class AIService {
         type: 'Income',
         balanceAfter: cliqIn.balance ?? extractBalanceLocally(text),
         smsKind: 'CliQ Transfer',
-        categoryHint: 'CliQ Transfer In',
         counterparty: _cleanParty(cliqIn.counterparty),
         isCliq: true,
       );
@@ -284,7 +276,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: cliqOut.balance ?? extractBalanceLocally(text),
         smsKind: 'CliQ Transfer',
-        categoryHint: 'CliQ Transfer Out',
         counterparty: _cleanParty(cliqOut.counterparty),
         isCliq: true,
       );
@@ -303,7 +294,6 @@ class AIService {
         type: 'Income',
         balanceAfter: atmDeposit.balance ?? extractBalanceLocally(text),
         smsKind: 'ATM Deposit',
-        categoryHint: 'ATM Deposit',
         merchantName: _prefixAtm(atmDeposit.merchant),
       );
     }
@@ -321,7 +311,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: atmWithdrawal.balance ?? extractBalanceLocally(text),
         smsKind: 'ATM Withdrawal',
-        categoryHint: 'ATM Withdrawal',
         merchantName: _prefixAtm(atmWithdrawal.merchant),
       );
     }
@@ -339,7 +328,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: fee.balance ?? extractBalanceLocally(text),
         smsKind: 'Bank Fee',
-        categoryHint: 'Bank Fees',
         merchantName: _cleanParty(fee.merchant),
       );
     }
@@ -357,7 +345,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: bill.balance ?? extractBalanceLocally(text),
         smsKind: 'Bill Payment',
-        categoryHint: _categoryForBiller(biller),
         merchantName: biller,
       );
     }
@@ -379,7 +366,6 @@ class AIService {
         type: 'Income',
         balanceAfter: cliqFrom.balance ?? extractBalanceLocally(text),
         smsKind: 'CliQ Transfer',
-        categoryHint: 'CliQ Transfer In',
         counterparty: _cleanParty(cliqFrom.counterparty),
         isCliq: true,
       );
@@ -398,7 +384,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: cliqTo.balance ?? extractBalanceLocally(text),
         smsKind: 'CliQ Transfer',
-        categoryHint: 'CliQ Transfer Out',
         counterparty: _cleanParty(cliqTo.counterparty),
         isCliq: true,
       );
@@ -418,7 +403,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: cardPayment.balance ?? extractBalanceLocally(text),
         smsKind: 'Card Payment',
-        categoryHint: _categoryForMerchant(merchant, isCardPayment: true),
         merchantName: merchant,
       );
     }
@@ -437,7 +421,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: billPayment.balance ?? extractBalanceLocally(text),
         smsKind: 'Bill Payment',
-        categoryHint: _categoryForBiller(biller),
         merchantName: biller,
       );
     }
@@ -455,7 +438,6 @@ class AIService {
         type: 'Income',
         balanceAfter: refund.balance ?? extractBalanceLocally(text),
         smsKind: 'Refund/Reversal',
-        categoryHint: 'Refund',
         merchantName: _cleanParty(refund.merchant),
       );
     }
@@ -473,7 +455,6 @@ class AIService {
         type: 'Expense',
         balanceAfter: voucher.balance ?? extractBalanceLocally(text),
         smsKind: 'Voucher Purchase',
-        categoryHint: _categoryForMerchant(voucher.merchant, isVoucher: true),
         merchantName: _cleanParty(voucher.merchant),
       );
     }
@@ -495,11 +476,6 @@ class AIService {
       type: type,
       balanceAfter: extractBalanceLocally(text),
       smsKind: smsKind,
-      categoryHint: _categoryForKind(
-        smsKind: smsKind,
-        type: type,
-        merchantName: merchantName,
-      ),
       merchantName: merchantName,
       isCliq: text.contains('cliq') || text.contains('كليك'),
     );
@@ -667,86 +643,6 @@ class AIService {
     return 'Bank Transaction';
   }
 
-  String _categoryForKind({
-    required String smsKind,
-    required String type,
-    String? merchantName,
-  }) {
-    switch (smsKind) {
-      case 'Bank Credit':
-        return 'Bank Credit';
-      case 'CliQ Transfer':
-        return type == 'Income' ? 'CliQ Transfer In' : 'CliQ Transfer Out';
-      case 'Mobile Wallet Transfer':
-        return type == 'Income' ? 'Wallet Transfer In' : 'Wallet Transfer Out';
-      case 'ATM Deposit':
-        return 'ATM Deposit';
-      case 'ATM Withdrawal':
-        return 'ATM Withdrawal';
-      case 'Bank Fee':
-        return 'Bank Fees';
-      case 'Bill Payment':
-        return _categoryForBiller(merchantName);
-      case 'Card Payment':
-        return _categoryForMerchant(merchantName, isCardPayment: true);
-      case 'Voucher Purchase':
-        return _categoryForMerchant(merchantName, isVoucher: true);
-      case 'Refund/Reversal':
-        return 'Refund';
-      default:
-        return type == 'Income' ? 'Income' : 'General Expense';
-    }
-  }
-
-  String _categoryForBiller(String? biller) {
-    final value = (biller ?? '').toLowerCase();
-
-    if (_containsAny(value, ['zain', 'umniah', 'orange mobile', 'orange'])) {
-      return 'Bills - Telecom';
-    }
-    if (_containsAny(value, [
-      'jordan electricity',
-      'electricity distribution co',
-    ])) {
-      return 'Bills - Electricity';
-    }
-    if (_containsAny(value, ['water_miyahuna', 'miyahuna'])) {
-      return 'Bills - Water';
-    }
-    if (value.contains('ministry of health')) return 'Healthcare';
-    if (value.contains('world islamic sciences and education university')) {
-      return 'Education';
-    }
-    if (value.contains('damamax')) return 'Bills - Internet';
-    if (value.contains('sadad logistics')) return 'Services';
-    if (_containsAny(value, ['al tas heelat', 'tasheelat'])) {
-      return 'Financing / Installments';
-    }
-
-    return 'General Expense';
-  }
-
-  String _categoryForMerchant(
-    String? merchant, {
-    bool isCardPayment = false,
-    bool isVoucher = false,
-  }) {
-    final value = (merchant ?? '').toLowerCase();
-
-    if (isVoucher || value.contains('freefire')) return 'Gaming / Vouchers';
-    if (_containsAny(value, ['zain', 'umniah', 'orange'])) {
-      return 'Bills - Telecom';
-    }
-    if (value.contains('talabat')) return 'Food & Delivery';
-    if (_containsAny(value, ['paypal', 'google'])) return 'Online Services';
-
-    return isCardPayment ? 'Shopping' : 'General Expense';
-  }
-
-  bool _containsAny(String text, List<String> needles) {
-    return needles.any(text.contains);
-  }
-
   String? _extractMerchantName(String text) {
     final patterns = [
       RegExp(
@@ -841,7 +737,6 @@ class _ParsedSms {
   final String type;
   final double? balanceAfter;
   final String smsKind;
-  final String categoryHint;
   final String? merchantName;
   final String? counterparty;
   final bool isCliq;
@@ -851,7 +746,6 @@ class _ParsedSms {
     required this.type,
     required this.balanceAfter,
     required this.smsKind,
-    required this.categoryHint,
     this.merchantName,
     this.counterparty,
     this.isCliq = false,

@@ -258,6 +258,7 @@ declare
   v_category_icon text;
   v_category_color text;
   v_description text;
+  v_merchant_key text;
   v_party text;
   v_transaction_id uuid;
   v_balance_after numeric;
@@ -397,28 +398,105 @@ begin
     or coalesce(p_sms_body, '') like ('%' || U&'\062A\062D\0648\064A\0644' || '%')
     or coalesce(p_sms_body, '') like ('%' || U&'\062D\0648\0627\0644\0629' || '%');
 
-  if v_is_transfer_hint then
-    v_category_name := 'Transfer';
-    v_category_type := 'Transfer';
+  v_merchant_key := lower(trim(coalesce(p_merchant_name, p_counterparty, '')));
+
+  if lower(v_sms_kind) = 'bank credit'
+    or (lower(v_sms_kind) = 'bank transaction' and v_type = 'Income')
+  then
+    v_category_name := 'Bank Credit';
+    v_category_type := 'Income';
+    v_category_icon := 'trending_up';
+    v_category_color := '#22C55E';
+  elsif lower(v_sms_kind) like '%refund%' or lower(v_sms_kind) like '%reversal%' then
+    v_category_name := 'Refund';
+    v_category_type := 'Income';
+    v_category_icon := 'undo';
+    v_category_color := '#22C55E';
+  elsif lower(v_sms_kind) = 'cliq transfer' then
+    v_category_name := case when v_type = 'Income' then 'CliQ Transfer In' else 'CliQ Transfer Out' end;
+    v_category_type := v_type;
     v_category_icon := 'swap_horiz';
     v_category_color := '#3B82F6';
+  elsif lower(v_sms_kind) = 'mobile wallet transfer' then
+    v_category_name := case when v_type = 'Income' then 'Wallet Transfer In' else 'Wallet Transfer Out' end;
+    v_category_type := v_type;
+    v_category_icon := 'account_balance_wallet';
+    v_category_color := '#3B82F6';
+  elsif lower(v_sms_kind) = 'atm deposit' then
+    v_category_name := 'ATM Deposit';
+    v_category_type := 'Income';
+    v_category_icon := 'account_balance';
+    v_category_color := '#22C55E';
+  elsif lower(v_sms_kind) = 'atm withdrawal' then
+    v_category_name := 'ATM Withdrawal';
+    v_category_type := 'Expense';
+    v_category_icon := 'account_balance';
+    v_category_color := '#8B5CF6';
+  elsif lower(v_sms_kind) = 'bank fee' then
+    v_category_name := 'Bank Fees';
+    v_category_type := 'Expense';
+    v_category_icon := 'account_balance_wallet';
+    v_category_color := '#8B5CF6';
+  elsif lower(v_sms_kind) = 'bill payment' then
+    v_category_name := case
+      when v_merchant_key like '%zain%'
+        or v_merchant_key like '%umniah%'
+        or v_merchant_key like '%orange%'
+      then 'Bills - Telecom'
+      when v_merchant_key like '%jordan electricity%'
+        or v_merchant_key like '%electricity distribution co%'
+      then 'Bills - Electricity'
+      when v_merchant_key like '%water_miyahuna%'
+        or v_merchant_key like '%miyahuna%'
+      then 'Bills - Water'
+      when v_merchant_key like '%damamax%' then 'Bills - Internet'
+      when v_merchant_key like '%ministry of health%' then 'Healthcare'
+      when v_merchant_key like '%world islamic sciences and education university%' then 'Education'
+      when v_merchant_key like '%sadad logistics%' then 'Services'
+      when v_merchant_key like '%al tas heelat%' or v_merchant_key like '%tasheelat%' then 'Financing / Installments'
+      else 'General Expense'
+    end;
+    v_category_type := 'Expense';
+    v_category_icon := case
+      when v_category_name like 'Bills -%' then 'receipt'
+      when v_category_name = 'Healthcare' then 'local_hospital'
+      when v_category_name = 'Education' then 'school'
+      else 'category'
+    end;
+    v_category_color := '#F59E0B';
+  elsif lower(v_sms_kind) = 'voucher purchase' or v_merchant_key like '%freefire%' then
+    v_category_name := 'Gaming / Vouchers';
+    v_category_type := 'Expense';
+    v_category_icon := 'sports_esports';
+    v_category_color := '#8B5CF6';
+  elsif v_merchant_key like '%talabat%' then
+    v_category_name := 'Food & Delivery';
+    v_category_type := 'Expense';
+    v_category_icon := 'restaurant';
+    v_category_color := '#EF4444';
+  elsif v_merchant_key like '%paypal%' or v_merchant_key like '%google%' then
+    v_category_name := 'Online Services';
+    v_category_type := 'Expense';
+    v_category_icon := 'language';
+    v_category_color := '#6366F1';
+  elsif lower(v_sms_kind) = 'card payment' then
+    v_category_name := case
+      when v_merchant_key like '%zain%'
+        or v_merchant_key like '%umniah%'
+        or v_merchant_key like '%orange%'
+      then 'Bills - Telecom'
+      else 'Shopping'
+    end;
+    v_category_type := 'Expense';
+    v_category_icon := case when v_category_name = 'Shopping' then 'shopping_bag' else 'receipt' end;
+    v_category_color := '#8B5CF6';
   elsif v_type = 'Income' then
     v_category_name := 'Income';
     v_category_type := 'Income';
     v_category_icon := 'trending_up';
     v_category_color := '#22C55E';
-  elsif lower(v_sms_kind) like '%bill%' then
-    v_category_name := 'Bills';
-    v_category_type := 'Expense';
-    v_category_icon := 'receipt';
-    v_category_color := '#F59E0B';
-  elsif lower(v_sms_kind) like '%card%' or lower(v_sms_kind) like '%pos%' then
-    v_category_name := 'Card Payment';
-    v_category_type := 'Expense';
-    v_category_icon := 'credit_card';
-    v_category_color := '#8B5CF6';
   else
-    v_category_name := 'General';
+    v_category_name := 'General Expense';
     v_category_type := 'Expense';
     v_category_icon := 'category';
     v_category_color := '#94A3B8';
@@ -600,13 +678,6 @@ begin
         end
     where user_id = v_user_id
       and id in (v_transaction_id, v_transfer_match.id);
-  elsif v_is_transfer_hint then
-    v_sms_kind := 'Possible Transfer';
-
-    update public.transactions
-    set sms_kind = v_sms_kind
-    where user_id = v_user_id
-      and id = v_transaction_id;
   end if;
 
   if p_available_balance is not null then
