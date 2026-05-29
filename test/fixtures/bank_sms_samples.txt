@@ -1,10 +1,33 @@
-JOD 2.000 has been credited to your Reflect account on 28/05 17:12. Available balance 5.793 JOD. More details under "Transactions"
-JOD 2.000 has been transferred by CliQ from account XXXXX6800110001 on 28/05/2026 05:12 PM to AB-DARABIC. Available balance JOD 18.136
-JOD 7.000 has been transferred by CliQ to account XXXXXX6800110001 on 10/05/2026 06:27 PM from JO29ARAB9000030025369444874500. Available balance JOD 40.000
-تم استقبال حوالة مالية من 00962788625307  من مزود الخدمة:  Orange Money إلى محفظتك بمبلغ 20  دينار بتاريخ 06/05/2026 الساعة 10:51:54 PM بالرقم المرجعي OJM-PAY رصيد المحفظة المتاح هو 20 دينار أردني شكراً لاستخدامك Orange Money
-تمت عملية التحويل المالي الى المحفظة 00962772432565 بمبلغ 5 دينار بتاريخ 10/05/2026 الساعة 09:31:44 PM بالرقم المرجعي OJM-PAY رصيد المحفظة المتاح هو 29 دينار أردني شكراً لاستخدامك Orange Money
-JOD 50.000 has been deposited to account XXXXXX6800110001 on 07/05/2026 11:55 AM from ATM JUWAIDA with authorization number 441177. Available balance JOD 50.000
-JOD 20.000 has been withdrawn from account XXXXXX6800110001 on 01/05/2026 05:15 PM from ATM JUWAIDA with authorization number 449535. Available balance JOD 98.423
-JOD 0.500 has been debited as digital banking services fee from account XXXXXX6800110001 on 28/04/2026 05:13 AM
-740585 هو رمز التحقق لدفعة كليك بقيمة 5.000 JOD. يرجى عدم مشاركته مع أي شخص.
-Beware of SMS or WhatsApp messages claiming to be from Jordan Post regarding shipments or information updates, as these may be scam messages.
+Reflect	JOD 5.000 has been credited to your Reflect account on 30/04 17:03. Available balance 5.000 JOD. More details under "Transactions"
+Reflect	A purchase transaction has been reversed to your Reflect card from GOOGLETEMPORARY HOLD amount 5.000 JOD on 04-11-2025 as a reversal. Available balance 5.000 JOD.
+Reflect	JOD 5.000 Cliq Payment from your Reflect account on 02/05 14:19 as a reversal.
+OrangeMoney	تم استقبال حوالة مالية من 00962788625307 من مزود الخدمة: Orange Money إلى محفظتك بمبلغ 9 دينار بتاريخ 06/05/2026 الساعة 10:51:54 PM رصيد المحفظة المتاح هو 29 دينار أردني
+HousingBank	JOD 7.000 has been transferred by CliQ to account XXXXXX6800110001 on 10/05/2026 06:27 PM from JO29ARAB9000030025369444874500. Available balance JOD 40.000
+HousingBank	JOD 50.000 has been deposited to account XXXXXX6800110001 on 07/05/2026 11:55 AM from ATM JUWAIDA with authorization number 441177. Available balance JOD 50.000
+ArabBank	100.000 JOD CliQ transfer from ABDALKAREEM YOUSEF SALEH ALARJAN. Available balance: 138.158 JOD.
+ArabBank	Refund of 2,400.000 JOD at PAYPAL ALE. Available balance: 1,561.350 JOD.
+Reflect	تم قيد حوالة بمبلغ 221.698 JOD من حسابك على ريفلكت بتاريخ 01/05 14:37. الرصيد المتوفر 0.000 JOD
+OrangeMoney	تمت عملية التحويل المالي الى المحفظة 00962772432565 بمبلغ 5 دينار بتاريخ 10/05/2026 الساعة 09:31:44 PM رصيد المحفظة المتاح هو 29 دينار أردني
+HousingBank	JOD 7.000 has been transferred by CliQ from account XXXXXX6800110001 on 09/05/2026 11:17 AM to ABDARABIC. Available balance JOD 30.000
+HousingBank	JOD 20.000 has been withdrawn from account XXXXXX6800110001 on 01/05/2026 05:15 PM from ATM JUWAIDA with authorization number 449535. Available balance JOD 98.423
+HousingBank	JOD 0.500 has been debited as digital banking services fee from account XXXXXX6800110001 on 28/04/2026 05:13 AM
+HousingBank	تم دفع فاتورة Umniah رقم 962110213214 بقيمة 50.000 دينار و عمولة بقيمة 0.000 دينار بتاريخ 20:45:7 05/05/2026.
+ArabBank	2.600 JOD CliQ transfer to Abdalkareem Alarjan. Available balance: 20.008 JOD.
+ArabBank	11.600 JOD at Umniah. Card 786. Available balance: 22.608 JOD.
+ArabBank	8.250 JOD at TALABAT. Card 786. Available balance: 12.000 JOD.
+ArabBank	1.990 JOD at GOOGLE PLAY. Card 786. Available balance: 10.010 JOD.
+ArabBank	Bill no. 00294617 of 45.24 JOD has been paid to Zain. Ref no. 399BPDP261460197. Available balance: 41.408 JOD.
+ArabBank	Bill no. 123 of 29.000 JOD has been paid to Jordan Electricity. Ref no. REF123. Available balance: 100.000 JOD.
+ArabBank	Bill no. 124 of 12.500 JOD has been paid to Water_Miyahuna Amman. Ref no. REF124. Available balance: 87.500 JOD.
+ArabBank	Bill no. 125 of 6.000 JOD has been paid to Ministry of Health Patients eServices. Ref no. REF125. Available balance: 81.500 JOD.
+ArabBank	Bill no. 126 of 100.000 JOD has been paid to World Islamic Sciences And Education University. Ref no. REF126. Available balance: 50.000 JOD.
+ArabBank	Bill no. 127 of 22.000 JOD has been paid to DAMAMAX. Ref no. REF127. Available balance: 28.000 JOD.
+ArabBank	You successfully purchased a voucher from FreeFire for 0.710JOD on 11/09/2025. Amount has been debited to your Saving - Regular-01. Current balance: 1004.442 JOD Available balance: 1,004.442 JOD
+Reflect	740585 هو رمز التحقق لدفعة كليك بقيمة 5.000 JOD. يرجى عدم مشاركته مع أي شخص.
+ArabBank	OTP for eFAWATEERCOM Direct Pay is 83084, it will be used to debit your account with 45.240 JOD, so please do not share this OTP with any person
+ArabBank	203980 هو رمز التأكيد OTP لتنفيذ حركة شراء بقيمة JOD 6.550 من ZAIN WEBSITE لبطاقتك المنتهية بالأرقام 7786. لا تشارك هذا الرمز مع أحد
+ArabBank	بنك الإتحاد الرقم السري لعملية التحويل: 402470 سوف يتم استخدام هذا الرمز لعملية تحويل من حسابك بمبلغ JOD 100
+HousingBank	Beware of SMS or WhatsApp messages claiming to be from Jordan Post. Avoid opening any links or sharing your banking information.
+HousingBank	Please note that all digital banking services will be suspended due to system updates.
+ArabBank	Your transaction on debit card ending with 786 for JOD 15.07 at ZAIN WEBSITE has been declined due to Exceeds Withdrawal Amount Limit
+ArabBank	رمز التحقق لإستكمال شراء القسيمة: 578115

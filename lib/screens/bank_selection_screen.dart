@@ -46,9 +46,9 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
   Future<void> _toggleMonitoring(WalletModel wallet, bool status) async {
     try {
       if (status) {
-        final started = await SMSListenerService().startListening(
-          syncImmediately: false,
-        ).timeout(const Duration(seconds: 25), onTimeout: () => false);
+        final started = await SMSListenerService()
+            .startListening(syncImmediately: false)
+            .timeout(const Duration(seconds: 25), onTimeout: () => false);
         if (!started) {
           SMSListenerService().stopListening();
         }
@@ -76,7 +76,10 @@ class _BankSelectionScreenState extends State<BankSelectionScreen> {
       );
 
       if (status) {
-        await SMSListenerService().syncNow(force: true);
+        await SMSListenerService().syncNow(
+          reason: 'monitoring_enabled',
+          force: true,
+        );
       }
 
       if (mounted) setState(() {});

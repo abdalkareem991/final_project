@@ -6,53 +6,49 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class AIService {
   SupabaseClient get _client => Supabase.instance.client;
 
+  static const String _numberPattern = r'[0-9][0-9,]*(?:\.[0-9]+)?';
+
   // Parses a bank SMS locally without calling Gemini.
   // This is used for SMS automation to avoid API quota and improve reliability.
   Map<String, dynamic>? parseBankSmsLocally(String smsBody, {String? sender}) {
     final String text = _normalizeSms(smsBody);
     final String senderText = _normalizeSender(sender);
 
-    if (_isIgnorableSms(text)) {
+    if (text.isEmpty || _isIgnorableSms(text)) {
       debugPrint("SMS ignored: OTP/security/service message.");
       return null;
     }
 
-    final String? type = _detectTransactionType(text, senderText);
-    if (type == null) {
-      debugPrint("SMS ignored: transaction type not detected.");
+    final _ParsedSms? parsed =
+        _matchProviderSpecific(text, senderText) ??
+        _matchGeneric(text) ??
+        _matchFallback(text);
+
+    if (parsed == null || parsed.amount <= 0) {
+      debugPrint("SMS ignored: transaction pattern not detected.");
       return null;
     }
 
-    final double? amount = _extractTransactionAmount(text);
-    if (amount == null || amount <= 0) {
-      debugPrint("SMS ignored: amount not detected.");
-      return null;
-    }
-    // Extracts available balance, counterparty, and merchant name if possible.
-    final double? availableBalance = extractBalanceLocally(text);
-    final String smsKind = _detectSmsKind(text, senderText);
-    final String? counterparty = _extractCounterparty(text, type, senderText);
-    final String? merchantName = counterparty ?? _extractMerchantName(text);
-    // The returned map can be used directly for creating transactions or further processing.
     return {
-      'amount': amount,
-      'type': type,
+      'amount': parsed.amount,
+      'type': parsed.type,
       'bank': sender ?? 'Unknown Bank',
       'status': 'Final',
-      'available_balance': availableBalance,
-      'counterparty': counterparty,
-      'is_cliq': text.contains('cliq') || text.contains('كليك'),
-      'sms_kind': smsKind,
-      'merchant_name': merchantName,
+      'available_balance': parsed.balanceAfter,
+      'balance_after': parsed.balanceAfter,
+      'counterparty': parsed.counterparty,
+      'is_cliq': parsed.isCliq,
+      'sms_kind': parsed.smsKind,
+      'merchant_name': parsed.merchantName,
+      'category_hint': parsed.categoryHint,
     };
   }
 
   // Detects a simple transaction type from a raw SMS.
   // This is kept as a lightweight helper for older code compatibility.
   String detectTypeLocally(String smsBody) {
-    final String text = _normalizeSms(smsBody);
-    final String? type = _detectTransactionType(text, '');
-    return type ?? 'Unknown';
+    final parsed = parseBankSmsLocally(smsBody);
+    return parsed?['type']?.toString() ?? 'Unknown';
   }
 
   // Normalizes SMS text to make Arabic and English matching more reliable.
@@ -76,74 +72,457 @@ class AIService {
         .trim();
   }
 
-  // Normalizes the SMS sender name for easier bank detection.
   String _normalizeSender(String? sender) {
     return (sender ?? '').toLowerCase().trim();
   }
 
-  // Checks whether the SMS should be ignored, such as OTP, scam, or service messages.
-  bool _isIgnorableSms(String text) {
+  RegExp _amountRx(String pattern, {bool caseSensitive = false}) {
     return RegExp(
-      r'(otp|one time password|verification|verify|auth code|please enter the following code|please do not share|do not share|beware|scam|system updates|digital banking services will be suspended|رمز التحقق|رمز|كود|تحقق|توثيق|تفعيل|يرجى عدم مشاركته|عدم مشاركته)',
-    ).hasMatch(text);
+      pattern.replaceAll('{{amount}}', _numberPattern),
+      caseSensitive: caseSensitive,
+    );
   }
 
-  // Detects whether the SMS is Income or Expense based on bank-specific rules first,
-  // then falls back to general financial keywords.
-  String? _detectTransactionType(String text, String sender) {
+  bool _isIgnorableSms(String text) {
+    final ignorePatterns = [
+      RegExp(
+        r'(?:\botp\b|one time password|verification|verify|auth code|authorization code|please enter the following code|please do not share|do not share|do not share this otp)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'(?:رمز\s+التحقق|رمز\s+التاكيد\s+otp|رمز\s+التأكيد\s+otp|يرجى\s+عدم\s+مشاركته|لا\s+تشارك\s+هذا\s+الرمز|الرقم\s+السري\s+لعمليه?\s+التحويل|سوف\s+يتم\s+استخدام\s+هذا\s+الرمز|رمز\s+التحقق\s+لاستكمال\s+شراء\s+القسيمه)',
+      ),
+      RegExp(
+        r'(?:beware\s+of\s+sms|scam\s+messages|avoid\s+opening\s+any\s+links|sharing\s+your\s+banking\s+information)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'(?:digital\s+banking\s+services\s+will\s+be\s+suspended|system\s+updates)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'transaction\s+on\s+debit\s+card.*?has\s+been\s+declined',
+        caseSensitive: false,
+      ),
+    ];
+
+    return ignorePatterns.any((pattern) => pattern.hasMatch(text));
+  }
+
+  _ParsedSms? _matchProviderSpecific(String text, String sender) {
     if (_isReflectMessage(text, sender)) {
-      return _detectReflectType(text);
+      final parsed = _matchReflect(text);
+      if (parsed != null) return parsed;
     }
 
     if (_isOrangeMoneyMessage(text, sender)) {
-      return _detectOrangeMoneyType(text);
+      final parsed = _matchOrangeMoney(text);
+      if (parsed != null) return parsed;
     }
 
-    final String? housingType = _detectHousingBankType(text);
-    if (housingType != null) {
-      return housingType;
-    }
-
-    return _detectGeneralType(text);
+    return _matchHousingBank(text);
   }
 
-  // Checks if the SMS belongs to Reflect.
   bool _isReflectMessage(String text, String sender) {
     return sender.contains('reflect') ||
         text.contains('reflect') ||
         text.contains('ريفلكت');
   }
 
-  // Checks if the SMS belongs to Orange Money.
   bool _isOrangeMoneyMessage(String text, String sender) {
     return sender.contains('orange') ||
         text.contains('orange money') ||
         text.contains('orange');
   }
 
-  // Detects Reflect transaction type.
-  String? _detectReflectType(String text) {
-    if (text.contains('من حسابك على ريفلكت') ||
-        text.contains('من حسابك علي ريفلكت')) {
-      return 'Expense';
+  _ParsedSms? _matchReflect(String text) {
+    final reflectedCredit = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+has\s+been\s+credited\s+to\s+your\s+reflect\s+account\b',
+        caseSensitive: false,
+      ),
+    );
+    if (reflectedCredit != null) {
+      return _ParsedSms(
+        amount: reflectedCredit.amount,
+        type: 'Income',
+        balanceAfter: reflectedCredit.balance ?? extractBalanceLocally(text),
+        smsKind: 'Bank Credit',
+        categoryHint: 'Bank Credit',
+        merchantName: 'reflect',
+      );
     }
 
-    if (text.contains('reversal') || text.contains('reversed')) {
-      return 'Income';
+    final purchaseReversal = _match(
+      text,
+      _amountRx(
+        r'purchase\s+transaction\s+has\s+been\s+reversed\s+to\s+your\s+reflect\s+card\s+from\s+(?<merchant>.+?)\s+amount\s+(?<amount>{{amount}})\s*jod',
+        caseSensitive: false,
+      ),
+    );
+    if (purchaseReversal != null) {
+      return _ParsedSms(
+        amount: purchaseReversal.amount,
+        type: 'Income',
+        balanceAfter: purchaseReversal.balance ?? extractBalanceLocally(text),
+        smsKind: 'Refund/Reversal',
+        categoryHint: 'Refund',
+        merchantName: _cleanParty(purchaseReversal.merchant),
+      );
     }
 
+    final cliqReversal = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+cliq\s+payment\s+from\s+your\s+reflect\s+account\b.*?as\s+a\s+reversal',
+        caseSensitive: false,
+      ),
+    );
+    if (cliqReversal != null) {
+      return _ParsedSms(
+        amount: cliqReversal.amount,
+        type: 'Income',
+        balanceAfter: cliqReversal.balance ?? extractBalanceLocally(text),
+        smsKind: 'Refund/Reversal',
+        categoryHint: 'Refund',
+        merchantName: 'reflect',
+        counterparty: 'reflect account',
+        isCliq: true,
+      );
+    }
+
+    final outgoing = _match(
+      text,
+      _amountRx(
+        r'تم\s+قيد\s+حواله?\s+بمبلغ\s+(?<amount>{{amount}})\s*jod\s+من\s+حسابك\s+عل[ىي]\s+ريفلكت',
+      ),
+    );
+    if (outgoing != null) {
+      return _ParsedSms(
+        amount: outgoing.amount,
+        type: 'Expense',
+        balanceAfter: outgoing.balance ?? extractBalanceLocally(text),
+        smsKind: 'CliQ Transfer',
+        categoryHint: 'CliQ Transfer Out',
+        counterparty: 'Reflect Account',
+        isCliq: true,
+      );
+    }
+
+    return null;
+  }
+
+  _ParsedSms? _matchOrangeMoney(String text) {
+    final incoming = _match(
+      text,
+      _amountRx(
+        r'تم\s+استقبال\s+حواله?\s+ماليه?\s+من\s+(?<counterparty>\S+).*?(?:الى|الي)\s+محفظتك\s+بمبلغ\s+(?<amount>{{amount}})\s*دينار',
+      ),
+    );
+    if (incoming != null) {
+      return _ParsedSms(
+        amount: incoming.amount,
+        type: 'Income',
+        balanceAfter: incoming.balance ?? extractBalanceLocally(text),
+        smsKind: 'Mobile Wallet Transfer',
+        categoryHint: 'Wallet Transfer In',
+        counterparty: _cleanParty(incoming.counterparty),
+      );
+    }
+
+    final outgoing = _match(
+      text,
+      _amountRx(
+        r'تمت\s+عمليه?\s+التحويل\s+المالي\s+(?:الى|الي)\s+المحفظه?\s+(?<counterparty>\S+)\s+بمبلغ\s+(?<amount>{{amount}})\s*دينار',
+      ),
+    );
+    if (outgoing != null) {
+      return _ParsedSms(
+        amount: outgoing.amount,
+        type: 'Expense',
+        balanceAfter: outgoing.balance ?? extractBalanceLocally(text),
+        smsKind: 'Mobile Wallet Transfer',
+        categoryHint: 'Wallet Transfer Out',
+        counterparty: _cleanParty(outgoing.counterparty),
+      );
+    }
+
+    return null;
+  }
+
+  _ParsedSms? _matchHousingBank(String text) {
+    final cliqIn = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+has\s+been\s+transferred\s+by\s+cliq\s+to\s+account\s+(?<account>\S+).*?\s+from\s+(?<counterparty>.+?)\.\s+available\s+balance',
+        caseSensitive: false,
+      ),
+    );
+    if (cliqIn != null) {
+      return _ParsedSms(
+        amount: cliqIn.amount,
+        type: 'Income',
+        balanceAfter: cliqIn.balance ?? extractBalanceLocally(text),
+        smsKind: 'CliQ Transfer',
+        categoryHint: 'CliQ Transfer In',
+        counterparty: _cleanParty(cliqIn.counterparty),
+        isCliq: true,
+      );
+    }
+
+    final cliqOut = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+has\s+been\s+transferred\s+by\s+cliq\s+from\s+account\s+(?<account>\S+).*?\s+to\s+(?<counterparty>.+?)\.\s+available\s+balance',
+        caseSensitive: false,
+      ),
+    );
+    if (cliqOut != null) {
+      return _ParsedSms(
+        amount: cliqOut.amount,
+        type: 'Expense',
+        balanceAfter: cliqOut.balance ?? extractBalanceLocally(text),
+        smsKind: 'CliQ Transfer',
+        categoryHint: 'CliQ Transfer Out',
+        counterparty: _cleanParty(cliqOut.counterparty),
+        isCliq: true,
+      );
+    }
+
+    final atmDeposit = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+has\s+been\s+deposited\s+to\s+account\s+(?<account>\S+).*?\s+from\s+atm\s+(?<merchant>.+?)\s+with\s+authorization\s+number',
+        caseSensitive: false,
+      ),
+    );
+    if (atmDeposit != null) {
+      return _ParsedSms(
+        amount: atmDeposit.amount,
+        type: 'Income',
+        balanceAfter: atmDeposit.balance ?? extractBalanceLocally(text),
+        smsKind: 'ATM Deposit',
+        categoryHint: 'ATM Deposit',
+        merchantName: _prefixAtm(atmDeposit.merchant),
+      );
+    }
+
+    final atmWithdrawal = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+has\s+been\s+withdrawn\s+from\s+account\s+(?<account>\S+).*?\s+from\s+atm\s+(?<merchant>.+?)\s+with\s+authorization\s+number',
+        caseSensitive: false,
+      ),
+    );
+    if (atmWithdrawal != null) {
+      return _ParsedSms(
+        amount: atmWithdrawal.amount,
+        type: 'Expense',
+        balanceAfter: atmWithdrawal.balance ?? extractBalanceLocally(text),
+        smsKind: 'ATM Withdrawal',
+        categoryHint: 'ATM Withdrawal',
+        merchantName: _prefixAtm(atmWithdrawal.merchant),
+      );
+    }
+
+    final fee = _match(
+      text,
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s+has\s+been\s+debited\s+as\s+(?<merchant>.+?)\s+from\s+account\s+(?<account>\S+)\s+on\b',
+        caseSensitive: false,
+      ),
+    );
+    if (fee != null) {
+      return _ParsedSms(
+        amount: fee.amount,
+        type: 'Expense',
+        balanceAfter: fee.balance ?? extractBalanceLocally(text),
+        smsKind: 'Bank Fee',
+        categoryHint: 'Bank Fees',
+        merchantName: _cleanParty(fee.merchant),
+      );
+    }
+
+    final bill = _match(
+      text,
+      _amountRx(
+        r'تم\s+دفع\s+فاتوره?\s+(?<merchant>.+?)\s+رقم\s+(?<billNo>\S+)\s+بقيمه?\s+(?<amount>{{amount}})\s*دينار',
+      ),
+    );
+    if (bill != null) {
+      final biller = _cleanParty(bill.merchant);
+      return _ParsedSms(
+        amount: bill.amount,
+        type: 'Expense',
+        balanceAfter: bill.balance ?? extractBalanceLocally(text),
+        smsKind: 'Bill Payment',
+        categoryHint: _categoryForBiller(biller),
+        merchantName: biller,
+      );
+    }
+
+    return null;
+  }
+
+  _ParsedSms? _matchGeneric(String text) {
+    final cliqFrom = _match(
+      text,
+      _amountRx(
+        r'(?<amount>{{amount}})\s*jod\s+cliq\s+transfer\s+from\s+(?<counterparty>.+?)\.\s+available\s+balance',
+        caseSensitive: false,
+      ),
+    );
+    if (cliqFrom != null) {
+      return _ParsedSms(
+        amount: cliqFrom.amount,
+        type: 'Income',
+        balanceAfter: cliqFrom.balance ?? extractBalanceLocally(text),
+        smsKind: 'CliQ Transfer',
+        categoryHint: 'CliQ Transfer In',
+        counterparty: _cleanParty(cliqFrom.counterparty),
+        isCliq: true,
+      );
+    }
+
+    final cliqTo = _match(
+      text,
+      _amountRx(
+        r'(?<amount>{{amount}})\s*jod\s+cliq\s+transfer\s+to\s+(?<counterparty>.+?)\.\s+available\s+balance',
+        caseSensitive: false,
+      ),
+    );
+    if (cliqTo != null) {
+      return _ParsedSms(
+        amount: cliqTo.amount,
+        type: 'Expense',
+        balanceAfter: cliqTo.balance ?? extractBalanceLocally(text),
+        smsKind: 'CliQ Transfer',
+        categoryHint: 'CliQ Transfer Out',
+        counterparty: _cleanParty(cliqTo.counterparty),
+        isCliq: true,
+      );
+    }
+
+    final cardPayment = _match(
+      text,
+      _amountRx(
+        r'(?<amount>{{amount}})\s*jod\s+at\s+(?<merchant>.+?)\.\s+card\s+(?<card>\d+)\.\s+available\s+balance',
+        caseSensitive: false,
+      ),
+    );
+    if (cardPayment != null) {
+      final merchant = _cleanParty(cardPayment.merchant);
+      return _ParsedSms(
+        amount: cardPayment.amount,
+        type: 'Expense',
+        balanceAfter: cardPayment.balance ?? extractBalanceLocally(text),
+        smsKind: 'Card Payment',
+        categoryHint: _categoryForMerchant(merchant, isCardPayment: true),
+        merchantName: merchant,
+      );
+    }
+
+    final billPayment = _match(
+      text,
+      _amountRx(
+        r'bill\s+no\.\s+(?<billNo>\S+)\s+of\s+(?<amount>{{amount}})\s*jod\s+has\s+been\s+paid\s+to\s+(?<merchant>.+?)\.\s+ref\s+no\.',
+        caseSensitive: false,
+      ),
+    );
+    if (billPayment != null) {
+      final biller = _cleanParty(billPayment.merchant);
+      return _ParsedSms(
+        amount: billPayment.amount,
+        type: 'Expense',
+        balanceAfter: billPayment.balance ?? extractBalanceLocally(text),
+        smsKind: 'Bill Payment',
+        categoryHint: _categoryForBiller(biller),
+        merchantName: biller,
+      );
+    }
+
+    final refund = _match(
+      text,
+      _amountRx(
+        r'refund\s+of\s+(?<amount>{{amount}})\s*jod\s+at\s+(?<merchant>.+?)\.\s+available\s+balance',
+        caseSensitive: false,
+      ),
+    );
+    if (refund != null) {
+      return _ParsedSms(
+        amount: refund.amount,
+        type: 'Income',
+        balanceAfter: refund.balance ?? extractBalanceLocally(text),
+        smsKind: 'Refund/Reversal',
+        categoryHint: 'Refund',
+        merchantName: _cleanParty(refund.merchant),
+      );
+    }
+
+    final voucher = _match(
+      text,
+      _amountRx(
+        r'successfully\s+purchased\s+a\s+voucher\s+from\s+(?<merchant>.+?)\s+for\s+(?<amount>{{amount}})\s*jod\b',
+        caseSensitive: false,
+      ),
+    );
+    if (voucher != null) {
+      return _ParsedSms(
+        amount: voucher.amount,
+        type: 'Expense',
+        balanceAfter: voucher.balance ?? extractBalanceLocally(text),
+        smsKind: 'Voucher Purchase',
+        categoryHint: _categoryForMerchant(voucher.merchant, isVoucher: true),
+        merchantName: _cleanParty(voucher.merchant),
+      );
+    }
+
+    return null;
+  }
+
+  _ParsedSms? _matchFallback(String text) {
+    final type = _detectFallbackType(text);
+    if (type == null || !_hasStrongTransactionKeyword(text)) return null;
+
+    final amount = _extractTransactionAmount(text);
+    if (amount == null || amount <= 0) return null;
+
+    final merchantName = _extractMerchantName(text);
+    final smsKind = _detectFallbackSmsKind(text);
+    return _ParsedSms(
+      amount: amount,
+      type: type,
+      balanceAfter: extractBalanceLocally(text),
+      smsKind: smsKind,
+      categoryHint: _categoryForKind(
+        smsKind: smsKind,
+        type: type,
+        merchantName: merchantName,
+      ),
+      merchantName: merchantName,
+      isCliq: text.contains('cliq') || text.contains('كليك'),
+    );
+  }
+
+  bool _hasStrongTransactionKeyword(String text) {
+    return RegExp(
+      r'(?:credited|debited|deposited|withdrawn|transferred|refund|reversal|paid|payment|purchase|bill\s+no\.|available\s+balance|current\s+balance|تم\s+قيد|تمت\s+عمليه\s+التحويل|تم\s+استقبال|تم\s+دفع|الرصيد\s+المتوفر|رصيد\s+المحفظه\s+المتاح)',
+      caseSensitive: false,
+    ).hasMatch(text);
+  }
+
+  String? _detectFallbackType(String text) {
     if (RegExp(
-      r'jod\s*\d+(?:\.\d+)?\s*has been credited to your reflect account',
+      r'(?:credited|credit|deposit|deposited|received|salary|refund|cashback|reversal|reversed|ايداع|وارد|استلام|استقبال)',
+      caseSensitive: false,
     ).hasMatch(text)) {
       return 'Income';
     }
 
-    if (RegExp(r'(credited|received)').hasMatch(text)) {
-      return 'Income';
-    }
-
     if (RegExp(
-      r'(cliq payment from your reflect account|debited|paid|خصم|دفع)',
+      r'(?:debited|debit|withdrawn|withdrawal|paid|payment|purchase|pos|visa|card|bill|biller|efawateercom|atm|fee|fees|خصم|سحب|شراء|دفع|فاتوره|فواتير|عموله|رسوم)',
+      caseSensitive: false,
     ).hasMatch(text)) {
       return 'Expense';
     }
@@ -151,367 +530,101 @@ class AIService {
     return null;
   }
 
-  // Detects Orange Money transaction type.
-  String? _detectOrangeMoneyType(String text) {
-    if (text.contains('تم استقبال حواله ماليه') ||
-        text.contains('الى محفظتك') ||
-        text.contains('الي محفظتك')) {
-      return 'Income';
-    }
-
-    if (text.contains('تمت عمليه التحويل المالي الى المحفظه') ||
-        text.contains('تمت عمليه التحويل المالي الي المحفظه') ||
-        text.contains('الى المحفظه') ||
-        text.contains('الي المحفظه')) {
-      return 'Expense';
-    }
-
-    return null;
-  }
-
-  // Detects HousingBank, CliQ, ATM, bill, and fee transaction types.
-  String? _detectHousingBankType(String text) {
-    if (text.contains('transferred by cliq to account')) {
-      return 'Income';
-    }
-
-    if (text.contains('transferred by cliq from account')) {
-      return 'Expense';
-    }
-
-    if (text.contains('has been deposited to account')) {
-      return 'Income';
-    }
-
-    if (text.contains('has been withdrawn from account')) {
-      return 'Expense';
-    }
-
-    if (text.contains('has been debited as')) {
-      return 'Expense';
-    }
-
-    if (text.contains('تم دفع فاتوره') || text.contains('تم دفع فاتورة')) {
-      return 'Expense';
-    }
-
-    return null;
-  }
-
-  // Detects transaction type using general fallback keywords.
-  String? _detectGeneralType(String text) {
-    if (RegExp(
-      r'(credited|credit|deposit|deposited|received|salary|refund|cashback|ايداع|تم ايداع|وارد|استلام|تم استقبال حواله|تم استقبال حوالة)',
-    ).hasMatch(text)) {
-      return 'Income';
-    }
-
-    if (RegExp(
-      r'(debited|debit|withdrawn|withdrawal|paid|payment|purchase|pos|visa|card|bill|biller|efawateercom|atm|fee|fees|خصم|سحب|شراء|دفع|فاتوره|فاتورة|فواتير|عموله|عمولة|رسوم)',
-    ).hasMatch(text)) {
-      return 'Expense';
-    }
-
-    return null;
-  }
-
-  // Extracts the transaction amount from Reflect, Orange Money, HousingBank,
-  // ATM, bill payment, reversal, and fee messages.
   double? _extractTransactionAmount(String text) {
     final double? filsAmount = _extractFilsAmount(text);
     if (filsAmount != null) return filsAmount;
 
-    final patterns = [
-      RegExp(r'jod\s*(\d+(?:\.\d+)?)\s*has been'),
-      RegExp(r'(\d+(?:\.\d+)?)\s*jod\s*has been'),
-      RegExp(r'بمبلغ\s*(\d+(?:\.\d+)?)\s*jod'),
-      RegExp(r'بمبلغ\s*(\d+(?:\.\d+)?)\s*دينار'),
-      RegExp(r'بقيمة\s*(\d+(?:\.\d+)?)\s*دينار'),
-      RegExp(r'بقيمه\s*(\d+(?:\.\d+)?)\s*دينار'),
-      RegExp(r'amount\s*(\d+(?:\.\d+)?)\s*jod'),
-      RegExp(
-        r'jod\s*(\d+(?:\.\d+)?)\s*(?:credited|debited|withdrawn|transferred|payment|purchase|paid|deposit|deposited)',
+    final amountPatterns = [
+      _amountRx(r'\bjod\s*(?<amount>{{amount}})\s+has\s+been'),
+      _amountRx(r'(?<amount>{{amount}})\s*jod\s+has\s+been'),
+      _amountRx(r'(?:amount|of|for)\s+(?<amount>{{amount}})\s*jod'),
+      _amountRx(
+        r'(?:بمبلغ|بقيمة|بقيمه)\s*(?<amount>{{amount}})\s*(?:jod|دينار)',
       ),
-      RegExp(
-        r'(?:credited|debited|withdrawn|transferred|payment|purchase|paid|deposit|deposited).*?jod\s*(\d+(?:\.\d+)?)',
+      _amountRx(
+        r'\bjod\s*(?<amount>{{amount}})\s*(?:credited|debited|withdrawn|transferred|payment|purchase|paid|deposit|deposited)',
+        caseSensitive: false,
       ),
-      RegExp(r'(\d+(?:\.\d+)?)\s*jod'),
-      RegExp(r'jod\s*(\d+(?:\.\d+)?)'),
+      _amountRx(r'(?<amount>{{amount}})\s*jod\b'),
+      _amountRx(r'\bjod\s*(?<amount>{{amount}})\b'),
+      _amountRx(r'(?<amount>{{amount}})\s*دينار\b'),
     ];
 
-    return _firstDoubleMatch(text, patterns);
+    return _firstNumber(text, amountPatterns);
   }
 
-  // Extracts fils values and converts them to JOD.
   double? _extractFilsAmount(String text) {
-    if (!text.contains('فلس')) return null;
+    if (!text.contains('فلس') && !text.contains('fils')) return null;
 
-    final patterns = [
-      RegExp(r'(?:بقيمة|بقيمه|مبلغ|بمبلغ)\s*(\d+(?:\.\d+)?)\s*فلس'),
-      RegExp(r'(\d+(?:\.\d+)?)\s*فلس'),
-    ];
-
-    final double? value = _firstDoubleMatch(text, patterns);
+    final value = _firstNumber(text, [
+      _amountRx(
+        r'(?:amount|بمبلغ|بقيمة|بقيمه|مبلغ)\s*(?<amount>{{amount}})\s*(?:fils|فلس)',
+        caseSensitive: false,
+      ),
+      _amountRx(r'(?<amount>{{amount}})\s*(?:fils|فلس)', caseSensitive: false),
+    ]);
     if (value == null || value <= 0) return null;
 
     return value / 1000;
   }
 
-  // Extracts the remaining balance from the SMS if available.
   double? extractBalanceLocally(String smsBody) {
     final String text = _normalizeSms(smsBody);
-
-    final balancePatterns = [
-      RegExp(r'available balance\s*(\d+(?:\.\d+)?)\s*jod'),
-      RegExp(r'available balance\s*jod\s*(\d+(?:\.\d+)?)'),
-      RegExp(r'الرصيد المتوفر\s*(\d+(?:\.\d+)?)\s*jod'),
-      RegExp(r'رصيد المحفظه المتاح هو\s*(\d+(?:\.\d+)?)\s*دينار'),
-      RegExp(r'رصيد المحفظة المتاح هو\s*(\d+(?:\.\d+)?)\s*دينار'),
-      RegExp(r'الرصيد\s*(?:الحالي|المتاح|المتوفر)?\s*(\d+(?:\.\d+)?)'),
-    ];
-
-    return _firstDoubleMatch(text, balancePatterns, allowZero: true);
+    return _firstNumber(text, [
+      _amountRx(
+        r'available\s+balance:?\s*(?:jod\s*)?(?<amount>{{amount}})\s*jod',
+        caseSensitive: false,
+      ),
+      _amountRx(
+        r'available\s+balance\s+jod\s*(?<amount>{{amount}})',
+        caseSensitive: false,
+      ),
+      _amountRx(
+        r'current\s+balance:?\s*(?:jod\s*)?(?<amount>{{amount}})\s*jod',
+        caseSensitive: false,
+      ),
+      _amountRx(r'الرصيد\s+المتوفر\s*(?<amount>{{amount}})\s*jod'),
+      _amountRx(
+        r'رصيد\s+المحفظه?\s+المتاح\s+هو\s+(?<amount>{{amount}})\s*دينار(?:\s+اردني)?',
+      ),
+      _amountRx(
+        r'الرصيد\s*(?:الحالي|المتاح|المتوفر)?\s*(?<amount>{{amount}})\s*(?:jod|دينار)?',
+      ),
+    ], allowZero: true);
   }
 
-  // Detects the SMS category/kind used later for automatic categorization.
-  String _detectSmsKind(String text, String sender) {
-    if (_isReflectMessage(text, sender)) {
-      return _detectReflectSmsKind(text);
-    }
+  _PatternMatch? _match(String text, RegExp pattern) {
+    final match = pattern.firstMatch(text);
+    if (match == null) return null;
 
-    if (_isOrangeMoneyMessage(text, sender)) {
-      return _detectOrangeMoneySmsKind(text);
-    }
+    final amount = _namedNumber(match, 'amount');
+    if (amount == null) return null;
 
-    return _detectGeneralSmsKind(text);
-  }
-
-  // Detects Reflect-specific SMS kind.
-  String _detectReflectSmsKind(String text) {
-    if (text.contains('reversal') || text.contains('reversed')) {
-      return 'Reflect Reversal';
-    }
-
-    if (text.contains('من حسابك على ريفلكت') ||
-        text.contains('من حسابك علي ريفلكت') ||
-        text.contains('cliq payment from your reflect account')) {
-      return 'Reflect CliQ Payment';
-    }
-
-    if (text.contains('credited to your reflect account')) {
-      return 'Bank Transaction';
-    }
-
-    return 'Reflect Transaction';
-  }
-
-  // Detects Orange Money-specific SMS kind.
-  String _detectOrangeMoneySmsKind(String text) {
-    if (text.contains('تم استقبال حواله ماليه') ||
-        text.contains('الى محفظتك') ||
-        text.contains('الي محفظتك')) {
-      return 'Orange Money Transfer In';
-    }
-
-    if (text.contains('تمت عمليه التحويل المالي الى المحفظه') ||
-        text.contains('تمت عمليه التحويل المالي الي المحفظه') ||
-        text.contains('الى المحفظه') ||
-        text.contains('الي المحفظه')) {
-      return 'Orange Money Transfer Out';
-    }
-
-    return 'Orange Money Transaction';
-  }
-
-  // Detects general SMS kind for HousingBank, CliQ, ATM, bills, fees, and cards.
-  String _detectGeneralSmsKind(String text) {
-    if (text.contains('transferred by cliq')) {
-      return 'CliQ Transfer';
-    }
-
-    if (text.contains('has been deposited to account') &&
-        text.contains('atm')) {
-      return 'ATM Deposit';
-    }
-
-    if (text.contains('has been withdrawn from account') &&
-        text.contains('atm')) {
-      return 'ATM Withdrawal';
-    }
-
-    if (text.contains('تم دفع فاتوره') || text.contains('تم دفع فاتورة')) {
-      return 'Bill Payment';
-    }
-
-    if (text.contains('debited as') ||
-        text.contains('fee') ||
-        text.contains('fees') ||
-        text.contains('عموله') ||
-        text.contains('عمولة') ||
-        text.contains('رسوم')) {
-      return 'Bank Fee';
-    }
-
-    if (text.contains('purchase') ||
-        text.contains('pos') ||
-        text.contains('card')) {
-      return 'Card Payment';
-    }
-
-    return 'Bank Transaction';
-  }
-
-  // Extracts the other party involved in the transaction, such as CliQ alias,
-  // IBAN, phone number, Orange wallet number, or Reflect account marker.
-  String? _extractCounterparty(String text, String type, String sender) {
-    final String? housingCounterparty = _extractHousingBankCounterparty(
-      text,
-      type,
+    return _PatternMatch(
+      amount: amount,
+      balance: _namedNumber(match, 'balance'),
+      merchant: _namedString(match, 'merchant'),
+      counterparty: _namedString(match, 'counterparty'),
     );
-    if (housingCounterparty != null) return housingCounterparty;
-
-    final String? orangeCounterparty = _extractOrangeMoneyCounterparty(
-      text,
-      type,
-      sender,
-    );
-    if (orangeCounterparty != null) return orangeCounterparty;
-
-    final String? reflectCounterparty = _extractReflectCounterparty(
-      text,
-      sender,
-    );
-    if (reflectCounterparty != null) return reflectCounterparty;
-
-    return null;
   }
 
-  // Extracts CliQ sender or receiver for HousingBank messages.
-  String? _extractHousingBankCounterparty(String text, String type) {
-    if (text.contains('transferred by cliq to account') && type == 'Income') {
-      final match = RegExp(
-        r'\sfrom\s+([a-z0-9]+)(?:\.| available|$)',
-        caseSensitive: false,
-      ).firstMatch(text);
-
-      return _cleanCounterparty(match?.group(1));
-    }
-
-    if (text.contains('transferred by cliq from account') &&
-        type == 'Expense') {
-      final match = RegExp(
-        r'\sto\s+([a-z0-9._-]+)(?:\.| available|$)',
-        caseSensitive: false,
-      ).firstMatch(text);
-
-      return _cleanCounterparty(match?.group(1));
-    }
-
-    return null;
-  }
-
-  // Extracts sender or destination wallet for Orange Money messages.
-  String? _extractOrangeMoneyCounterparty(
-    String text,
-    String type,
-    String sender,
-  ) {
-    if (!_isOrangeMoneyMessage(text, sender)) return null;
-
-    if (type == 'Income') {
-      final patterns = [
-        RegExp(r'تم استقبال حواله ماليه من\s+([a-z0-9]+)'),
-        RegExp(r'تم استقبال حوالة مالية من\s+([a-z0-9]+)'),
-      ];
-
-      return _firstStringMatch(text, patterns);
-    }
-
-    if (type == 'Expense') {
-      final patterns = [
-        RegExp(r'الى المحفظه\s+([a-z0-9]+)'),
-        RegExp(r'الي المحفظه\s+([a-z0-9]+)'),
-        RegExp(r'الى المحفظة\s+([a-z0-9]+)'),
-        RegExp(r'الي المحفظة\s+([a-z0-9]+)'),
-      ];
-
-      return _firstStringMatch(text, patterns);
-    }
-
-    return null;
-  }
-
-  String? _cleanCounterparty(String? value) {
-    final cleaned = value?.trim().replaceAll(RegExp(r'[.,]+$'), '');
-    return cleaned == null || cleaned.isEmpty ? null : cleaned;
-  }
-
-  // Extracts Reflect-specific counterparty marker.
-  String? _extractReflectCounterparty(String text, String sender) {
-    if (!_isReflectMessage(text, sender)) return null;
-
-    if (text.contains('من حسابك على ريفلكت') ||
-        text.contains('من حسابك علي ريفلكت')) {
-      return 'Reflect Account';
-    }
-
-    return null;
-  }
-
-  // Extracts merchant/source names such as ATM location, biller name, or card merchant.
-  String? _extractMerchantName(String text) {
-    final patterns = [
-      RegExp(
-        r'from\s+(atm\s+[a-z0-9\u0600-\u06FF\s\-_]+?)\s+with authorization',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'from\s+([a-z0-9\u0600-\u06FF\s\-_]+?)\s+amount',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'تم دفع فاتوره\s+([a-z0-9\u0600-\u06FF\s\-_]+?)\s+رقم',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'تم دفع فاتورة\s+([a-z0-9\u0600-\u06FF\s\-_]+?)\s+رقم',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'at\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|,| on | available|$)',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'لدى\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'لدي\s+([a-z0-9\u0600-\u06FF\s\-_]+?)(?:\.|،| بتاريخ| الرصيد|$)',
-        caseSensitive: false,
-      ),
-    ];
-
-    final String? value = _firstStringMatch(text, patterns);
+  double? _namedNumber(RegExpMatch match, String name) {
+    final value = _namedString(match, name);
     if (value == null) return null;
 
-    if (_isBadMerchantValue(value)) return null;
-
-    return value;
+    return double.tryParse(value.replaceAll(',', ''));
   }
 
-  // Prevents invalid merchant values from being saved.
-  bool _isBadMerchantValue(String value) {
-    final String normalizedValue = value.toLowerCase();
-
-    return normalizedValue.contains('account') ||
-        normalizedValue.contains('balance') ||
-        normalizedValue.contains('authorization') ||
-        normalizedValue.contains('available') ||
-        normalizedValue.length < 2;
+  String? _namedString(RegExpMatch match, String name) {
+    try {
+      final value = match.namedGroup(name)?.trim();
+      return value == null || value.isEmpty ? null : value;
+    } on ArgumentError {
+      return null;
+    }
   }
 
-  // Returns the first valid double captured by the provided patterns.
-  double? _firstDoubleMatch(
+  double? _firstNumber(
     String text,
     List<RegExp> patterns, {
     bool allowZero = false,
@@ -520,24 +633,173 @@ class AIService {
       final match = pattern.firstMatch(text);
       if (match == null) continue;
 
-      final value = double.tryParse(match.group(1)!);
+      final raw = _namedString(match, 'amount') ?? match.group(1);
+      final value = double.tryParse((raw ?? '').replaceAll(',', ''));
       if (value != null && (allowZero ? value >= 0 : value > 0)) return value;
     }
 
     return null;
   }
 
-  // Returns the first non-empty string captured by the provided patterns.
-  String? _firstStringMatch(String text, List<RegExp> patterns) {
+  String _detectFallbackSmsKind(String text) {
+    if (text.contains('cliq') || text.contains('كليك')) return 'CliQ Transfer';
+    if (text.contains('voucher')) return 'Voucher Purchase';
+    if (text.contains('refund') ||
+        text.contains('reversal') ||
+        text.contains('reversed')) {
+      return 'Refund/Reversal';
+    }
+    if (text.contains('atm') && RegExp(r'deposit|deposited').hasMatch(text)) {
+      return 'ATM Deposit';
+    }
+    if (text.contains('atm') && RegExp(r'withdraw|withdrawn').hasMatch(text)) {
+      return 'ATM Withdrawal';
+    }
+    if (RegExp(r'bill|biller|efawateercom|فاتوره').hasMatch(text)) {
+      return 'Bill Payment';
+    }
+    if (RegExp(r'fee|fees|عموله|رسوم').hasMatch(text)) return 'Bank Fee';
+    if (RegExp(r'purchase|pos|card|visa|شراء').hasMatch(text)) {
+      return 'Card Payment';
+    }
+    if (RegExp(r'credited|credit').hasMatch(text)) return 'Bank Credit';
+
+    return 'Bank Transaction';
+  }
+
+  String _categoryForKind({
+    required String smsKind,
+    required String type,
+    String? merchantName,
+  }) {
+    switch (smsKind) {
+      case 'Bank Credit':
+        return 'Bank Credit';
+      case 'CliQ Transfer':
+        return type == 'Income' ? 'CliQ Transfer In' : 'CliQ Transfer Out';
+      case 'Mobile Wallet Transfer':
+        return type == 'Income' ? 'Wallet Transfer In' : 'Wallet Transfer Out';
+      case 'ATM Deposit':
+        return 'ATM Deposit';
+      case 'ATM Withdrawal':
+        return 'ATM Withdrawal';
+      case 'Bank Fee':
+        return 'Bank Fees';
+      case 'Bill Payment':
+        return _categoryForBiller(merchantName);
+      case 'Card Payment':
+        return _categoryForMerchant(merchantName, isCardPayment: true);
+      case 'Voucher Purchase':
+        return _categoryForMerchant(merchantName, isVoucher: true);
+      case 'Refund/Reversal':
+        return 'Refund';
+      default:
+        return type == 'Income' ? 'Income' : 'General Expense';
+    }
+  }
+
+  String _categoryForBiller(String? biller) {
+    final value = (biller ?? '').toLowerCase();
+
+    if (_containsAny(value, ['zain', 'umniah', 'orange mobile', 'orange'])) {
+      return 'Bills - Telecom';
+    }
+    if (_containsAny(value, [
+      'jordan electricity',
+      'electricity distribution co',
+    ])) {
+      return 'Bills - Electricity';
+    }
+    if (_containsAny(value, ['water_miyahuna', 'miyahuna'])) {
+      return 'Bills - Water';
+    }
+    if (value.contains('ministry of health')) return 'Healthcare';
+    if (value.contains('world islamic sciences and education university')) {
+      return 'Education';
+    }
+    if (value.contains('damamax')) return 'Bills - Internet';
+    if (value.contains('sadad logistics')) return 'Services';
+    if (_containsAny(value, ['al tas heelat', 'tasheelat'])) {
+      return 'Financing / Installments';
+    }
+
+    return 'General Expense';
+  }
+
+  String _categoryForMerchant(
+    String? merchant, {
+    bool isCardPayment = false,
+    bool isVoucher = false,
+  }) {
+    final value = (merchant ?? '').toLowerCase();
+
+    if (isVoucher || value.contains('freefire')) return 'Gaming / Vouchers';
+    if (_containsAny(value, ['zain', 'umniah', 'orange'])) {
+      return 'Bills - Telecom';
+    }
+    if (value.contains('talabat')) return 'Food & Delivery';
+    if (_containsAny(value, ['paypal', 'google'])) return 'Online Services';
+
+    return isCardPayment ? 'Shopping' : 'General Expense';
+  }
+
+  bool _containsAny(String text, List<String> needles) {
+    return needles.any(text.contains);
+  }
+
+  String? _extractMerchantName(String text) {
+    final patterns = [
+      RegExp(
+        r'from\s+(?<merchant>atm\s+[a-z0-9\u0600-\u06FF\s\-_]+?)\s+with\s+authorization',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'from\s+(?<merchant>[a-z0-9\u0600-\u06FF\s\-_]+?)\s+amount',
+        caseSensitive: false,
+      ),
+      RegExp(r'paid\s+to\s+(?<merchant>.+?)(?:\.|$)', caseSensitive: false),
+      RegExp(
+        r'at\s+(?<merchant>.+?)(?:\.|,| on | available|$)',
+        caseSensitive: false,
+      ),
+      RegExp(r'لدى\s+(?<merchant>.+?)(?:\.|،| بتاريخ| الرصيد|$)'),
+      RegExp(r'لدي\s+(?<merchant>.+?)(?:\.|،| بتاريخ| الرصيد|$)'),
+    ];
+
     for (final pattern in patterns) {
       final match = pattern.firstMatch(text);
       if (match == null) continue;
 
-      final value = match.group(1)?.trim();
-      if (value != null && value.isNotEmpty) return value;
+      final value = _cleanParty(_namedString(match, 'merchant'));
+      if (value == null || _isBadMerchantValue(value)) continue;
+      return value;
     }
 
     return null;
+  }
+
+  bool _isBadMerchantValue(String value) {
+    final normalizedValue = value.toLowerCase();
+
+    return normalizedValue.contains('account') ||
+        normalizedValue.contains('balance') ||
+        normalizedValue.contains('authorization') ||
+        normalizedValue.contains('available') ||
+        normalizedValue.length < 2;
+  }
+
+  String? _cleanParty(String? value) {
+    final cleaned = value
+        ?.trim()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'[.,]+$'), '');
+    return cleaned == null || cleaned.isEmpty ? null : cleaned;
+  }
+
+  String? _prefixAtm(String? location) {
+    final cleaned = _cleanParty(location);
+    if (cleaned == null) return null;
+    return cleaned.startsWith('atm ') ? cleaned : 'atm $cleaned';
   }
 
   // Generates professional financial advice through the backend AI function.
@@ -572,4 +834,40 @@ class AIService {
 
     return "AI connection is temporarily unstable.";
   }
+}
+
+class _ParsedSms {
+  final double amount;
+  final String type;
+  final double? balanceAfter;
+  final String smsKind;
+  final String categoryHint;
+  final String? merchantName;
+  final String? counterparty;
+  final bool isCliq;
+
+  const _ParsedSms({
+    required this.amount,
+    required this.type,
+    required this.balanceAfter,
+    required this.smsKind,
+    required this.categoryHint,
+    this.merchantName,
+    this.counterparty,
+    this.isCliq = false,
+  });
+}
+
+class _PatternMatch {
+  final double amount;
+  final double? balance;
+  final String? merchant;
+  final String? counterparty;
+
+  const _PatternMatch({
+    required this.amount,
+    required this.balance,
+    this.merchant,
+    this.counterparty,
+  });
 }

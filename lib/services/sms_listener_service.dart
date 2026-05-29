@@ -226,7 +226,8 @@ class SMSListenerService with WidgetsBindingObserver {
   static const Duration _networkCooldown = Duration(seconds: 15);
   static const Duration _remoteSmsCooldown = Duration(minutes: 3);
   static const Duration _singleSmsTimeout = Duration(seconds: 12);
-  static const int _recentMessagesLimit = 30;
+  static const int _manualInboxLimit = 5;
+  static const int _autoInboxLimit = 5;
 
   bool get isRunning => _isStarted && _smsSyncTimer != null;
 
@@ -369,7 +370,7 @@ class SMSListenerService with WidgetsBindingObserver {
     if (_isStarted && _smsSyncTimer != null) {
       debugPrint("[$_smsLogTag] Listener already running");
       if (syncImmediately) {
-        unawaited(syncNow(force: true));
+        unawaited(syncNow(reason: 'startup', force: true));
       }
       return true;
     }
@@ -416,16 +417,16 @@ class SMSListenerService with WidgetsBindingObserver {
     _startForegroundIncomingSmsListener();
 
     _smsSyncTimer = Timer.periodic(_syncInterval, (_) async {
-      await syncNow();
+      await syncNow(reason: 'auto_30s');
     });
 
     if (syncImmediately) {
-      unawaited(syncNow(force: true));
+      unawaited(syncNow(reason: 'startup', force: true));
     } else {
       unawaited(
         Future<void>.delayed(const Duration(seconds: 3), () async {
           if (_isStarted) {
-            await syncNow(force: true);
+            await syncNow(reason: 'startup', force: true);
           }
         }),
       );
@@ -595,20 +596,6 @@ class SMSListenerService with WidgetsBindingObserver {
       );
     }
     return result;
-  }
-
-  List<String> _senderCandidates(String sender) {
-    final trimmed = sender.trim();
-    final noSpaces = trimmed.replaceAll(' ', '');
-
-    return {
-      trimmed,
-      noSpaces,
-      trimmed.toLowerCase(),
-      noSpaces.toLowerCase(),
-      trimmed.toUpperCase(),
-      noSpaces.toUpperCase(),
-    }.where((value) => value.isNotEmpty).toList();
   }
 
   String _formatMonitoredSenders(List<WalletModel> wallets) {
@@ -905,48 +892,36 @@ class SMSListenerService with WidgetsBindingObserver {
     return false;
   }
 
-  Future<List<SmsMessage>> _getMessagesForSender(String sender) async {
-    final Map<String, SmsMessage> uniqueMessages = {};
+  Future<List<SmsMessage>> readRecentInboxSms({int limit = 5}) async {
     debugPrint("[$_smsLogTag] Reading inbox");
 
-    for (final candidate in _senderCandidates(sender)) {
-      try {
-        final messages = await telephony
-            .getInboxSms(
-              columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
-              filter: SmsFilter.where(SmsColumn.ADDRESS).equals(candidate),
-              sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
-            )
-            .timeout(
-              const Duration(seconds: 4),
-              onTimeout: () {
-                debugPrint("Sender candidate query timed out: $candidate");
-                return <SmsMessage>[];
-              },
-            );
+    final messages = await telephony
+        .getInboxSms(
+          columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+          sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+        )
+        .timeout(
+          const Duration(seconds: 6),
+          onTimeout: () {
+            debugPrint("[$_smsLogTag] Reading inbox timed out.");
+            return <SmsMessage>[];
+          },
+        );
 
-        for (final message in messages) {
-          final body = message.body;
-          if (body == null || body.trim().isEmpty) continue;
-          final key = SmsHashService.stableSmsHash(sender: sender, body: body);
-          uniqueMessages[key] = message;
-        }
-
-        // Keep release logging quiet; only errors are printed below.
-      } catch (e, stackTrace) {
-        _setErrorStatus("Error", e, stackTrace);
-      }
-    }
-
-    final result = uniqueMessages.values.toList();
+    final result = messages.where((message) {
+      final body = message.body;
+      return body != null && body.trim().isNotEmpty;
+    }).toList();
 
     result.sort((a, b) {
       final aDate = a.date ?? 0;
       final bDate = b.date ?? 0;
-      return aDate.compareTo(bDate);
+      return bDate.compareTo(aDate);
     });
 
-    return result;
+    final latest = result.take(limit).toList();
+    debugPrint("[$_smsLogTag] Latest SMS count: ${latest.length}");
+    return latest;
   }
 
   Future<SmsSyncResult> _syncLatestBankSms({String reason = 'manual'}) async {
@@ -967,10 +942,31 @@ class SMSListenerService with WidgetsBindingObserver {
     currentStatus = currentStatus.copyWith(isRunning: true, status: "Syncing");
     _setStatus("Syncing");
 
+    final int inboxLimit = reason == 'auto_30s'
+        ? _autoInboxLimit
+        : _manualInboxLimit;
+    debugPrint("[$_smsLogTag] Sync started reason=$reason limit=$inboxLimit");
+
     int processedCount = 0;
     int ignoredCount = currentStatus.ignoredCount;
     int duplicateCountBefore = currentStatus.duplicateCount;
     int errorCount = currentStatus.errorCount;
+
+    SmsSyncResult currentResult() {
+      return SmsSyncResult.success(
+        processedCount: processedCount,
+        duplicateCount: currentStatus.duplicateCount - duplicateCountBefore,
+        ignoredCount: currentStatus.ignoredCount - ignoredCount,
+        errorCount: currentStatus.errorCount - errorCount,
+        status: currentStatus.status,
+      );
+    }
+
+    void logSyncResult(SmsSyncResult result) {
+      debugPrint(
+        "[$_smsLogTag] Sync finished processed=${result.processedCount} duplicates=${result.duplicateCount} ignored=${result.ignoredCount} errors=${result.errorCount}",
+      );
+    }
 
     try {
       final wallets = await _supabaseService.getWallets().timeout(
@@ -988,51 +984,59 @@ class SMSListenerService with WidgetsBindingObserver {
         "[$_smsLogTag] Monitored senders: ${_formatMonitoredSenders(automatedWallets)}",
       );
 
-      for (final wallet in automatedWallets) {
-        final String sender = wallet.smsSenderId!.trim();
-        debugPrint("[$_smsLogTag] Reading inbox for monitored sender: $sender");
+      final messages = await readRecentInboxSms(limit: inboxLimit);
 
-        try {
-          final messages = await _getMessagesForSender(sender);
-          if (messages.isEmpty) continue;
+      for (final message in messages) {
+        final rawSender = message.address?.trim() ?? '';
+        if (rawSender.isNotEmpty) {
+          debugPrint("[$_smsLogTag] Raw sender: $rawSender");
+          debugPrint(
+            "[$_smsLogTag] Normalized sender: ${SmsHashService.normalizeSender(rawSender)}",
+          );
+        }
 
-          final recentMessages = messages.length > _recentMessagesLimit
-              ? messages.sublist(messages.length - _recentMessagesLimit)
-              : messages;
-
-          for (final message in recentMessages) {
-            final processed =
-                await _processSmsMessageForSender(
-                  message: message,
-                  sender: sender,
-                  walletId: wallet.id,
-                ).timeout(
-                  _singleSmsTimeout + const Duration(seconds: 2),
-                  onTimeout: () {
-                    debugPrint("[$_smsLogTag] SMS processing timed out.");
-                    _lastNetworkErrorAt = DateTime.now();
-                    _setStatus("Timed out");
-                    return false;
-                  },
-                );
-
-            if (_lastNetworkErrorAt != null) {
-              return SmsSyncResult.success(
-                processedCount: processedCount,
-                duplicateCount:
-                    currentStatus.duplicateCount - duplicateCountBefore,
-                ignoredCount: currentStatus.ignoredCount - ignoredCount,
-                errorCount: currentStatus.errorCount - errorCount,
-                status: currentStatus.status,
-              );
-            }
-            if (processed) {
-              processedCount++;
-            }
+        WalletModel? matchedWallet;
+        String? matchedSender;
+        for (final wallet in automatedWallets) {
+          final sender = wallet.smsSenderId!.trim();
+          if (SmsHashService.senderMatches(sender, rawSender)) {
+            matchedWallet = wallet;
+            matchedSender = sender;
+            break;
           }
-        } catch (walletError, stackTrace) {
-          _setErrorStatus("Error", walletError, stackTrace);
+        }
+
+        if (matchedWallet == null || matchedSender == null) {
+          _incrementIgnoredCount();
           continue;
+        }
+
+        debugPrint(
+          "[$_smsLogTag] Matched wallet: ${matchedWallet.name} ($matchedSender)",
+        );
+
+        final processed =
+            await _processSmsMessageForSender(
+              message: message,
+              sender: matchedSender,
+              walletId: matchedWallet.id,
+            ).timeout(
+              _singleSmsTimeout + const Duration(seconds: 2),
+              onTimeout: () {
+                debugPrint("[$_smsLogTag] SMS processing timed out.");
+                _lastNetworkErrorAt = DateTime.now();
+                _setStatus("Timed out");
+                return false;
+              },
+            );
+
+        if (_lastNetworkErrorAt != null) {
+          final result = currentResult();
+          logSyncResult(result);
+          return result;
+        }
+        if (processed) {
+          processedCount++;
         }
       }
 
@@ -1045,17 +1049,8 @@ class SMSListenerService with WidgetsBindingObserver {
         errorCount: currentStatus.errorCount - errorCount,
       );
 
-      final result = SmsSyncResult.success(
-        processedCount: processedCount,
-        duplicateCount: currentStatus.duplicateCount - duplicateCountBefore,
-        ignoredCount: currentStatus.ignoredCount - ignoredCount,
-        errorCount: currentStatus.errorCount - errorCount,
-        status: currentStatus.status,
-      );
-
-      debugPrint(
-        "[$_smsLogTag] SMS sync finished. Processed: $processedCount, duplicates: ${result.duplicateCount}, ignored: ${result.ignoredCount}, errors: ${result.errorCount}",
-      );
+      final result = currentResult();
+      logSyncResult(result);
       return result;
     } catch (e, stackTrace) {
       final errorText = e.toString();
@@ -1069,13 +1064,9 @@ class SMSListenerService with WidgetsBindingObserver {
         _setStatus("Error");
         _setErrorStatus("Error", e, stackTrace);
       }
-      return SmsSyncResult.success(
-        processedCount: processedCount,
-        duplicateCount: currentStatus.duplicateCount - duplicateCountBefore,
-        ignoredCount: currentStatus.ignoredCount - ignoredCount,
-        errorCount: currentStatus.errorCount - errorCount,
-        status: currentStatus.status,
-      );
+      final result = currentResult();
+      logSyncResult(result);
+      return result;
     } finally {
       _isSyncing = false;
       currentStatus = currentStatus.copyWith(

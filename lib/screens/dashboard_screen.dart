@@ -336,21 +336,6 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
         "$hour12:$minute $period";
   }
 
-  String _formatTimeOnly12(dynamic rawDate) {
-    if (rawDate == null) return 'Not synced';
-
-    final parsed = DateTime.tryParse(rawDate.toString());
-    if (parsed == null) return 'Not synced';
-
-    final date = parsed.toLocal();
-
-    final int hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
-    final String minute = date.minute.toString().padLeft(2, '0');
-    final String period = date.hour >= 12 ? 'PM' : 'AM';
-
-    return "$hour12:$minute $period";
-  }
-
   String _formatNotificationTime(DateTime date) {
     final localDate = date.toLocal();
 
@@ -369,23 +354,9 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
     return ValueListenableBuilder<int>(
       valueListenable: SMSListenerService.statusVersion,
       builder: (_, __, ____) {
-        final lastSync = SMSListenerService.lastSyncTime;
         final status = SMSListenerService.lastSyncStatus;
-        final processedCount = SMSListenerService.lastProcessedCount;
-        final duplicateCount = SMSListenerService.lastDuplicateCount;
-        final ignoredCount = SMSListenerService.lastIgnoredCount;
-        final errorCount = SMSListenerService.lastErrorCount;
 
-        final String lastSyncText = lastSync == null
-            ? "Not synced"
-            : _formatTimeOnly12(lastSync.toIso8601String());
-
-        final String summary = [
-          if (processedCount > 0) "$processedCount new",
-          if (duplicateCount > 0) "$duplicateCount dup",
-          if (ignoredCount > 0) "$ignoredCount ignored",
-          if (errorCount > 0) "$errorCount err",
-        ].join(' • ');
+        final isSyncing = _isSmsSyncButtonLoading || status == "Syncing";
 
         return InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -395,30 +366,53 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                   setState(() => _isSmsSyncButtonLoading = true);
                   SMSListenerService.instance.markManualSyncStarted();
 
-                  final result = await SMSListenerService.instance
-                      .syncNow(reason: 'manual', force: true)
-                      .timeout(
-                        const Duration(seconds: 20),
-                        onTimeout:
-                            SMSListenerService.instance.markManualSyncTimedOut,
-                      );
+                  SmsSyncResult result;
+                  try {
+                    result = await SMSListenerService.instance
+                        .syncNow(reason: 'manual', force: true)
+                        .timeout(
+                          const Duration(seconds: 20),
+                          onTimeout: SMSListenerService
+                              .instance
+                              .markManualSyncTimedOut,
+                        );
+                  } catch (_) {
+                    result = const SmsSyncResult(
+                      success: false,
+                      skipped: false,
+                      reason: 'error',
+                      processedCount: 0,
+                      duplicateCount: 0,
+                      ignoredCount: 0,
+                      errorCount: 1,
+                      status: 'Error',
+                    );
+                  }
 
                   if (!mounted) return;
                   await _loadDashboardSummary(forceRefresh: true);
                   if (!mounted) return;
                   setState(() => _isSmsSyncButtonLoading = false);
 
+                  final hasError =
+                      result.errorCount > 0 ||
+                      (!result.success && !result.skipped);
+                  final message = hasError
+                      ? context.t(
+                          "SMS sync failed. Please try again",
+                          "فشلت مزامنة الرسائل. يرجى المحاولة مرة أخرى",
+                        )
+                      : result.processedCount > 0
+                      ? context.t("SMS sync completed", "اكتملت مزامنة الرسائل")
+                      : context.t(
+                          "No new SMS transactions found",
+                          "لم يتم العثور على معاملات رسائل جديدة",
+                        );
+
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(
-                        context.t(
-                          "SMS Sync: ${result.processedCount} processed, ${result.duplicateCount} duplicates, ${result.ignoredCount} ignored, ${result.errorCount} errors",
-                          "مزامنة الرسائل: ${result.processedCount} جديد، ${result.duplicateCount} مكرر، ${result.ignoredCount} متجاهل، ${result.errorCount} أخطاء",
-                        ),
-                      ),
-                      backgroundColor: result.errorCount > 0
-                          ? _expenseRed
-                          : _accentGreen,
+                      content: Text(message),
+                      backgroundColor: hasError ? _expenseRed : _accentGreen,
                     ),
                   );
                 },
@@ -433,7 +427,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
             ),
             child: Row(
               children: [
-                if (_isSmsSyncButtonLoading || status == "Syncing")
+                if (isSyncing)
                   SizedBox(
                     width: 18,
                     height: 18,
@@ -447,10 +441,7 @@ class _DashboardMainContentState extends State<_DashboardMainContent>
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    context.t(
-                      "SMS Sync: $status • $lastSyncText${summary.isEmpty ? '' : ' • $summary'}",
-                      "مزامنة الرسائل: $status • $lastSyncText${summary.isEmpty ? '' : ' • $summary'}",
-                    ),
+                    context.t("SMS Sync", "مزامنة الرسائل"),
                     style: TextStyle(
                       color: _secondaryTextColor,
                       fontSize: 12.5,
